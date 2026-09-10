@@ -7,6 +7,8 @@ export interface WindowConfig {
   isHidden: boolean;
   isMaximized: boolean;
   isDesktopMode?: boolean;
+  desktopWidth?: number;
+  zoomLevel?: number;
   timeframe: string;
   wsActive: boolean;
   messageCount: number;

@@ -22,23 +22,23 @@ object PersistentWebViewPool {
     // URL 变化监听回调 (windowId, newUrl, pageTitle)
     var onUrlChanged: ((Int, String, String) -> Unit)? = null
 
-    // 默认看盘标的预设
+    // 默认看盘标的预设 (开启完整桌面侧边绘图工具栏、时间周期与指标)
     val DEFAULT_URLS = mapOf(
-        1 to "https://s.tradingview.com/widgetembed/?symbol=BINANCE:BTCUSDT&interval=15&theme=dark",
-        2 to "https://s.tradingview.com/widgetembed/?symbol=BINANCE:ETHUSDT&interval=60&theme=dark",
-        3 to "https://s.tradingview.com/widgetembed/?symbol=BINANCE:SOLUSDT&interval=240&theme=dark"
+        1 to "https://s.tradingview.com/widgetembed/?symbol=BINANCE:BTCUSDT&interval=15&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1",
+        2 to "https://s.tradingview.com/widgetembed/?symbol=BINANCE:ETHUSDT&interval=60&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1",
+        3 to "https://s.tradingview.com/widgetembed/?symbol=BINANCE:SOLUSDT&interval=240&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1"
     )
 
     // 快捷书签推荐网站
     val PRESET_BOOKMARKS = listOf(
-        BookmarkItem("TradingView", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:BTCUSDT&interval=15&theme=dark", "📈"),
+        BookmarkItem("TradingView", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:BTCUSDT&interval=15&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1", "📈"),
         BookmarkItem("Binance 现货", "https://www.binance.com/zh-CN/trade/BTC_USDT", "🟡"),
         BookmarkItem("OKX 欧易", "https://www.okx.com/zh-hans/trade-spot/btc-usdt", "⬛"),
         BookmarkItem("DexScreener", "https://dexscreener.com", "🦅"),
         BookmarkItem("CoinGecko", "https://www.coingecko.com", "🦎"),
         BookmarkItem("CoinMarketCap", "https://coinmarketcap.com", "🪙"),
-        BookmarkItem("TradingView ETH", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:ETHUSDT&interval=60&theme=dark", "📊"),
-        BookmarkItem("TradingView SOL", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:SOLUSDT&interval=240&theme=dark", "📊")
+        BookmarkItem("TradingView ETH", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:ETHUSDT&interval=60&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1", "📊"),
+        BookmarkItem("TradingView SOL", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:SOLUSDT&interval=240&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1", "📊")
     )
 
     data class BookmarkItem(val title: String, val url: String, val icon: String)
@@ -46,6 +46,65 @@ object PersistentWebViewPool {
     // 标准 PC 桌面端 Chrome User-Agent 标头（Windows 10 x64 + Chrome 128）
     // 强制各大交易所与行情站（Binance, TradingView, OKX, Bybit 等）加载完整版 PC 桌面交易终端
     const val PC_DESKTOP_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+
+    // 核心 PC 视口注入脚本：重写网页 Meta Viewport 强制设定为 1280px 标准 PC 桌面宽度
+    // 彻底击穿移动端响应式 @media (max-width: 768px) 断点限制，确保展示桌面版订单簿、指标与工具栏
+    const val DESKTOP_VIEWPORT_JS = """
+        (function() {
+            function enforceDesktopLayout() {
+                var metas = document.getElementsByTagName('meta');
+                var found = false;
+                for (var i = 0; i < metas.length; i++) {
+                    if (metas[i].name === 'viewport') {
+                        metas[i].setAttribute('content', 'width=1280, initial-scale=0.35, maximum-scale=5.0, user-scalable=yes');
+                        found = true;
+                    }
+                }
+                if (!found) {
+                    var meta = document.createElement('meta');
+                    meta.name = 'viewport';
+                    meta.content = 'width=1280, initial-scale=0.35, maximum-scale=5.0, user-scalable=yes';
+                    if (document.head) {
+                        document.head.appendChild(meta);
+                    }
+                }
+                try {
+                    if (window.navigator) {
+                        Object.defineProperty(navigator, 'userAgentData', {
+                            get: function() {
+                                return {
+                                    mobile: false,
+                                    platform: 'Windows',
+                                    brands: [
+                                        { brand: 'Chromium', version: '128' },
+                                        { brand: 'Google Chrome', version: '128' },
+                                        { brand: 'Not;A=Brand', version: '24' }
+                                    ]
+                                };
+                            },
+                            configurable: true
+                        });
+                        Object.defineProperty(navigator, 'platform', {
+                            get: function() { return 'Win32'; },
+                            configurable: true
+                        });
+                        Object.defineProperty(navigator, 'maxTouchPoints', {
+                            get: function() { return 0; },
+                            configurable: true
+                        });
+                    }
+                } catch(e) {}
+            }
+
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', enforceDesktopLayout);
+            } else {
+                enforceDesktopLayout();
+            }
+            setTimeout(enforceDesktopLayout, 300);
+            setTimeout(enforceDesktopLayout, 1000);
+        })();
+    """
 
     fun init(context: Context) {
         if (isInitialized) return
@@ -97,6 +156,8 @@ object PersistentWebViewPool {
             webViewClient = object : WebViewClient() {
                 override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                     super.onPageStarted(view, url, favicon)
+                    // 页面开始加载时，注入桌面虚拟视口脚本，确保媒体查询判定为 PC 宽屏桌面
+                    view?.evaluateJavascript(DESKTOP_VIEWPORT_JS, null)
                     if (url != null) {
                         onUrlChanged?.invoke(windowId, url, view?.title ?: "")
                     }
@@ -104,6 +165,8 @@ object PersistentWebViewPool {
 
                 override fun onPageFinished(view: WebView?, url: String?) {
                     super.onPageFinished(view, url)
+                    // 页面渲染完成后再次加固注入，防止动态 SPA 路由二次重写 viewport 标签
+                    view?.evaluateJavascript(DESKTOP_VIEWPORT_JS, null)
                     if (url != null) {
                         onUrlChanged?.invoke(windowId, url, view?.title ?: "")
                     }
@@ -144,6 +207,18 @@ object PersistentWebViewPool {
     }
 
     /**
+     * 网页全局缩放调节 (设置 textZoom 与 initialScale)
+     * @param windowId 视窗 ID
+     * @param zoomPercent 缩放百分比 (50% ~ 200%)
+     */
+    fun setZoom(windowId: Int, zoomPercent: Int) {
+        val webView = webViewMap[windowId] ?: return
+        val clampedZoom = zoomPercent.coerceIn(50, 250)
+        webView.settings.textZoom = clampedZoom
+        webView.setInitialScale(clampedZoom)
+    }
+
+    /**
      * 动态切换桌面模式 / 移动端模式
      * 默认开启桌面模式 (enableDesktop = true)，UA 为标准 PC Chrome
      */
@@ -159,6 +234,9 @@ object PersistentWebViewPool {
                 useWideViewPort = false
                 loadWithOverviewMode = false
             }
+        }
+        if (enableDesktop) {
+            webView.evaluateJavascript(DESKTOP_VIEWPORT_JS, null)
         }
         webView.reload()
     }
@@ -197,7 +275,7 @@ object PersistentWebViewPool {
     fun formatUrl(rawUrl: String): String {
         val trimmed = rawUrl.trim()
         return when {
-            trimmed.isEmpty() -> "https://www.tradingview.com"
+            trimmed.isEmpty() -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:BTCUSDT&interval=15&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1"
             trimmed.startsWith("http://") || trimmed.startsWith("https://") -> trimmed
             trimmed.contains(".") && !trimmed.contains(" ") -> "https://$trimmed"
             else -> "https://www.google.com/search?q=" + java.net.URLEncoder.encode(trimmed, "UTF-8")

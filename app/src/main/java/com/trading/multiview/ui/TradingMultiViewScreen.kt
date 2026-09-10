@@ -77,10 +77,10 @@ fun TradingMultiViewScreen(
                             onToggleMaximize = { viewModel.toggleMaximize(window.id) },
                             onHideWindow = { viewModel.hideWindow(window.id) },
                             onReload = { viewModel.reload(window.id) },
-                            onGoBack = { viewModel.goBack(window.id) },
-                            onGoForward = { viewModel.goForward(window.id) },
                             onNavigateToUrl = { url -> viewModel.navigateToUrl(window.id, url) },
-                            onToggleDesktopMode = { viewModel.toggleDesktopMode(window.id) }
+                            onZoomIn = { viewModel.zoomIn(window.id) },
+                            onZoomOut = { viewModel.zoomOut(window.id) },
+                            onResetZoom = { viewModel.resetZoom(window.id) }
                         )
                     }
                 }
@@ -115,10 +115,10 @@ fun SingleTradingWindowView(
     onToggleMaximize: () -> Unit,
     onHideWindow: () -> Unit,
     onReload: () -> Unit,
-    onGoBack: () -> Unit,
-    onGoForward: () -> Unit,
     onNavigateToUrl: (String) -> Unit,
-    onToggleDesktopMode: () -> Unit,
+    onZoomIn: () -> Unit,
+    onZoomOut: () -> Unit,
+    onResetZoom: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     var urlInputText by remember(window.currentUrl) { mutableStateOf(window.currentUrl) }
@@ -166,46 +166,17 @@ fun SingleTradingWindowView(
                     )
                 }
 
-                // 浏览器导航核心控制：后退、前进、刷新
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(0.dp)
+                // 视窗刷新控制按钮 (已精简去掉前进后退按钮)
+                IconButton(
+                    onClick = onReload,
+                    modifier = Modifier.size(26.dp)
                 ) {
-                    IconButton(
-                        onClick = onGoBack,
-                        modifier = Modifier.size(26.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.ArrowBack,
-                            contentDescription = "后退",
-                            tint = Color(0xFF94A3B8),
-                            modifier = Modifier.size(14.dp)
-                        )
-                    }
-
-                    IconButton(
-                        onClick = onGoForward,
-                        modifier = Modifier.size(26.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.ArrowForward,
-                            contentDescription = "前进",
-                            tint = Color(0xFF94A3B8),
-                            modifier = Modifier.size(14.dp)
-                        )
-                    }
-
-                    IconButton(
-                        onClick = onReload,
-                        modifier = Modifier.size(26.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Refresh,
-                            contentDescription = "刷新页面",
-                            tint = Color(0xFF94A3B8),
-                            modifier = Modifier.size(14.dp)
-                        )
-                    }
+                    Icon(
+                        imageVector = Icons.Default.Refresh,
+                        contentDescription = "刷新页面",
+                        tint = Color(0xFF94A3B8),
+                        modifier = Modifier.size(14.dp)
+                    )
                 }
 
                 // ================= 核心地址栏输入框 (Address Bar) =================
@@ -364,34 +335,58 @@ fun SingleTradingWindowView(
                     }
                 }
 
-                // ================= 视窗窗口动作：桌面模式切换、全屏最大化 / 还原、隐藏 =================
+                // ================= 视窗窗口动作：网页缩放调节 (+/-)、全屏最大化 / 还原、隐藏 =================
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    // 默认 PC 桌面模式（User-Agent: PC Chrome + 宽视口）切换/指示按钮
-                    Box(
+                    // 网页全局缩放调节器 (快捷 +/- 调整，支持 textZoom 与 initialScale)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
+                            .height(26.dp)
                             .clip(RoundedCornerShape(4.dp))
-                            .background(
-                                if (window.isDesktopMode) Color(0xFF0C2840) else Color(0xFF1E293B)
-                            )
-                            .border(
-                                1.dp,
-                                if (window.isDesktopMode) Color(0xFF0284C7) else Color(0xFF475569),
-                                RoundedCornerShape(4.dp)
-                            )
-                            .clickable { onToggleDesktopMode() }
-                            .padding(horizontal = 6.dp, vertical = 3.dp),
-                        contentAlignment = Alignment.Center
+                            .background(Color(0xFF090D16))
+                            .border(1.dp, Color(0xFF334155), RoundedCornerShape(4.dp))
+                            .padding(horizontal = 2.dp)
                     ) {
+                        // 缩小 -
+                        IconButton(
+                            onClick = onZoomOut,
+                            modifier = Modifier.size(22.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Remove,
+                                contentDescription = "缩小网页",
+                                tint = Color(0xFF94A3B8),
+                                modifier = Modifier.size(12.dp)
+                            )
+                        }
+
+                        // 缩放百分比，点击重置 100%
                         Text(
-                            text = if (window.isDesktopMode) "🖥️ PC" else "📱 Mobile",
-                            color = if (window.isDesktopMode) Color(0xFF38BDF8) else Color(0xFF94A3B8),
+                            text = "${window.zoomPercent}%",
+                            color = if (window.zoomPercent == 100) Color(0xFF94A3B8) else Color(0xFF38BDF8),
                             fontSize = 10.sp,
                             fontWeight = FontWeight.Bold,
-                            fontFamily = FontFamily.Monospace
+                            fontFamily = FontFamily.Monospace,
+                            modifier = Modifier
+                                .clickable { onResetZoom() }
+                                .padding(horizontal = 2.dp)
                         )
+
+                        // 放大 +
+                        IconButton(
+                            onClick = onZoomIn,
+                            modifier = Modifier.size(22.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Add,
+                                contentDescription = "放大网页",
+                                tint = Color(0xFF94A3B8),
+                                modifier = Modifier.size(12.dp)
+                            )
+                        }
                     }
 
                     // 一键全屏最大化 / 还原按钮

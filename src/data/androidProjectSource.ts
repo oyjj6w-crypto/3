@@ -154,15 +154,74 @@ object PersistentWebViewPool {
     private val webViewMap = mutableMapOf<Int, WebView>()
     private var isInitialized = false
 
-    // 默认看盘标的预设
+    // 默认看盘标的预设 (开启完整桌面侧边绘图工具栏、时间周期与指标)
     val DEFAULT_URLS = mapOf(
-        1 to "https://s.tradingview.com/widgetembed/?symbol=BINANCE:BTCUSDT&interval=15&theme=dark",
-        2 to "https://s.tradingview.com/widgetembed/?symbol=BINANCE:ETHUSDT&interval=60&theme=dark",
-        3 to "https://s.tradingview.com/widgetembed/?symbol=BINANCE:SOLUSDT&interval=240&theme=dark"
+        1 to "https://s.tradingview.com/widgetembed/?symbol=BINANCE:BTCUSDT&interval=15&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1",
+        2 to "https://s.tradingview.com/widgetembed/?symbol=BINANCE:ETHUSDT&interval=60&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1",
+        3 to "https://s.tradingview.com/widgetembed/?symbol=BINANCE:SOLUSDT&interval=240&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1"
     )
 
     // 标准 PC 桌面端 Chrome User-Agent 标头 (Windows 10 x64 + Chrome 128)
     const val PC_DESKTOP_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+
+    // 核心 PC 视口注入脚本：重写网页 Meta Viewport 强制设定为 1280px 标准 PC 桌面宽度
+    // 彻底击穿移动端响应式 @media (max-width: 768px) 断点限制，确保展示桌面版订单簿、指标与工具栏
+    const val DESKTOP_VIEWPORT_JS = ""${'"'}
+        (function() {
+            function enforceDesktopLayout() {
+                var metas = document.getElementsByTagName('meta');
+                var found = false;
+                for (var i = 0; i < metas.length; i++) {
+                    if (metas[i].name === 'viewport') {
+                        metas[i].setAttribute('content', 'width=1280, initial-scale=0.35, maximum-scale=5.0, user-scalable=yes');
+                        found = true;
+                    }
+                }
+                if (!found) {
+                    var meta = document.createElement('meta');
+                    meta.name = 'viewport';
+                    meta.content = 'width=1280, initial-scale=0.35, maximum-scale=5.0, user-scalable=yes';
+                    if (document.head) {
+                        document.head.appendChild(meta);
+                    }
+                }
+                try {
+                    if (window.navigator) {
+                        Object.defineProperty(navigator, 'userAgentData', {
+                            get: function() {
+                                return {
+                                    mobile: false,
+                                    platform: 'Windows',
+                                    brands: [
+                                        { brand: 'Chromium', version: '128' },
+                                        { brand: 'Google Chrome', version: '128' },
+                                        { brand: 'Not;A=Brand', version: '24' }
+                                    ]
+                                };
+                            },
+                            configurable: true
+                        });
+                        Object.defineProperty(navigator, 'platform', {
+                            get: function() { return 'Win32'; },
+                            configurable: true
+                        });
+                        Object.defineProperty(navigator, 'maxTouchPoints', {
+                            get: function() { return 0; },
+                            configurable: true
+                        });
+                    }
+                } catch(e) {}
+            }
+
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', enforceDesktopLayout);
+            } else {
+                enforceDesktopLayout();
+            }
+            setTimeout(enforceDesktopLayout, 300);
+            setTimeout(enforceDesktopLayout, 1000);
+        })();
+    ""${'"'}
 
     fun init(context: Context) {
         if (isInitialized) return
@@ -213,6 +272,14 @@ object PersistentWebViewPool {
             webViewClient = object : WebViewClient() {
                 override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                     super.onPageStarted(view, url, favicon)
+                    // 开始加载时注入 PC 视口脚本，确保媒体查询认定为 PC 宽屏桌面
+                    view?.evaluateJavascript(DESKTOP_VIEWPORT_JS, null)
+                }
+
+                override fun onPageFinished(view: WebView?, url: String?) {
+                    super.onPageFinished(view, url)
+                    // 页面渲染完成后再次加固注入，防止 SPA 路由重置 viewport
+                    view?.evaluateJavascript(DESKTOP_VIEWPORT_JS, null)
                 }
 
                 override fun shouldOverrideUrlLoading(
@@ -239,6 +306,18 @@ object PersistentWebViewPool {
 
     fun reloadWindow(windowId: Int) {
         webViewMap[windowId]?.reload()
+    }
+
+    /**
+     * 网页全局缩放调节 (设置 textZoom 与 initialScale)
+     * @param windowId 视窗 ID
+     * @param zoomPercent 缩放百分比 (50% ~ 200%)
+     */
+    fun setZoom(windowId: Int, zoomPercent: Int) {
+        val webView = webViewMap[windowId] ?: return
+        val clampedZoom = zoomPercent.coerceIn(50, 250)
+        webView.settings.textZoom = clampedZoom
+        webView.setInitialScale(clampedZoom)
     }
 
     fun loadCustomUrl(windowId: Int, url: String) {
@@ -293,7 +372,8 @@ data class WindowState(
     val currentUrl: String,
     val isHidden: Boolean = false,
     val isMaximized: Boolean = false,
-    val isDesktopMode: Boolean = true
+    val isDesktopMode: Boolean = true,
+    val zoomPercent: Int = 100
 )
 
 data class MultiViewUiState(
@@ -406,6 +486,46 @@ class TradingViewModel : ViewModel() {
      */
     fun reload(windowId: Int) {
         PersistentWebViewPool.reloadWindow(windowId)
+    }
+
+    /**
+     * 增加网页缩放比例 (+10%)
+     */
+    fun zoomIn(windowId: Int) {
+        val current = _uiState.value.windows.find { it.id == windowId }?.zoomPercent ?: 100
+        val next = (current + 10).coerceAtMost(200)
+        setWindowZoom(windowId, next)
+    }
+
+    /**
+     * 减少网页缩放比例 (-10%)
+     */
+    fun zoomOut(windowId: Int) {
+        val current = _uiState.value.windows.find { it.id == windowId }?.zoomPercent ?: 100
+        val next = (current - 10).coerceAtLeast(50)
+        setWindowZoom(windowId, next)
+    }
+
+    /**
+     * 重置缩放比例为 100%
+     */
+    fun resetZoom(windowId: Int) {
+        setWindowZoom(windowId, 100)
+    }
+
+    /**
+     * 设置视窗全局缩放比例 (textZoom & initialScale)
+     */
+    fun setWindowZoom(windowId: Int, zoomPercent: Int) {
+        val clamped = zoomPercent.coerceIn(50, 200)
+        PersistentWebViewPool.setZoom(windowId, clamped)
+        _uiState.update { state ->
+            state.copy(
+                windows = state.windows.map { win ->
+                    if (win.id == windowId) win.copy(zoomPercent = clamped) else win
+                }
+            )
+        }
     }
 
     /**
@@ -526,9 +646,10 @@ fun TradingMultiViewScreen(
                             onToggleMaximize = { viewModel.toggleMaximize(window.id) },
                             onHideWindow = { viewModel.hideWindow(window.id) },
                             onReload = { viewModel.reload(window.id) },
-                            onGoBack = { viewModel.goBack(window.id) },
-                            onGoForward = { viewModel.goForward(window.id) },
-                            onNavigateToUrl = { url -> viewModel.navigateToUrl(window.id, url) }
+                            onNavigateToUrl = { url -> viewModel.navigateToUrl(window.id, url) },
+                            onZoomIn = { viewModel.zoomIn(window.id) },
+                            onZoomOut = { viewModel.zoomOut(window.id) },
+                            onResetZoom = { viewModel.resetZoom(window.id) }
                         )
                     }
                 }
@@ -563,9 +684,10 @@ fun SingleTradingWindowView(
     onToggleMaximize: () -> Unit,
     onHideWindow: () -> Unit,
     onReload: () -> Unit,
-    onGoBack: () -> Unit,
-    onGoForward: () -> Unit,
     onNavigateToUrl: (String) -> Unit,
+    onZoomIn: () -> Unit,
+    onZoomOut: () -> Unit,
+    onResetZoom: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     var urlInputText by remember(window.currentUrl) { mutableStateOf(window.currentUrl) }
@@ -613,46 +735,17 @@ fun SingleTradingWindowView(
                     )
                 }
 
-                // 浏览器导航核心控制：后退、前进、刷新
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(0.dp)
+                // 视窗刷新控制按钮 (已精简去掉前进后退按钮)
+                IconButton(
+                    onClick = onReload,
+                    modifier = Modifier.size(26.dp)
                 ) {
-                    IconButton(
-                        onClick = onGoBack,
-                        modifier = Modifier.size(26.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.ArrowBack,
-                            contentDescription = "后退",
-                            tint = Color(0xFF94A3B8),
-                            modifier = Modifier.size(14.dp)
-                        )
-                    }
-
-                    IconButton(
-                        onClick = onGoForward,
-                        modifier = Modifier.size(26.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.ArrowForward,
-                            contentDescription = "前进",
-                            tint = Color(0xFF94A3B8),
-                            modifier = Modifier.size(14.dp)
-                        )
-                    }
-
-                    IconButton(
-                        onClick = onReload,
-                        modifier = Modifier.size(26.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Refresh,
-                            contentDescription = "刷新页面",
-                            tint = Color(0xFF94A3B8),
-                            modifier = Modifier.size(14.dp)
-                        )
-                    }
+                    Icon(
+                        imageVector = Icons.Default.Refresh,
+                        contentDescription = "刷新页面",
+                        tint = Color(0xFF94A3B8),
+                        modifier = Modifier.size(14.dp)
+                    )
                 }
 
                 // ================= 核心地址栏输入框 (Address Bar) =================
@@ -811,11 +904,60 @@ fun SingleTradingWindowView(
                     }
                 }
 
-                // ================= 视窗窗口动作：全屏最大化 / 还原、隐藏 =================
+                // ================= 视窗窗口动作：网页缩放调节 (+/-)、全屏最大化 / 还原、隐藏 =================
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(2.dp)
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
+                    // 网页全局缩放调节器 (快捷 +/- 调整，支持 textZoom 与 initialScale)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .height(26.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(Color(0xFF090D16))
+                            .border(1.dp, Color(0xFF334155), RoundedCornerShape(4.dp))
+                            .padding(horizontal = 2.dp)
+                    ) {
+                        // 缩小 -
+                        IconButton(
+                            onClick = onZoomOut,
+                            modifier = Modifier.size(22.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Remove,
+                                contentDescription = "缩小网页",
+                                tint = Color(0xFF94A3B8),
+                                modifier = Modifier.size(12.dp)
+                            )
+                        }
+
+                        // 缩放百分比，点击重置 100%
+                        Text(
+                            text = "\${window.zoomPercent}%",
+                            color = if (window.zoomPercent == 100) Color(0xFF94A3B8) else Color(0xFF38BDF8),
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace,
+                            modifier = Modifier
+                                .clickable { onResetZoom() }
+                                .padding(horizontal = 2.dp)
+                        )
+
+                        // 放大 +
+                        IconButton(
+                            onClick = onZoomIn,
+                            modifier = Modifier.size(22.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Add,
+                                contentDescription = "放大网页",
+                                tint = Color(0xFF94A3B8),
+                                modifier = Modifier.size(12.dp)
+                            )
+                        }
+                    }
+
                     // 一键全屏最大化 / 还原按钮
                     IconButton(
                         onClick = onToggleMaximize,

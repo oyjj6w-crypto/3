@@ -14,7 +14,8 @@ data class WindowState(
     val currentUrl: String,
     val isHidden: Boolean = false,
     val isMaximized: Boolean = false,
-    val isDesktopMode: Boolean = true // 默认开启桌面模式，User-Agent 为 PC Chrome
+    val isDesktopMode: Boolean = true, // 默认开启桌面模式，User-Agent 为 PC Chrome
+    val zoomPercent: Int = 100 // 全局网页缩放比例 (50% ~ 200%)
 )
 
 data class MultiViewUiState(
@@ -92,6 +93,46 @@ class TradingViewModel : ViewModel() {
      */
     fun reload(windowId: Int) {
         PersistentWebViewPool.reloadWindow(windowId)
+    }
+
+    /**
+     * 增加网页缩放比例 (+10%)
+     */
+    fun zoomIn(windowId: Int) {
+        val current = _uiState.value.windows.find { it.id == windowId }?.zoomPercent ?: 100
+        val next = (current + 10).coerceAtMost(200)
+        setWindowZoom(windowId, next)
+    }
+
+    /**
+     * 减少网页缩放比例 (-10%)
+     */
+    fun zoomOut(windowId: Int) {
+        val current = _uiState.value.windows.find { it.id == windowId }?.zoomPercent ?: 100
+        val next = (current - 10).coerceAtLeast(50)
+        setWindowZoom(windowId, next)
+    }
+
+    /**
+     * 重置缩放比例为 100%
+     */
+    fun resetZoom(windowId: Int) {
+        setWindowZoom(windowId, 100)
+    }
+
+    /**
+     * 设置视窗全局缩放比例 (textZoom & initialScale)
+     */
+    fun setWindowZoom(windowId: Int, zoomPercent: Int) {
+        val clamped = zoomPercent.coerceIn(50, 200)
+        PersistentWebViewPool.setZoom(windowId, clamped)
+        _uiState.update { state ->
+            state.copy(
+                windows = state.windows.map { win ->
+                    if (win.id == windowId) win.copy(zoomPercent = clamped) else win
+                }
+            )
+        }
     }
 
     /**

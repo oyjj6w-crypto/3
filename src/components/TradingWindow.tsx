@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Maximize2, Minimize2, EyeOff, RotateCw, ExternalLink, Activity, Wifi, Settings, Globe, ArrowLeft, ArrowRight, Bookmark, X, Search, ChevronDown, Monitor } from 'lucide-react';
+import { Maximize2, Minimize2, EyeOff, RotateCw, ExternalLink, Activity, Wifi, Settings, Globe, ArrowLeft, ArrowRight, Bookmark, X, Search, ChevronDown, Monitor, Plus, Minus } from 'lucide-react';
 import { WindowConfig } from '../types';
 
 interface TradingWindowProps {
@@ -51,6 +51,65 @@ export const TradingWindow: React.FC<TradingWindowProps> = ({
   const [customUrlInput, setCustomUrlInput] = useState(win.url);
   const [customTitleInput, setCustomTitleInput] = useState(win.title);
   const [isDesktopMode, setIsDesktopMode] = useState<boolean>(win.isDesktopMode ?? true);
+  const [desktopWidth, setDesktopWidth] = useState<number>(win.desktopWidth ?? 1280);
+  const [zoomLevel, setZoomLevel] = useState<number>(win.zoomLevel ?? 100);
+
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [containerSize, setContainerSize] = useState<{ width: number; height: number }>({ width: 0, height: 0 });
+
+  // 监听视窗容器尺寸，用于精准计算 PC 桌面虚拟视口 (例如 1280px) 的等比缩放系数
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+
+    const updateSize = () => {
+      const rect = el.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
+        setContainerSize({ width: rect.width, height: rect.height });
+      }
+    };
+
+    updateSize();
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const { width, height } = entry.contentRect;
+        if (width > 0 && height > 0) {
+          setContainerSize({ width, height });
+        }
+      }
+    });
+
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  // 当开启 PC 桌面模式时，强制虚拟设定 1280px 标准 PC 视口，彻底击穿移动端响应式 @media (max-width: 768px)
+  const targetVirtualWidth = isDesktopMode
+    ? (isMaximized ? Math.max(desktopWidth, containerSize.width || desktopWidth) : desktopWidth)
+    : (containerSize.width || 1280);
+
+  const baseScale = (containerSize.width > 0 && isDesktopMode)
+    ? containerSize.width / targetVirtualWidth
+    : 1;
+
+  const effectiveScale = baseScale * (zoomLevel / 100);
+
+  const handleZoomIn = () => {
+    const next = Math.min(200, zoomLevel + 10);
+    setZoomLevel(next);
+    onUpdateConfig(win.id, { zoomLevel: next });
+  };
+
+  const handleZoomOut = () => {
+    const next = Math.max(50, zoomLevel - 10);
+    setZoomLevel(next);
+    onUpdateConfig(win.id, { zoomLevel: next });
+  };
+
+  const handleResetZoom = () => {
+    setZoomLevel(100);
+    onUpdateConfig(win.id, { zoomLevel: 100 });
+  };
   
   const toggleDesktop = () => {
     const next = !isDesktopMode;
@@ -337,24 +396,40 @@ export const TradingWindow: React.FC<TradingWindowProps> = ({
             <span>${livePrice}</span>
           </div>
 
-          {/* One-Click PC Desktop Mode Toggle (Default: Enabled, PC Chrome UA) */}
-          <button
-            type="button"
-            onClick={toggleDesktop}
-            title={
-              isDesktopMode
-                ? '默认桌面模式 (PC UA): Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/128.0.0.0\n点击可切换'
-                : '当前为移动端模式，点击切换回默认 PC 桌面模式'
-            }
-            className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-bold border transition-all ${
-              isDesktopMode
-                ? 'bg-sky-950/80 border-sky-600/70 text-sky-400 shadow-xs'
-                : 'bg-slate-900 border-slate-700 text-slate-400 hover:text-slate-200'
-            }`}
+          {/* Quick +/- Global Web Zoom Adjustment (textZoom & initialScale) */}
+          <div
+            className="flex items-center bg-[#090d16] border border-slate-700/80 rounded h-6 px-0.5 text-slate-200"
+            title="全局网页缩放调节 (对应 Android WebView textZoom 与 initialScale，点击重置 100%)"
           >
-            <Monitor className="w-3 h-3" />
-            <span>PC</span>
-          </button>
+            <button
+              type="button"
+              onClick={handleZoomOut}
+              disabled={zoomLevel <= 50}
+              className="p-1 text-slate-400 hover:text-sky-400 disabled:opacity-30 disabled:hover:text-slate-400 transition-colors"
+              title="缩小网页 (每次 -10%)"
+            >
+              <Minus className="w-3 h-3" />
+            </button>
+            <button
+              type="button"
+              onClick={handleResetZoom}
+              className={`px-1 text-[10px] font-mono font-bold transition-colors ${
+                zoomLevel === 100 ? 'text-slate-400 hover:text-slate-200' : 'text-sky-400 hover:text-sky-300'
+              }`}
+              title="点击重置为 100%"
+            >
+              {zoomLevel}%
+            </button>
+            <button
+              type="button"
+              onClick={handleZoomIn}
+              disabled={zoomLevel >= 200}
+              className="p-1 text-slate-400 hover:text-sky-400 disabled:opacity-30 disabled:hover:text-slate-400 transition-colors"
+              title="放大网页 (每次 +10%)"
+            >
+              <Plus className="w-3 h-3" />
+            </button>
+          </div>
 
           {/* One-Click Maximize / Restore */}
           <button
@@ -386,17 +461,38 @@ export const TradingWindow: React.FC<TradingWindowProps> = ({
       </div>
 
       {/* ================= 底层常驻 WebView 渲染区 ================= */}
-      <div className="flex-1 w-full h-full relative bg-[#090d16] overflow-hidden">
+      <div
+        ref={containerRef}
+        className="flex-1 w-full h-full relative bg-[#090d16] overflow-hidden"
+      >
         {/* Real Live Chart (TradingView iframe embed or custom live canvas) */}
         {renderEngine === 'tradingview' ? (
-          <iframe
-            ref={iframeRef}
-            src={win.url}
-            title={`TradingView-Window-${win.id}`}
-            className="w-full h-full border-0 bg-black"
-            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-            sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
-          />
+          <div
+            style={{
+              width: isDesktopMode ? `${targetVirtualWidth}px` : '100%',
+              height: isDesktopMode && containerSize.height > 0 && effectiveScale > 0
+                ? `${Math.ceil(containerSize.height / effectiveScale)}px`
+                : '100%',
+              transform: isDesktopMode
+                ? `scale(${effectiveScale})`
+                : (zoomLevel !== 100 ? `scale(${zoomLevel / 100})` : undefined),
+              transformOrigin: 'top left',
+            }}
+            className={isDesktopMode ? "absolute top-0 left-0 transition-transform duration-75" : "w-full h-full overflow-hidden"}
+          >
+            <iframe
+              ref={iframeRef}
+              src={win.url}
+              title={`TradingView-Window-${win.id}`}
+              style={{
+                width: isDesktopMode ? `${targetVirtualWidth}px` : '100%',
+                height: '100%',
+              }}
+              className="w-full h-full border-0 bg-black block"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+              sandbox="allow-scripts allow-same-origin allow-popups allow-forms"
+            />
+          </div>
         ) : (
           <div className="w-full h-full flex flex-col p-4 font-mono text-xs text-slate-300">
             <div className="flex justify-between items-center pb-2 border-b border-slate-800">
@@ -487,23 +583,92 @@ export const TradingWindow: React.FC<TradingWindowProps> = ({
                     <Monitor className="w-3.5 h-3.5 text-sky-400" />
                     默认桌面模式 (PC Mode)
                   </span>
-                  <button
-                    type="button"
-                    onClick={toggleDesktop}
-                    className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold transition-colors ${
-                      isDesktopMode
-                        ? 'bg-sky-600 text-white'
-                        : 'bg-slate-800 text-slate-400 hover:text-slate-200'
-                    }`}
-                  >
-                    {isDesktopMode ? '已启用 PC UA' : '移动端 UA'}
-                  </button>
+                  <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-sky-950 border border-sky-800 text-sky-400">
+                    默认 PC Chrome UA
+                  </span>
                 </div>
                 <div className="text-[10px] text-slate-400 leading-tight">
                   <span className="text-slate-500 font-mono">User-Agent: </span>
                   <span className="font-mono text-sky-300/90 break-all">
                     Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/128.0.0.0 Safari/537.36
                   </span>
+                </div>
+              </div>
+
+              {/* PC Desktop Viewport Base (Forces PC responsive breakpoint) */}
+              <div className="p-2.5 rounded bg-slate-900/90 border border-slate-700/80 text-[11px] space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="flex items-center gap-1.5 text-slate-200 font-semibold">
+                    <Monitor className="w-3.5 h-3.5 text-sky-400" />
+                    PC 虚拟视口基准 (Desktop Viewport)
+                  </span>
+                  <span className="font-mono text-sky-400 font-bold">{desktopWidth}px</span>
+                </div>
+                <div className="grid grid-cols-4 gap-1.5">
+                  {[
+                    { label: '1024px', val: 1024, desc: '紧凑桌面' },
+                    { label: '1280px', val: 1280, desc: '标准 PC' },
+                    { label: '1440px', val: 1440, desc: '宽屏 PC' },
+                    { label: '1920px', val: 1920, desc: '全高清' },
+                  ].map((item) => (
+                    <button
+                      key={item.val}
+                      type="button"
+                      onClick={() => {
+                        setDesktopWidth(item.val);
+                        onUpdateConfig(win.id, { desktopWidth: item.val });
+                      }}
+                      className={`px-2 py-1.5 rounded border text-center transition-colors ${
+                        desktopWidth === item.val
+                          ? 'bg-sky-950/80 border-sky-500 text-sky-300 font-bold'
+                          : 'bg-slate-800/60 border-slate-700 text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                      }`}
+                    >
+                      <div className="text-[11px] font-mono">{item.label}</div>
+                      <div className="text-[9px] opacity-70">{item.desc}</div>
+                    </button>
+                  ))}
+                </div>
+                <div className="text-[10px] text-slate-400 leading-tight">
+                  三分屏下各视窗物理宽度过窄常被网站媒体查询识别为手机版；虚拟视口强制设定为 PC 宽度，完美展现 PC 版完整指标、K 线工具栏、深度与盘口。
+                </div>
+              </div>
+
+              {/* Webpage Global Zoom (textZoom & initialScale) */}
+              <div className="p-2.5 rounded bg-slate-900/90 border border-slate-700/80 text-[11px] space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="flex items-center gap-1.5 text-slate-200 font-semibold">
+                    <Search className="w-3.5 h-3.5 text-sky-400" />
+                    网页全局缩放调节 (Zoom)
+                  </span>
+                  <span className="font-mono text-sky-400 font-bold">{zoomLevel}%</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] text-slate-400">50%</span>
+                  <input
+                    type="range"
+                    min="50"
+                    max="200"
+                    step="10"
+                    value={zoomLevel}
+                    onChange={(e) => {
+                      const val = parseInt(e.target.value, 10);
+                      setZoomLevel(val);
+                      onUpdateConfig(win.id, { zoomLevel: val });
+                    }}
+                    className="flex-1 accent-sky-500 h-1.5 bg-slate-800 rounded-lg cursor-pointer"
+                  />
+                  <span className="text-[10px] text-slate-400">200%</span>
+                  <button
+                    type="button"
+                    onClick={handleResetZoom}
+                    className="px-1.5 py-0.5 rounded bg-slate-800 text-[10px] text-slate-300 hover:text-white border border-slate-700"
+                  >
+                    100%
+                  </button>
+                </div>
+                <div className="text-[10px] text-slate-400 leading-tight">
+                  底层映射 Android WebView 的 <code className="text-sky-300 font-mono">WebSettings.textZoom</code> 与 <code className="text-sky-300 font-mono">setInitialScale</code>。
                 </div>
               </div>
 
