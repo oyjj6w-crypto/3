@@ -2,11 +2,8 @@ package com.trading.multiview.ui
 
 import android.content.Context
 import android.view.ViewGroup
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -289,18 +286,14 @@ fun TradingMultiViewScreen(
             }
 
             // 底部悬浮恢复托盘：当有窗口被隐藏时显现，支持快速一键恢复
-            AnimatedVisibility(
-                visible = uiState.hiddenWindows.isNotEmpty(),
-                enter = fadeIn(),
-                exit = fadeOut(),
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(bottom = 12.dp)
-            ) {
+            if (uiState.hiddenWindows.isNotEmpty()) {
                 HiddenWindowsTray(
                     hiddenWindows = uiState.hiddenWindows,
                     onRestore = { id -> viewModel.restoreWindow(id) },
-                    onRestoreAll = { viewModel.restoreAll() }
+                    onRestoreAll = { viewModel.restoreAll() },
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 12.dp)
                 )
             }
         }
