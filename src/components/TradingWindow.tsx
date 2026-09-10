@@ -359,38 +359,6 @@ export const TradingWindow: React.FC<TradingWindowProps> = ({
           </div>
         )}
 
-        {/* 左上角极轻量半透明状态徽标 */}
-        <div className="absolute top-2 left-2 flex items-center gap-1.5 z-20 pointer-events-auto">
-          <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-slate-900/85 backdrop-blur-md border border-slate-700/60 shadow-lg text-[10px] font-mono">
-            <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-            </span>
-            <span className="text-sky-400 font-bold">W{win.id}</span>
-            <span className="text-slate-400 hidden sm:inline">${livePrice}</span>
-          </div>
-        </div>
-
-        {/* 右上角快捷最大化与隐藏悬浮控制 */}
-        <div className="absolute top-2 right-2 flex items-center gap-1 z-20 pointer-events-auto">
-          <button
-            onClick={() => onToggleMaximize(win.id)}
-            title={isMaximized ? '还原并列排布' : '一键全屏最大化'}
-            className="p-1.5 rounded-md bg-slate-900/85 backdrop-blur-md border border-slate-700/60 text-slate-300 hover:text-sky-300 hover:bg-slate-800 shadow-lg transition-colors"
-          >
-            {isMaximized ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
-          </button>
-          {canHide && (
-            <button
-              onClick={() => onHideWindow(win.id)}
-              title="隐藏当前视窗"
-              className="p-1.5 rounded-md bg-slate-900/85 backdrop-blur-md border border-slate-700/60 text-slate-400 hover:text-rose-400 hover:bg-rose-950/60 shadow-lg transition-colors"
-            >
-              <EyeOff className="w-3.5 h-3.5" />
-            </button>
-          )}
-        </div>
-
         {/* Floating WebSocket Activity Telemetry Badge (Bottom-Right) */}
         <div className="absolute bottom-1 right-1.5 px-1.5 py-0.5 rounded bg-slate-900/85 backdrop-blur-sm border border-slate-800/80 text-[10px] font-mono text-slate-400 flex items-center gap-1.5 pointer-events-none z-20">
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />

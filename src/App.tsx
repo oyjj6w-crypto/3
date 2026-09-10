@@ -28,7 +28,9 @@ import {
   Edit2,
   SlidersHorizontal,
   RefreshCw,
-  Globe
+  Globe,
+  Eye,
+  EyeOff
 } from 'lucide-react';
 import { WindowConfig, OrientationMode, WindowGroup } from './types';
 import { TradingWindow } from './components/TradingWindow';
@@ -513,111 +515,108 @@ export default function App() {
               id="unified-top-control-bar"
               className="h-10 px-2.5 bg-[#0d1424] border-b border-slate-800/90 flex items-center justify-between gap-2 z-20 shrink-0 select-none overflow-x-auto no-scrollbar"
             >
-              {/* 左侧：分组标签 (默认 1, 2, 3，支持方式1双击/点击图标就地重命名) */}
+              {/* 左侧：分组标签集合 (纯净标签 1, 2, 3，去掉“分组”二字，无更改名称与删除) */}
               <div className="flex items-center gap-1.5 min-w-0 overflow-x-auto no-scrollbar">
-                <div className="flex items-center gap-1 text-[11px] font-semibold text-slate-400 shrink-0 mr-0.5">
-                  <Bookmark className="w-3.5 h-3.5 text-sky-400" />
-                  <span className="hidden sm:inline">分组:</span>
-                </div>
-
                 {groups.map((group) => {
                   const isActive = activeGroupId === group.id;
-                  const isEditing = editingGroupId === group.id;
 
                   return (
                     <div
                       key={group.id}
-                      onClick={() => !isEditing && handleSwitchGroup(group.id)}
-                      className={`group/tab relative flex items-center gap-1 px-2.5 py-1 rounded-md text-xs transition-all shrink-0 border cursor-pointer select-none ${
+                      onClick={() => handleSwitchGroup(group.id)}
+                      className={`flex items-center px-2.5 py-1 rounded-md text-xs transition-all shrink-0 border cursor-pointer select-none font-mono font-bold ${
                         isActive
-                          ? 'bg-sky-600 text-white border-sky-500 shadow-sm shadow-sky-950/60 font-semibold'
+                          ? 'bg-sky-600 text-white border-sky-500 shadow-sm shadow-sky-950/60'
                           : 'bg-slate-900/80 text-slate-300 border-slate-700/70 hover:bg-slate-800 hover:text-white hover:border-slate-600'
                       }`}
-                      title="单击切换分组，双击或点击重命名编辑名称"
+                      title={`切换到分组 ${group.name}`}
                     >
-                      {isEditing ? (
-                        <input
-                          type="text"
-                          value={editingGroupName}
-                          onChange={(e) => setEditingGroupName(e.target.value)}
-                          onBlur={handleCommitRenameGroup}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') handleCommitRenameGroup();
-                            if (e.key === 'Escape') setEditingGroupId(null);
-                          }}
-                          autoFocus
-                          className="w-16 bg-slate-950 text-white text-xs px-1.5 py-0.5 rounded border border-sky-400 outline-none font-bold"
-                          onClick={(e) => e.stopPropagation()}
-                        />
-                      ) : (
-                        <span
-                          onDoubleClick={(e) => handleStartRenameGroup(group, e)}
-                          className="truncate max-w-[80px] sm:max-w-[120px] font-mono font-bold"
-                        >
-                          {group.name}
-                        </span>
-                      )}
-
-                      {/* 方式1 重命名按钮图标 (Hover 或处于活跃时显现) */}
-                      {!isEditing && (
-                        <button
-                          type="button"
-                          onClick={(e) => handleStartRenameGroup(group, e)}
-                          className={`p-0.5 rounded hover:bg-white/20 transition-colors ${
-                            isActive ? 'text-white/80 hover:text-white' : 'text-slate-400 hover:text-sky-300'
-                          }`}
-                          title="方式1：重命名此分组名称"
-                        >
-                          <Edit2 className="w-2.5 h-2.5" />
-                        </button>
-                      )}
-
-                      {/* 删除自定义分组 */}
-                      {!group.isPreset && groups.length > 1 && !isEditing && (
-                        <button
-                          type="button"
-                          onClick={(e) => handleDeleteCustomGroup(group.id, e)}
-                          className="p-0.5 rounded hover:bg-red-500/30 text-red-300 transition-colors"
-                          title="删除此分组"
-                        >
-                          <Trash2 className="w-2.5 h-2.5" />
-                        </button>
-                      )}
+                      <span>{group.name}</span>
                     </div>
                   );
                 })}
 
-                {/* 保存当前三窗口为新分组 按钮 */}
+                {/* 保存当前三窗口为新分组按钮 */}
                 <button
                   type="button"
                   onClick={() => setIsSaveGroupModalOpen(true)}
-                  className="flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-emerald-950/80 border border-emerald-700/60 text-emerald-300 hover:bg-emerald-900 hover:text-white transition-colors shrink-0 shadow-sm cursor-pointer"
-                  title="将当前 3 个视窗的实时配置保存为新分组 (默认按数字顺延编号)"
+                  className="p-1 rounded-md bg-emerald-950/80 border border-emerald-700/60 text-emerald-300 hover:bg-emerald-900 hover:text-white transition-colors shrink-0 shadow-sm cursor-pointer"
+                  title="保存当前 3 视窗为新分组"
                 >
                   <Plus className="w-3.5 h-3.5 text-emerald-400" />
-                  <span className="hidden sm:inline">新分组</span>
                 </button>
               </div>
 
-              {/* 右侧：全局一键刷新 + 全局统一缩放 (删除了独立的窗口缩放) + 3窗口详细网址面板折叠开关 */}
+              {/* 中部：每个窗口的最大化按钮和隐藏按钮 (把每个窗口的最大化按钮和隐藏按钮，放到标签栏) */}
+              <div className="flex items-center gap-1.5 shrink-0">
+                {windows.map((w) => (
+                  <div
+                    key={w.id}
+                    className={`flex items-center gap-0.5 px-1.5 py-0.5 rounded-md border text-xs font-mono transition-colors ${
+                      w.isMaximized
+                        ? 'bg-sky-900/80 border-sky-500 text-white'
+                        : w.isHidden
+                        ? 'bg-red-950/40 border-red-900/60 text-slate-400'
+                        : 'bg-slate-900/80 border-slate-700 text-slate-300'
+                    }`}
+                  >
+                    <span className={`font-bold px-1 text-xs ${w.isMaximized ? 'text-white' : w.isHidden ? 'text-slate-500' : 'text-sky-400'}`}>
+                      {w.id}
+                    </span>
+
+                    {/* 最大化 / 还原 */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (w.isHidden) handleRestoreWindow(w.id);
+                        handleToggleMaximize(w.id);
+                      }}
+                      className="p-1 rounded text-slate-300 hover:text-white hover:bg-slate-800 transition-colors"
+                      title={w.isMaximized ? `还原窗口 ${w.id}` : `最大化窗口 ${w.id}`}
+                    >
+                      {w.isMaximized ? <Minimize className="w-3 h-3 text-sky-400" /> : <Maximize className="w-3 h-3" />}
+                    </button>
+
+                    {/* 隐藏 / 显示 */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (w.isHidden) {
+                          handleRestoreWindow(w.id);
+                        } else {
+                          handleHideWindow(w.id);
+                        }
+                      }}
+                      className={`p-1 rounded transition-colors ${
+                        w.isHidden
+                          ? 'text-red-400 hover:text-red-300 hover:bg-red-950/60'
+                          : 'text-slate-400 hover:text-red-400 hover:bg-slate-800'
+                      }`}
+                      title={w.isHidden ? `恢复窗口 ${w.id}` : `隐藏窗口 ${w.id}`}
+                    >
+                      {w.isHidden ? <Eye className="w-3 h-3 text-red-400" /> : <EyeOff className="w-3 h-3" />}
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              {/* 右侧：全局一键刷新(仅图标) + 全局统一缩放(无文字) + 3窗口详细网址面板折叠(仅图标) */}
               <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-                {/* 全局一键刷新按钮 */}
+                {/* 全局一键刷新按钮：去掉“全局刷新”几个字，只留下刷新的图标 */}
                 <button
                   type="button"
                   onClick={handleGlobalRefresh}
-                  className="flex items-center gap-1 px-2 py-1 rounded-md bg-slate-900 hover:bg-slate-800 border border-slate-700/80 text-slate-300 hover:text-sky-300 text-xs font-medium transition-colors shadow-sm cursor-pointer"
-                  title="全局一键刷新全部 3 个视窗 (保持 WebSocket 重新触发行情拉取)"
+                  className="p-1.5 rounded-md bg-slate-900 hover:bg-slate-800 border border-slate-700/80 text-slate-300 hover:text-sky-300 text-xs transition-colors shadow-sm cursor-pointer"
+                  title="全局刷新全部 3 个视窗"
                 >
                   <RefreshCw className="w-3.5 h-3.5 text-sky-400" />
-                  <span className="hidden md:inline">全局刷新</span>
                 </button>
 
-                {/* 统一全局缩放控制器 (仅保留此处的统一调节) */}
+                {/* 统一全局缩放控制器：去掉“统一缩放”4个字，仅保留 - 100% + */}
                 <div
                   className="flex items-center bg-slate-900 border border-slate-700/80 rounded-md px-1 py-0.5 text-slate-200"
                   title="统一缩放全部视窗网页（50% ~ 200%）"
                 >
-                  <span className="text-[10px] text-slate-400 px-1 font-mono hidden lg:inline">统一缩放:</span>
                   <button
                     type="button"
                     onClick={() => handleGlobalZoom(globalZoom - 10)}
@@ -644,22 +643,18 @@ export default function App() {
                   </button>
                 </div>
 
-                {/* 方案 C 核心：3 窗口网址快速配置抽屉面板开关 */}
+                {/* 网址配置开关：去掉文字与箭头，只留下配置图标 */}
                 <button
                   type="button"
                   onClick={() => setShowAddressConfigPanel((prev) => !prev)}
-                  className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium border transition-colors cursor-pointer ${
+                  className={`p-1.5 rounded-md text-xs border transition-colors cursor-pointer ${
                     showAddressConfigPanel
                       ? 'bg-sky-950/90 border-sky-500 text-sky-300 shadow-sm'
                       : 'bg-slate-900/80 border-slate-700/80 text-slate-300 hover:bg-slate-800 hover:text-white'
                   }`}
-                  title={showAddressConfigPanel ? '收起 3 窗口地址配置面板' : '展开 3 窗口统一地址配置面板 (集中查看与修改 3 个窗口网址)'}
+                  title={showAddressConfigPanel ? '收起 3 窗口地址配置面板' : '展开 3 窗口统一地址配置面板'}
                 >
                   <SlidersHorizontal className="w-3.5 h-3.5 text-sky-400" />
-                  <span className="hidden sm:inline">3窗地址</span>
-                  <span className="text-[10px] font-mono bg-sky-900/60 text-sky-300 px-1 rounded">
-                    {showAddressConfigPanel ? '▲' : '▼'}
-                  </span>
                 </button>
               </div>
             </div>
