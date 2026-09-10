@@ -871,6 +871,132 @@ rootProject.name = "TradingMultiView"
 include(":app")`
   },
   {
+    path: '.github/workflows/android-build.yml',
+    language: 'yaml',
+    description: 'GitHub Actions 自动编译工作流：Push 代码后自动触发 Gradle 编译并输出 APK 产物',
+    content: `name: Android CI & Auto Build APK
+
+on:
+  push:
+    branches: [ "**" ]
+    tags:
+      - 'v*'
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: 'gradle'
+
+      - name: Accept Android SDK Licenses
+        run: |
+          yes | sdkmanager --licenses 2>/dev/null || true
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.8'
+
+      - name: Assemble Debug APK
+        run: gradle assembleDebug --stacktrace
+
+      - name: Upload Debug APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TradingMultiView-Debug-APK
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Auto Publish GitHub Release (On Tag Push)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: app/build/outputs/apk/debug/*.apk
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: \${{ secrets.GITHUB_TOKEN }}
+`
+  },
+  {
+    path: 'gradlew',
+    language: 'bash',
+    description: 'Gradle 跨平台启动运行脚本 (POSIX Shell)',
+    content: `#!/usr/bin/env sh
+APP_HOME=\`cd "\`dirname "$0"\`" >/dev/null; pwd\`
+if command -v gradle >/dev/null 2>&1; then
+    exec gradle "$@"
+elif [ -f "$APP_HOME/gradle/wrapper/gradle-wrapper.jar" ]; then
+    exec java -jar "$APP_HOME/gradle/wrapper/gradle-wrapper.jar" "$@"
+else
+    echo "Error: Gradle 8.8+ is required. Please install Gradle or open this project in Android Studio." >&2
+    exit 1
+fi`
+  },
+  {
+    path: 'app/src/main/res/xml/data_extraction_rules.xml',
+    language: 'xml',
+    description: 'Android 12+ 数据备份保护规则定义',
+    content: `<?xml version="1.0" encoding="utf-8"?>
+<data-extraction-rules>
+    <cloud-backup>
+        <include domain="sharedpref" path="."/>
+    </cloud-backup>
+    <device-transfer>
+        <include domain="sharedpref" path="."/>
+    </device-transfer>
+</data-extraction-rules>`
+  },
+  {
+    path: 'app/src/main/res/xml/backup_rules.xml',
+    language: 'xml',
+    description: 'Android 备份与恢复规则',
+    content: `<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <include domain="sharedpref" path="."/>
+</full-backup-content>`
+  },
+  {
+    path: 'app/src/main/res/drawable/ic_launcher.xml',
+    language: 'xml',
+    description: '应用矢量启动图标 (多视窗深色主题)',
+    content: `<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#0B0F17"
+        android:pathData="M0,0h108v108h-108z"/>
+    <path
+        android:fillColor="#38BDF8"
+        android:pathData="M24,28h16v52h-16z"/>
+    <path
+        android:fillColor="#10B981"
+        android:pathData="M46,20h16v60h-16z"/>
+    <path
+        android:fillColor="#F59E0B"
+        android:pathData="M68,36h16v44h-16z"/>
+</vector>`
+  },
+  {
     path: 'gradle.properties',
     language: 'properties',
     description: 'Gradle JVM 内存优化与 AndroidX 特性配置',

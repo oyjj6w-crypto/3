@@ -12,8 +12,12 @@ import {
   Cpu,
   Layers,
   Sparkles,
+  GitBranch,
+  Github,
+  Workflow,
   ArrowRight,
-  ExternalLink
+  ExternalLink,
+  PackageCheck
 } from 'lucide-react';
 import { ANDROID_PROJECT_FILES } from '../data/androidProjectSource';
 import { generateAndroidProjectZip, triggerDownload } from '../utils/zipGenerator';
@@ -21,7 +25,7 @@ import { generateAndroidProjectZip, triggerDownload } from '../utils/zipGenerato
 interface CodeExplorerModalProps {
   isOpen: boolean;
   onClose: () => void;
-  initialTab?: 'source' | 'architecture' | 'guide';
+  initialTab?: 'source' | 'architecture' | 'guide' | 'github';
 }
 
 export const CodeExplorerModal: React.FC<CodeExplorerModalProps> = ({
@@ -32,7 +36,7 @@ export const CodeExplorerModal: React.FC<CodeExplorerModalProps> = ({
   const [selectedFileIndex, setSelectedFileIndex] = useState(0);
   const [copied, setCopied] = useState(false);
   const [isZipping, setIsZipping] = useState(false);
-  const [activeTab, setActiveTab] = useState<'source' | 'architecture' | 'guide'>(initialTab);
+  const [activeTab, setActiveTab] = useState<'source' | 'architecture' | 'guide' | 'github'>(initialTab);
 
   useEffect(() => {
     if (isOpen && initialTab) {
@@ -147,6 +151,20 @@ export const CodeExplorerModal: React.FC<CodeExplorerModalProps> = ({
             >
               <Terminal className="w-3.5 h-3.5" />
               <span>编译与运行指南</span>
+            </button>
+            <button
+              onClick={() => setActiveTab('github')}
+              className={`py-2.5 font-medium border-b-2 transition-colors flex items-center gap-1.5 ${
+                activeTab === 'github'
+                  ? 'border-emerald-500 text-emerald-400 font-semibold'
+                  : 'border-transparent text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Github className="w-3.5 h-3.5" />
+              <span>GitHub 自动编译 (CI/CD)</span>
+              <span className="px-1.5 py-0.5 rounded-full text-[9px] bg-emerald-500/20 text-emerald-300 font-mono border border-emerald-500/30">
+                APK 产物
+              </span>
             </button>
           </div>
 
@@ -280,7 +298,7 @@ export const CodeExplorerModal: React.FC<CodeExplorerModalProps> = ({
               </ul>
             </div>
           </div>
-        ) : (
+        ) : activeTab === 'guide' ? (
           /* Android Studio 本地编译运行指南 Panel */
           <div className="flex-1 overflow-y-auto p-6 bg-[#0b0f19] space-y-4 text-slate-300 text-xs sm:text-sm">
             <h3 className="font-bold text-base text-slate-100">Android Studio 本地编译运行 4 步指南</h3>
@@ -310,6 +328,65 @@ export const CodeExplorerModal: React.FC<CodeExplorerModalProps> = ({
                 </p>
               </li>
             </ol>
+          </div>
+        ) : (
+          /* GitHub Actions Auto-Build CI/CD Panel */
+          <div className="flex-1 overflow-y-auto p-6 bg-[#0b0f19] space-y-6 text-slate-300 text-xs sm:text-sm">
+            {/* Header Banner */}
+            <div className="p-4 rounded-xl bg-gradient-to-r from-emerald-950/70 via-slate-900 to-sky-950/70 border border-emerald-500/30 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+              <div className="space-y-1.5">
+                <div className="flex items-center gap-2 text-emerald-400 font-bold text-sm sm:text-base">
+                  <Workflow className="w-5 h-5 text-emerald-400" />
+                  <span>GitHub Actions 自动编译与 APK 打包</span>
+                  <span className="px-2 py-0.5 rounded text-[10px] bg-emerald-500/20 text-emerald-300 font-mono border border-emerald-500/40">
+                    已就绪
+                  </span>
+                </div>
+                <p className="text-slate-300 text-xs leading-relaxed">
+                  项目根目录已配置 <code className="text-emerald-300 font-mono bg-emerald-950/60 px-1 py-0.5 rounded">.github/workflows/android-build.yml</code>，并补齐了 Android 15 矢量图标与备份配置。无论使用页面右上角的 <strong>Push to GitHub</strong>，还是通过终端 push，GitHub 均会自动触发云端构建！
+                </p>
+              </div>
+
+              <button
+                onClick={() => {
+                  const idx = ANDROID_PROJECT_FILES.findIndex(f => f.path.includes('android-build.yml'));
+                  if (idx !== -1) {
+                    setSelectedFileIndex(idx);
+                    setActiveTab('source');
+                  }
+                }}
+                className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow-md transition-all cursor-pointer"
+              >
+                <FileCode className="w-4 h-4" />
+                <span>查看 Workflow 源码</span>
+              </button>
+            </div>
+
+            {/* Quick Guide */}
+            <div className="p-4 rounded-xl bg-slate-900/90 border border-slate-800 space-y-3">
+              <h3 className="font-bold text-slate-100 flex items-center gap-2">
+                <Download className="w-4 h-4 text-emerald-400" />
+                <span>编译完成后，如何在 GitHub 上下载 APK 安装包？</span>
+              </h3>
+              <div className="space-y-2 text-xs text-slate-300">
+                <div className="flex items-start gap-2">
+                  <span className="w-5 h-5 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center shrink-0 font-bold text-slate-300 text-[11px]">1</span>
+                  <p>点击页面右上角 <strong>Push to GitHub</strong> 提交最新代码。</p>
+                </div>
+                <div className="flex items-start gap-2">
+                  <span className="w-5 h-5 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center shrink-0 font-bold text-slate-300 text-[11px]">2</span>
+                  <p>打开你的 GitHub 仓库主页，点击顶部菜单栏的 <strong className="text-sky-300 font-mono">Actions</strong> 标签页。</p>
+                </div>
+                <div className="flex items-start gap-2">
+                  <span className="w-5 h-5 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center shrink-0 font-bold text-slate-300 text-[11px]">3</span>
+                  <p>点击最新运行的 <strong className="text-emerald-300 font-mono">Android CI & Auto Build APK</strong> 任务。</p>
+                </div>
+                <div className="flex items-start gap-2">
+                  <span className="w-5 h-5 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center shrink-0 font-bold text-slate-300 text-[11px]">4</span>
+                  <p>页面最下方的 <strong className="text-amber-300 font-mono">Artifacts (产物)</strong> 区域会生成 <strong className="text-white font-mono bg-slate-800 px-1.5 py-0.5 rounded">TradingMultiView-Debug-APK</strong>，直接点击即可下载 APK 安装到平板或模拟器！</p>
+                </div>
+              </div>
+            </div>
           </div>
         )}
       </div>

@@ -13,7 +13,8 @@ import {
   Sparkles,
   Info,
   Layers,
-  MonitorCheck
+  MonitorCheck,
+  Github
 } from 'lucide-react';
 import { WindowConfig, OrientationMode } from './types';
 import { TradingWindow } from './components/TradingWindow';
@@ -71,7 +72,7 @@ export default function App() {
   const [currentTime, setCurrentTime] = useState<string>('');
   const [sessionUptime, setSessionUptime] = useState<number>(0);
   const [isDownloading, setIsDownloading] = useState<boolean>(false);
-  const [modalInitialTab, setModalInitialTab] = useState<'source' | 'architecture' | 'guide'>('source');
+  const [modalInitialTab, setModalInitialTab] = useState<'source' | 'architecture' | 'guide' | 'github'>('source');
 
   // Tablet status bar clock
   useEffect(() => {
@@ -263,6 +264,22 @@ export default function App() {
             <span>{showFrame ? '平板外壳' : '纯净全屏'}</span>
           </button>
 
+          {/* GitHub Auto-Build CI/CD Button */}
+          <button
+            onClick={() => {
+              setModalInitialTab('github');
+              setIsCodeModalOpen(true);
+            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-semibold shadow-md shadow-emerald-950/60 transition-all cursor-pointer"
+            title="查看 Push 到 GitHub 自动编译工作流与 APK 下载指引"
+          >
+            <Github className="w-3.5 h-3.5" />
+            <span>GitHub 自动编译</span>
+            <span className="hidden lg:inline px-1 py-0.2 rounded bg-emerald-900/80 text-[9px] text-emerald-300 font-mono">
+              CI/CD
+            </span>
+          </button>
+
           {/* View Android Source Code Button */}
           <button
             onClick={() => {
@@ -407,6 +424,17 @@ export default function App() {
           <span>3 视窗排布规则：3窗=1:1:1 (各33.3%) | 2窗=50%:50% | 1窗=100% 独占</span>
         </div>
         <div className="hidden sm:flex items-center gap-3">
+          <button
+            onClick={() => {
+              setModalInitialTab('github');
+              setIsCodeModalOpen(true);
+            }}
+            className="text-emerald-400 hover:text-emerald-300 flex items-center gap-1 cursor-pointer transition-colors"
+          >
+            <Github className="w-3 h-3" />
+            <span>GitHub 自动编译 (CI/CD)</span>
+          </button>
+          <span className="text-slate-600">|</span>
           <span className="text-sky-400">
             Activity: configChanges 保活
           </span>
