@@ -83,7 +83,7 @@ data class MultiViewUiState(
     val groups: List<TabGroup> = DEFAULT_TAB_GROUPS,
     val activeGroupId: String = "preset_1",
     val globalZoomPercent: Int = 100,
-    val isGlobalUrlCollapsed: Boolean = false
+    val isGlobalUrlCollapsed: Boolean = true
 ) {
     // 获取当前活跃且未隐藏的窗口列表
     val visibleWindows: List<WindowState>

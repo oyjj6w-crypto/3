@@ -525,8 +525,7 @@ fun TradingMultiViewScreen(
                                 isMaximized = uiState.maximizedWindowId == window.id,
                                 onToggleMaximize = { viewModel.toggleMaximize(window.id) },
                                 onHideWindow = { viewModel.hideWindow(window.id) },
-                                onReload = { viewModel.reload(window.id) },
-                                onNavigateToUrl = { url -> viewModel.navigateToUrl(window.id, url) }
+                                onReload = { viewModel.reload(window.id) }
                             )
                         }
                     }
@@ -642,7 +641,7 @@ fun SaveGroupDialog(
 }
 
 /**
- * 单个看盘视窗：顶部包含专业地址栏与控制栏 + 底层常驻 WebView
+ * 单个看盘视窗：纯净图表全屏渲染 + 浮动角标与控制 (方案 C：彻底移除内部地址栏，统一由顶部抽屉配置)
  */
 @Composable
 fun SingleTradingWindowView(
@@ -651,220 +650,112 @@ fun SingleTradingWindowView(
     onToggleMaximize: () -> Unit,
     onHideWindow: () -> Unit,
     onReload: () -> Unit,
-    onNavigateToUrl: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    var urlInputText by remember(window.currentUrl) { mutableStateOf(window.currentUrl) }
-    val focusManager = LocalFocusManager.current
-
-    Column(
+    Box(
         modifier = modifier
             .fillMaxSize()
-            .background(Color(0xFF121824))
+            .background(Color(0xFF090D16))
     ) {
-        // ================= 顶部综合地址栏与控制栏 (已精简：移除了独立缩放与书签按钮) =================
-        Surface(
+        // ================= 底层常驻 WebView (占满全部窗口，纯净看盘无多余输入条) =================
+        AndroidView(
+            factory = { context ->
+                val webView = PersistentWebViewPool.getWebView(window.id)
+                    ?: android.webkit.WebView(context)
+
+                // 确保从旧父容器解绑并添加到当前视窗
+                (webView.parent as? ViewGroup)?.removeView(webView)
+                webView
+            },
+            update = { webView ->
+                // 仅当 URL 与当前加载的不同时才触发 loadUrl，坚决防止重绘刷新中断 WebSocket！
+                if (webView.url != window.currentUrl && window.currentUrl.isNotEmpty()) {
+                    webView.loadUrl(window.currentUrl)
+                }
+            },
+            modifier = Modifier.fillMaxSize()
+        )
+
+        // ================= 左上角半透明悬浮视窗标签 (W1 / 活跃状态) =================
+        Box(
             modifier = Modifier
-                .fillMaxWidth()
-                .height(38.dp),
-            color = Color(0xFF161E2E),
-            tonalElevation = 4.dp
+                .align(Alignment.TopStart)
+                .padding(6.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(Color(0xFF0F172A).copy(alpha = 0.82f))
+                .border(1.dp, Color(0xFF334155).copy(alpha = 0.6f), RoundedCornerShape(12.dp))
+                .padding(horizontal = 7.dp, vertical = 3.dp)
         ) {
             Row(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(horizontal = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                // 窗口编号标识与常驻活跃指示灯
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    modifier = Modifier.padding(end = 2.dp)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(7.dp)
-                            .clip(CircleShape)
-                            .background(Color(0xFF10B981)) // 活跃绿色状态点
-                    )
-                    Text(
-                        text = "W${window.id}",
-                        color = Color(0xFF38BDF8),
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Monospace
-                    )
-                }
-
-                // 视窗独立刷新按钮
-                IconButton(
-                    onClick = onReload,
-                    modifier = Modifier.size(24.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Refresh,
-                        contentDescription = "刷新页面",
-                        tint = Color(0xFF94A3B8),
-                        modifier = Modifier.size(13.dp)
-                    )
-                }
-
-                // ================= 核心地址栏区域 (保留输入与前往，已删除常用书签按钮) =================
                 Box(
                     modifier = Modifier
-                        .weight(1f)
-                        .height(28.dp)
-                        .clip(RoundedCornerShape(4.dp))
-                        .background(Color(0xFF0A0F1A))
-                        .border(1.dp, Color(0xFF334155), RoundedCornerShape(4.dp))
-                        .padding(horizontal = 6.dp),
-                    contentAlignment = Alignment.CenterStart
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxSize(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Public,
-                            contentDescription = null,
-                            tint = Color(0xFF64748B),
-                            modifier = Modifier.size(12.dp)
-                        )
-
-                        BasicTextField(
-                            value = urlInputText,
-                            onValueChange = { urlInputText = it },
-                            modifier = Modifier.weight(1f),
-                            singleLine = true,
-                            textStyle = TextStyle(
-                                color = Color(0xFFF1F5F9),
-                                fontSize = 11.sp,
-                                fontFamily = FontFamily.Monospace
-                            ),
-                            cursorBrush = SolidColor(Color(0xFF38BDF8)),
-                            keyboardOptions = KeyboardOptions(
-                                imeAction = ImeAction.Go,
-                                keyboardType = KeyboardType.Uri
-                            ),
-                            keyboardActions = KeyboardActions(
-                                onGo = {
-                                    focusManager.clearFocus()
-                                    if (urlInputText.isNotBlank()) {
-                                        onNavigateToUrl(urlInputText)
-                                    }
-                                }
-                            ),
-                            decorationBox = { innerTextField ->
-                                if (urlInputText.isEmpty()) {
-                                    Text(
-                                        text = "输入网址 (如 binance.com)...",
-                                        color = Color(0xFF475569),
-                                        fontSize = 11.sp,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-                                innerTextField()
-                            }
-                        )
-
-                        if (urlInputText.isNotEmpty()) {
-                            IconButton(
-                                onClick = { urlInputText = "" },
-                                modifier = Modifier.size(18.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Close,
-                                    contentDescription = "清空输入",
-                                    tint = Color(0xFF64748B),
-                                    modifier = Modifier.size(12.dp)
-                                )
-                            }
-                        }
-
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(4.dp))
-                                .background(Color(0xFF0284C7))
-                                .clickable {
-                                    focusManager.clearFocus()
-                                    if (urlInputText.isNotBlank()) {
-                                        onNavigateToUrl(urlInputText)
-                                    }
-                                }
-                                .padding(horizontal = 6.dp, vertical = 2.dp)
-                        ) {
-                            Text(
-                                text = "前往",
-                                color = Color.White,
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                    }
-                }
-
-                // ================= 视窗窗口动作：全屏最大化 / 还原、隐藏 (已移除独立缩放按钮) =================
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    // 一键全屏最大化 / 还原按钮
-                    IconButton(
-                        onClick = onToggleMaximize,
-                        modifier = Modifier.size(26.dp)
-                    ) {
-                        Icon(
-                            imageVector = if (isMaximized) Icons.Default.FullscreenExit else Icons.Default.Fullscreen,
-                            contentDescription = if (isMaximized) "还原窗口" else "全屏最大化",
-                            tint = if (isMaximized) Color(0xFF38BDF8) else Color(0xFFE2E8F0),
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
-
-                    // 隐藏窗口按钮
-                    IconButton(
-                        onClick = onHideWindow,
-                        modifier = Modifier.size(26.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.VisibilityOff,
-                            contentDescription = "隐藏窗口",
-                            tint = Color(0xFFEF4444),
-                            modifier = Modifier.size(14.dp)
-                        )
-                    }
-                }
+                        .size(6.dp)
+                        .clip(CircleShape)
+                        .background(Color(0xFF10B981))
+                )
+                Text(
+                    text = "W${window.id}",
+                    color = Color(0xFF38BDF8),
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Monospace
+                )
             }
         }
 
-        // ================= 底层常驻 WebView =================
-        // 使用 AndroidView 挂载预初始化的单例 WebView，确保生命周期中不反复重建
-        Box(
+        // ================= 右上角半透明悬浮控制按钮组 (刷新、最大化/还原、隐藏) =================
+        Row(
             modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f)
+                .align(Alignment.TopEnd)
+                .padding(6.dp)
+                .clip(RoundedCornerShape(6.dp))
+                .background(Color(0xFF0F172A).copy(alpha = 0.82f))
+                .border(1.dp, Color(0xFF334155).copy(alpha = 0.6f), RoundedCornerShape(6.dp))
+                .padding(2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(2.dp)
         ) {
-            AndroidView(
-                factory = { context ->
-                    val webView = PersistentWebViewPool.getWebView(window.id)
-                        ?: android.webkit.WebView(context)
+            // 单窗刷新
+            IconButton(
+                onClick = onReload,
+                modifier = Modifier.size(24.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Refresh,
+                    contentDescription = "刷新",
+                    tint = Color(0xFF94A3B8),
+                    modifier = Modifier.size(13.dp)
+                )
+            }
 
-                    // 确保从旧父容器解绑并添加到当前视窗
-                    (webView.parent as? ViewGroup)?.removeView(webView)
-                    webView
-                },
-                update = { webView ->
-                    // 仅当 URL 与当前加载的不同时才触发 loadUrl，坚决防止重绘刷新中断 WebSocket！
-                    if (webView.url != window.currentUrl && window.currentUrl.isNotEmpty()) {
-                        webView.loadUrl(window.currentUrl)
-                    }
-                },
-                modifier = Modifier.fillMaxSize()
-            )
+            // 一键全屏最大化 / 还原
+            IconButton(
+                onClick = onToggleMaximize,
+                modifier = Modifier.size(24.dp)
+            ) {
+                Icon(
+                    imageVector = if (isMaximized) Icons.Default.FullscreenExit else Icons.Default.Fullscreen,
+                    contentDescription = if (isMaximized) "还原窗口" else "全屏最大化",
+                    tint = if (isMaximized) Color(0xFF38BDF8) else Color(0xFFCBD5E1),
+                    modifier = Modifier.size(14.dp)
+                )
+            }
+
+            // 隐藏窗口
+            IconButton(
+                onClick = onHideWindow,
+                modifier = Modifier.size(24.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.VisibilityOff,
+                    contentDescription = "隐藏窗口",
+                    tint = Color(0xFFEF4444).copy(alpha = 0.85f),
+                    modifier = Modifier.size(13.dp)
+                )
+            }
         }
     }
 }
