@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Maximize2, Minimize2, EyeOff, RotateCw, ExternalLink, Activity, Wifi, Settings, Globe, ArrowLeft, ArrowRight, Bookmark, X, Search, ChevronDown } from 'lucide-react';
+import { Maximize2, Minimize2, EyeOff, RotateCw, ExternalLink, Activity, Wifi, Settings, Globe, ArrowLeft, ArrowRight, Bookmark, X, Search, ChevronDown, Monitor } from 'lucide-react';
 import { WindowConfig } from '../types';
 
 interface TradingWindowProps {
@@ -50,6 +50,13 @@ export const TradingWindow: React.FC<TradingWindowProps> = ({
   const [urlBarInput, setUrlBarInput] = useState(win.url);
   const [customUrlInput, setCustomUrlInput] = useState(win.url);
   const [customTitleInput, setCustomTitleInput] = useState(win.title);
+  const [isDesktopMode, setIsDesktopMode] = useState<boolean>(win.isDesktopMode ?? true);
+  
+  const toggleDesktop = () => {
+    const next = !isDesktopMode;
+    setIsDesktopMode(next);
+    onUpdateConfig(win.id, { isDesktopMode: next });
+  };
   
   // Real live price from Binance WebSocket
   const [livePrice, setLivePrice] = useState<string>('--');
@@ -330,6 +337,25 @@ export const TradingWindow: React.FC<TradingWindowProps> = ({
             <span>${livePrice}</span>
           </div>
 
+          {/* One-Click PC Desktop Mode Toggle (Default: Enabled, PC Chrome UA) */}
+          <button
+            type="button"
+            onClick={toggleDesktop}
+            title={
+              isDesktopMode
+                ? '默认桌面模式 (PC UA): Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/128.0.0.0\n点击可切换'
+                : '当前为移动端模式，点击切换回默认 PC 桌面模式'
+            }
+            className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-bold border transition-all ${
+              isDesktopMode
+                ? 'bg-sky-950/80 border-sky-600/70 text-sky-400 shadow-xs'
+                : 'bg-slate-900 border-slate-700 text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <Monitor className="w-3 h-3" />
+            <span>PC</span>
+          </button>
+
           {/* One-Click Maximize / Restore */}
           <button
             onClick={() => onToggleMaximize(win.id)}
@@ -452,6 +478,33 @@ export const TradingWindow: React.FC<TradingWindowProps> = ({
                   className="w-full px-2.5 py-1.5 bg-slate-900 border border-slate-700 rounded text-xs font-mono text-slate-100 focus:outline-hidden focus:border-sky-500"
                   placeholder="https://..."
                 />
+              </div>
+
+              {/* PC Desktop Mode Setting & UA Info */}
+              <div className="p-2.5 rounded bg-slate-900/90 border border-slate-700/80 text-[11px] space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="flex items-center gap-1.5 text-slate-200 font-semibold">
+                    <Monitor className="w-3.5 h-3.5 text-sky-400" />
+                    默认桌面模式 (PC Mode)
+                  </span>
+                  <button
+                    type="button"
+                    onClick={toggleDesktop}
+                    className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold transition-colors ${
+                      isDesktopMode
+                        ? 'bg-sky-600 text-white'
+                        : 'bg-slate-800 text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    {isDesktopMode ? '已启用 PC UA' : '移动端 UA'}
+                  </button>
+                </div>
+                <div className="text-[10px] text-slate-400 leading-tight">
+                  <span className="text-slate-500 font-mono">User-Agent: </span>
+                  <span className="font-mono text-sky-300/90 break-all">
+                    Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/128.0.0.0 Safari/537.36
+                  </span>
+                </div>
               </div>
 
               <div className="flex justify-end gap-2 pt-2">

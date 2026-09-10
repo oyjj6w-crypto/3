@@ -79,7 +79,8 @@ fun TradingMultiViewScreen(
                             onReload = { viewModel.reload(window.id) },
                             onGoBack = { viewModel.goBack(window.id) },
                             onGoForward = { viewModel.goForward(window.id) },
-                            onNavigateToUrl = { url -> viewModel.navigateToUrl(window.id, url) }
+                            onNavigateToUrl = { url -> viewModel.navigateToUrl(window.id, url) },
+                            onToggleDesktopMode = { viewModel.toggleDesktopMode(window.id) }
                         )
                     }
                 }
@@ -117,6 +118,7 @@ fun SingleTradingWindowView(
     onGoBack: () -> Unit,
     onGoForward: () -> Unit,
     onNavigateToUrl: (String) -> Unit,
+    onToggleDesktopMode: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     var urlInputText by remember(window.currentUrl) { mutableStateOf(window.currentUrl) }
@@ -362,11 +364,36 @@ fun SingleTradingWindowView(
                     }
                 }
 
-                // ================= 视窗窗口动作：全屏最大化 / 还原、隐藏 =================
+                // ================= 视窗窗口动作：桌面模式切换、全屏最大化 / 还原、隐藏 =================
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(2.dp)
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
+                    // 默认 PC 桌面模式（User-Agent: PC Chrome + 宽视口）切换/指示按钮
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(
+                                if (window.isDesktopMode) Color(0xFF0C2840) else Color(0xFF1E293B)
+                            )
+                            .border(
+                                1.dp,
+                                if (window.isDesktopMode) Color(0xFF0284C7) else Color(0xFF475569),
+                                RoundedCornerShape(4.dp)
+                            )
+                            .clickable { onToggleDesktopMode() }
+                            .padding(horizontal = 6.dp, vertical = 3.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = if (window.isDesktopMode) "🖥️ PC" else "📱 Mobile",
+                            color = if (window.isDesktopMode) Color(0xFF38BDF8) else Color(0xFF94A3B8),
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
+
                     // 一键全屏最大化 / 还原按钮
                     IconButton(
                         onClick = onToggleMaximize,

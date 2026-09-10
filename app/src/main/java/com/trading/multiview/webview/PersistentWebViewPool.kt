@@ -43,6 +43,10 @@ object PersistentWebViewPool {
 
     data class BookmarkItem(val title: String, val url: String, val icon: String)
 
+    // 标准 PC 桌面端 Chrome User-Agent 标头（Windows 10 x64 + Chrome 128）
+    // 强制各大交易所与行情站（Binance, TradingView, OKX, Bybit 等）加载完整版 PC 桌面交易终端
+    const val PC_DESKTOP_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+
     fun init(context: Context) {
         if (isInitialized) return
         val appContext = context.applicationContext
@@ -85,9 +89,9 @@ object PersistentWebViewPool {
                 cacheMode = WebSettings.LOAD_DEFAULT
                 mediaPlaybackRequiresUserGesture = false
 
-                // 模拟标准 Chrome 桌面/平板 UA，规避移动端轻量排版降级
-                val defaultUA = userAgentString
-                userAgentString = defaultUA.replace("Mobile", "Tablet")
+                // ================= 默认强制开启桌面模式 (Desktop Mode) =================
+                // 默认使用真实 PC Chrome 桌面 User-Agent，规避移动端轻量排版降级或强跳 APP
+                userAgentString = PC_DESKTOP_USER_AGENT
             }
 
             webViewClient = object : WebViewClient() {
@@ -137,6 +141,26 @@ object PersistentWebViewPool {
 
     fun reloadWindow(windowId: Int) {
         webViewMap[windowId]?.reload()
+    }
+
+    /**
+     * 动态切换桌面模式 / 移动端模式
+     * 默认开启桌面模式 (enableDesktop = true)，UA 为标准 PC Chrome
+     */
+    fun setDesktopMode(windowId: Int, enableDesktop: Boolean) {
+        val webView = webViewMap[windowId] ?: return
+        webView.settings.apply {
+            if (enableDesktop) {
+                userAgentString = PC_DESKTOP_USER_AGENT
+                useWideViewPort = true
+                loadWithOverviewMode = true
+            } else {
+                userAgentString = WebSettings.getDefaultUserAgent(webView.context)
+                useWideViewPort = false
+                loadWithOverviewMode = false
+            }
+        }
+        webView.reload()
     }
 
     fun goBack(windowId: Int): Boolean {

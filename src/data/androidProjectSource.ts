@@ -161,6 +161,9 @@ object PersistentWebViewPool {
         3 to "https://s.tradingview.com/widgetembed/?symbol=BINANCE:SOLUSDT&interval=240&theme=dark"
     )
 
+    // 标准 PC 桌面端 Chrome User-Agent 标头 (Windows 10 x64 + Chrome 128)
+    const val PC_DESKTOP_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+
     fun init(context: Context) {
         if (isInitialized) return
         val appContext = context.applicationContext
@@ -203,9 +206,8 @@ object PersistentWebViewPool {
                 cacheMode = WebSettings.LOAD_DEFAULT
                 mediaPlaybackRequiresUserGesture = false
 
-                // 模拟标准 Chrome 桌面/平板 UA，规避移动端轻量排版降级
-                val defaultUA = userAgentString
-                userAgentString = defaultUA.replace("Mobile", "Tablet")
+                // 默认强制开启 PC 桌面模式，注入标准 Windows Chrome PC User-Agent，规避移动端轻量排版降级
+                userAgentString = PC_DESKTOP_USER_AGENT
             }
 
             webViewClient = object : WebViewClient() {
@@ -243,6 +245,23 @@ object PersistentWebViewPool {
         webViewMap[windowId]?.loadUrl(url)
     }
 
+    /**
+     * 切换桌面模式 (PC Chrome UA + 宽视口) / 移动模式
+     */
+    fun setDesktopMode(windowId: Int, enableDesktop: Boolean) {
+        val webView = webViewMap[windowId] ?: return
+        webView.settings.apply {
+            userAgentString = if (enableDesktop) {
+                PC_DESKTOP_USER_AGENT
+            } else {
+                WebSettings.getDefaultUserAgent(webView.context)
+            }
+            useWideViewPort = enableDesktop
+            loadWithOverviewMode = enableDesktop
+        }
+        webView.reload()
+    }
+
     fun destroyAll() {
         webViewMap.forEach { (_, webView) ->
             (webView.parent as? ViewGroup)?.removeView(webView)
@@ -273,7 +292,8 @@ data class WindowState(
     val symbol: String,
     val currentUrl: String,
     val isHidden: Boolean = false,
-    val isMaximized: Boolean = false
+    val isMaximized: Boolean = false,
+    val isDesktopMode: Boolean = true
 )
 
 data class MultiViewUiState(
@@ -377,6 +397,29 @@ class TradingViewModel : ViewModel() {
             state.copy(
                 maximizedWindowId = null,
                 windows = state.windows.map { it.copy(isHidden = false, isMaximized = false) }
+            )
+        }
+    }
+
+    /**
+     * 刷新窗口
+     */
+    fun reload(windowId: Int) {
+        PersistentWebViewPool.reloadWindow(windowId)
+    }
+
+    /**
+     * 切换视窗桌面模式 (PC Chrome UA 与宽视口) / 移动模式
+     */
+    fun toggleDesktopMode(windowId: Int) {
+        _uiState.update { state ->
+            val currentMode = state.windows.find { it.id == windowId }?.isDesktopMode ?: true
+            val newMode = !currentMode
+            PersistentWebViewPool.setDesktopMode(windowId, newMode)
+            state.copy(
+                windows = state.windows.map { win ->
+                    if (win.id == windowId) win.copy(isDesktopMode = newMode) else win
+                }
             )
         }
     }

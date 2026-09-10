@@ -13,7 +13,8 @@ data class WindowState(
     val symbol: String,
     val currentUrl: String,
     val isHidden: Boolean = false,
-    val isMaximized: Boolean = false
+    val isMaximized: Boolean = false,
+    val isDesktopMode: Boolean = true // 默认开启桌面模式，User-Agent 为 PC Chrome
 )
 
 data class MultiViewUiState(
@@ -91,6 +92,22 @@ class TradingViewModel : ViewModel() {
      */
     fun reload(windowId: Int) {
         PersistentWebViewPool.reloadWindow(windowId)
+    }
+
+    /**
+     * 切换视窗桌面模式 (PC Chrome UA 与宽视口) / 移动模式
+     */
+    fun toggleDesktopMode(windowId: Int) {
+        _uiState.update { state ->
+            val currentMode = state.windows.find { it.id == windowId }?.isDesktopMode ?: true
+            val newMode = !currentMode
+            PersistentWebViewPool.setDesktopMode(windowId, newMode)
+            state.copy(
+                windows = state.windows.map { win ->
+                    if (win.id == windowId) win.copy(isDesktopMode = newMode) else win
+                }
+            )
+        }
     }
 
     /**

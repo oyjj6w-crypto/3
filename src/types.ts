@@ -6,6 +6,7 @@ export interface WindowConfig {
   exchange: 'Binance' | 'TradingView' | 'CoinGecko' | 'Custom';
   isHidden: boolean;
   isMaximized: boolean;
+  isDesktopMode?: boolean;
   timeframe: string;
   wsActive: boolean;
   messageCount: number;
