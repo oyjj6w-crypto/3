@@ -854,13 +854,7 @@ plugins {
     description: '工程模块与 Maven 仓库定义',
     content: `pluginManagement {
     repositories {
-        google {
-            content {
-                includeGroupByRegex("com\\\\.android.*")
-                includeGroupByRegex("com\\\\.google.*")
-                includeGroupByRegex("androidx.*")
-            }
-        }
+        google()
         mavenCentral()
         gradlePluginPortal()
     }
@@ -879,33 +873,34 @@ include(":app")`
   {
     path: '.github/workflows/android-build.yml',
     language: 'yaml',
-    description: 'GitHub Actions 自动编译工作流：Push 代码后自动触发 Gradle 编译并输出 APK/AAB 产物',
+    description: 'GitHub Actions 自动编译工作流：Push 代码后自动触发 Gradle 编译并输出 APK 产物',
     content: `name: Android CI & Auto Build APK
 
-# 触发条件：任何分支 Push、提交 Tag (v*)、发起 PR、或手动触发，均会触发编译
 on:
   push:
     branches: [ "**" ]
     tags:
       - 'v*'
   pull_request:
-  workflow_dispatch: # 支持在 GitHub Actions 控制台手动一键点击触发构建
+  workflow_dispatch:
 
 jobs:
   build:
-    name: Build Android APK & Release Artifacts
+    name: Build Android APK
     runs-on: ubuntu-latest
     permissions:
-      contents: write # 支持自动发布 GitHub Releases
-    
+      contents: write
+
     steps:
-      # 1. 检出仓库代码
+      # 1. 检出代码
       - name: Checkout Repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      # 2. 配置 JDK 17 (与 compileSdk 35 及 AGP 8.8 完美兼容)
+      # 2. 安装配置 Android SDK 并自动同意 License 协议
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      # 3. 配置 JDK 17 (与 compileSdk 35 及 AGP 8.8 兼容)
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
@@ -913,59 +908,52 @@ jobs:
           distribution: 'temurin'
           cache: 'gradle'
 
-      # 3. 配置 Gradle 环境与缓存
+      # 4. 配置 Gradle 8.8 环境与依赖缓存加速
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.8'
 
-      # 4. 确保 Gradle Wrapper 就绪
-      - name: Ensure Gradle Wrapper
-        run: |
-          if [ ! -f ./gradlew ]; then
-            gradle wrapper --gradle-version 8.8
-          fi
-          chmod +x ./gradlew
-
-      # 5. 执行 Debug APK 编译
+      # 5. 执行 Debug APK 编译 (直接使用 setup-gradle 提供的 gradle 命令，免除 wrapper 缺失报错)
       - name: Assemble Debug APK
-        run: ./gradlew assembleDebug --stacktrace
+        run: gradle assembleDebug --stacktrace
 
-      # 6. 执行 Release APK 编译 (使用内置 debug 签名或直接输出无签名包)
-      - name: Assemble Release APK
-        run: ./gradlew assembleRelease --stacktrace || true
-
-      # 7. 上传编译生成的 Debug APK 到 GitHub Actions Artifacts (可直接点击下载)
+      # 6. 上传生成的 Debug APK 供直接点击下载
       - name: Upload Debug APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: TradingMultiView-Debug-APK
           path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
           retention-days: 14
 
-      # 8. 上传编译生成的 Release APK/AAB 到 GitHub Actions Artifacts
-      - name: Upload Release APK Artifact
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: TradingMultiView-Release-APK
-          path: app/build/outputs/apk/release/*.apk
-          retention-days: 30
-
-      # 9. 若本次提交包含版本 Tag (如 v1.0.0)，自动创建 GitHub Release 并附带 APK 安装包
+      # 7. 若提交打上版本 Tag (例如 v1.0.0)，自动创建 GitHub Release 并附带 APK 文件
       - name: Auto Publish GitHub Release (On Tag Push)
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            app/build/outputs/apk/debug/*.apk
-            app/build/outputs/apk/release/*.apk
+          files: app/build/outputs/apk/debug/*.apk
           draft: false
           prerelease: false
           generate_release_notes: true
         env:
           GITHUB_TOKEN: \${{ secrets.GITHUB_TOKEN }}
 `
+  },
+  {
+    path: 'gradlew',
+    language: 'bash',
+    description: 'Gradle 跨平台启动运行脚本 (POSIX Shell)',
+    content: `#!/usr/bin/env sh
+APP_HOME=\`cd "\`dirname "$0"\`" >/dev/null; pwd\`
+if command -v gradle >/dev/null 2>&1; then
+    exec gradle "$@"
+elif [ -f "$APP_HOME/gradle/wrapper/gradle-wrapper.jar" ]; then
+    exec java -jar "$APP_HOME/gradle/wrapper/gradle-wrapper.jar" "$@"
+else
+    echo "Error: Gradle 8.8+ is required. Please install Gradle or open this project in Android Studio." >&2
+    exit 1
+fi`
   },
   {
     path: 'gradle.properties',
