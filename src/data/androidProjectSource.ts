@@ -186,118 +186,59 @@ object PersistentWebViewPool {
     var currentZoomPercent: Int = 100
 
     /**
-     * 核心智能 PC 视口与全景自适应注入引擎 (Auto-Fit Overview Engine)
-     * 彻底解决：
-     * 1. 3 分屏下每个窗口宽度较窄（~400px-600px），TradingView 8 分屏等多图表大排版页面（通常需 1440px+ 宽度）
-     *    在加载或刷新后溢出屏幕、被截断，导致必须手动双指捏合缩放才能看全的痛点。
-     * 2. 页面在任何刷新（Reload）或标签切换后，自动侦测视窗真实可用尺寸与内容排版，
-     *    动态计算最优缩放系数并写入 viewport，确保一键刷新后立即完整呈现全部 8 个图表与工具栏！
-     * 3. 支持窗口最大化或横竖屏旋转时的自动自适应适配。
+     * 极简稳定、无死循环、无闪烁的 PC 桌面视口脚本 (Safe Desktop Viewport Injection)
+     * 解决要点：
+     * 1. 绝对不挂载 window.resize 监听，杜绝与 TradingView 8 联屏 WebGL Canvas 重绘死循环导致显存溢出闪退；
+     * 2. 不修改 DOM 元素的 minWidth/overflowX 样式，避免扰动图表布局计算；
+     * 3. 将 viewport 设为固定的标准宽屏桌面宽度 1440px（不带冲突的 scale 限制），
+     *    配合 Android WebView 原生的 loadWithOverviewMode = true 与 useWideViewPort = true，
+     *    WebView 会由底层直接将 1440px 内容完整等比缩放贴合到当前屏幕，实现加载与刷新后自动全景完整显示！
      */
-    fun getDesktopViewportJs(zoomPercent: Int = currentZoomPercent): String {
-        val zoomFactor = (zoomPercent.coerceIn(50, 250)) / 100.0
-        return """
-            (function() {
-                var zoomFactor = $zoomFactor;
-                function autoFitDesktopLayout() {
-                    try {
-                        // 1. 获取当前视窗在当前屏幕密度下的容器可用宽度 (CSS 像素)
-                        var containerWidth = window.innerWidth || document.documentElement.clientWidth || (document.body ? document.body.clientWidth : 0);
-                        if (!containerWidth || containerWidth <= 0) {
-                            containerWidth = window.screen.width ? (window.screen.width / 3) : 600;
-                        }
+    const val DESKTOP_VIEWPORT_JS = """
+        (function() {
+            if (window.__desktopViewportApplied) return;
+            window.__desktopViewportApplied = true;
 
-                        // 2. 针对 TradingView 8 分屏等多图表复杂页面，基准渲染宽度（保证 8 张 K 线图并列排版不塌陷）
-                        var bodyScrollW = document.body ? document.body.scrollWidth : 0;
-                        var docScrollW = document.documentElement ? document.documentElement.scrollWidth : 0;
-                        // 保证至少拥有 1440px 的标准宽屏桌面断点，规避折叠成手机版单图
-                        var baseWidth = 1440;
-                        var contentWidth = Math.max(baseWidth, bodyScrollW, docScrollW);
-
-                        // 3. 动态计算自适应等比缩放比
-                        var baseScale = containerWidth / contentWidth;
-                        var finalScale = (baseScale * zoomFactor);
-                        // 保护合理范围
-                        if (finalScale > 1.5) finalScale = 1.0;
-                        if (finalScale < 0.05) finalScale = 0.05;
-
-                        // 4. 重写/注入 Meta Viewport 标签
-                        var meta = document.querySelector('meta[name="viewport"]');
-                        if (!meta) {
-                            meta = document.createElement('meta');
-                            meta.name = 'viewport';
-                            if (document.head) {
-                                document.head.appendChild(meta);
-                            }
-                        }
-                        if (meta) {
-                            var targetContent = 'width=' + contentWidth + ', initial-scale=' + finalScale.toFixed(4) + ', minimum-scale=0.05, maximum-scale=5.0, user-scalable=yes';
-                            if (meta.getAttribute('content') !== targetContent) {
-                                meta.setAttribute('content', targetContent);
-                            }
-                        }
-
-                        // 5. 确保页面外层容器不限制宽度
-                        if (document.body) {
-                            document.body.style.minWidth = contentWidth + 'px';
-                            document.body.style.overflowX = 'auto';
-                        }
-                        if (document.documentElement) {
-                            document.documentElement.style.minWidth = contentWidth + 'px';
-                        }
-
-                        // 6. 伪装标准 PC 桌面平台标识
-                        if (window.navigator) {
-                            try {
-                                Object.defineProperty(navigator, 'userAgentData', {
-                                    get: function() {
-                                        return {
-                                            mobile: false,
-                                            platform: 'Windows',
-                                            brands: [
-                                                { brand: 'Chromium', version: '128' },
-                                                { brand: 'Google Chrome', version: '128' },
-                                                { brand: 'Not;A=Brand', version: '24' }
-                                            ]
-                                        };
-                                    },
-                                    configurable: true
-                                });
-                                Object.defineProperty(navigator, 'platform', {
-                                    get: function() { return 'Win32'; },
-                                    configurable: true
-                                });
-                                Object.defineProperty(navigator, 'maxTouchPoints', {
-                                    get: function() { return 0; },
-                                    configurable: true
-                                });
-                            } catch(e) {}
-                        }
-                    } catch(err) {}
+            try {
+                // 1. 设置视口为固定 1440px 桌面标准宽度，交由 WebView 原生 overview 机制自适应缩放到视窗
+                var meta = document.querySelector('meta[name="viewport"]');
+                if (!meta) {
+                    meta = document.createElement('meta');
+                    meta.name = 'viewport';
+                    if (document.head) document.head.appendChild(meta);
+                }
+                if (meta) {
+                    meta.setAttribute('content', 'width=1440, user-scalable=yes');
                 }
 
-                if (document.readyState === 'loading') {
-                    document.addEventListener('DOMContentLoaded', autoFitDesktopLayout);
-                } else {
-                    autoFitDesktopLayout();
+                // 2. 伪装标准 PC 桌面平台标识 (规避移动端跳转与强制降级)
+                if (window.navigator) {
+                    Object.defineProperty(navigator, 'userAgentData', {
+                        get: function() {
+                            return {
+                                mobile: false,
+                                platform: 'Windows',
+                                brands: [
+                                    { brand: 'Chromium', version: '128' },
+                                    { brand: 'Google Chrome', version: '128' },
+                                    { brand: 'Not;A=Brand', version: '24' }
+                                ]
+                            };
+                        },
+                        configurable: true
+                    });
+                    Object.defineProperty(navigator, 'platform', {
+                        get: function() { return 'Win32'; },
+                        configurable: true
+                    });
+                    Object.defineProperty(navigator, 'maxTouchPoints', {
+                        get: function() { return 0; },
+                        configurable: true
+                    });
                 }
-
-                // 监听窗口尺寸变化（如分屏拉伸、横竖屏旋转、最大化）
-                window.addEventListener('resize', autoFitDesktopLayout);
-
-                // TradingView 的 8 联屏通常经过多轮异步框架与图表画布初始化，
-                // 在关键时间节点多次自动重新校准，确保每次刷新后无缝自动全景显示
-                setTimeout(autoFitDesktopLayout, 150);
-                setTimeout(autoFitDesktopLayout, 500);
-                setTimeout(autoFitDesktopLayout, 1200);
-                setTimeout(autoFitDesktopLayout, 2500);
-                setTimeout(autoFitDesktopLayout, 4500);
-            })();
-        """.trimIndent()
-    }
-
-    val DESKTOP_VIEWPORT_JS: String
-        get() = getDesktopViewportJs(currentZoomPercent)
+            } catch (e) {}
+        })();
+    """
 
     fun init(context: Context) {
         if (isInitialized) return
@@ -361,8 +302,12 @@ object PersistentWebViewPool {
 
                 override fun onPageFinished(view: WebView?, url: String?) {
                     super.onPageFinished(view, url)
-                    // 页面渲染完成后再次加固注入，防止动态 SPA 路由二次重写 viewport 标签
+                    // 页面渲染完成后再次加固注入
                     view?.evaluateJavascript(DESKTOP_VIEWPORT_JS, null)
+                    if (currentZoomPercent != 100) {
+                        val zoomScale = currentZoomPercent / 100.0
+                        view?.evaluateJavascript("document.documentElement.style.zoom = '$zoomScale';", null)
+                    }
                     if (url != null) {
                         onUrlChanged?.invoke(windowId, url, view?.title ?: "")
                     }
@@ -403,7 +348,7 @@ object PersistentWebViewPool {
     }
 
     /**
-     * 网页全局缩放调节 (动态更新视口缩放系数，支持用户在顶部栏 +/- 微调)
+     * 网页全局缩放调节 (使用纯净 CSS zoom 与 textZoom，不触发 WebGL 重新初始化与闪退)
      * @param windowId 视窗 ID
      * @param zoomPercent 缩放百分比 (50% ~ 250%)
      */
@@ -412,15 +357,19 @@ object PersistentWebViewPool {
         val clampedZoom = zoomPercent.coerceIn(50, 250)
         currentZoomPercent = clampedZoom
         webView.settings.textZoom = clampedZoom
-        webView.evaluateJavascript(getDesktopViewportJs(clampedZoom), null)
+        val zoomScale = clampedZoom / 100.0
+        webView.evaluateJavascript("document.documentElement.style.zoom = '$zoomScale';", null)
     }
 
     /**
-     * 针对指定视窗执行一键全景自适应重排 (Auto-Fit Overview)
+     * 针对指定视窗重置回标准自适应全景显示 (Auto-Fit Overview)
      */
     fun triggerAutoFit(windowId: Int) {
         val webView = webViewMap[windowId] ?: return
-        webView.evaluateJavascript(getDesktopViewportJs(currentZoomPercent), null)
+        currentZoomPercent = 100
+        webView.settings.textZoom = 100
+        webView.evaluateJavascript("document.documentElement.style.zoom = '1.0';", null)
+        webView.evaluateJavascript(DESKTOP_VIEWPORT_JS, null)
     }
 
     /**
