@@ -179,6 +179,9 @@ class TradingViewModel : ViewModel() {
 
     fun resetGlobalZoom() {
         setGlobalZoom(100)
+        listOf(1, 2, 3).forEach { windowId ->
+            PersistentWebViewPool.triggerAutoFit(windowId)
+        }
     }
 
     /**
