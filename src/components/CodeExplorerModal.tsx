@@ -169,7 +169,7 @@ export const CodeExplorerModal: React.FC<CodeExplorerModalProps> = ({
           </div>
 
           <div className="text-[11px] font-mono text-slate-500 hidden sm:block">
-            Target: Android 15 (API 35) • Kotlin 2.0 • Gradle 8.8
+            Target: Android 15 (API 35) • Kotlin 2.0 • Gradle 8.10.2
           </div>
         </div>
 

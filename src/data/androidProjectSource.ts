@@ -902,17 +902,30 @@ jobs:
           distribution: 'temurin'
           cache: 'gradle'
 
-      - name: Accept Android SDK Licenses
+      - name: Setup Android SDK & Licenses
         run: |
-          yes | sdkmanager --licenses 2>/dev/null || true
+          mkdir -p "$ANDROID_HOME/licenses"
+          echo -e "8933bad161af4178b1185d1a37fbf41ea5269c55\\nd56f5187479451eabf01fb78af6dfcb131a6481e\\n24333f8a63b6825ea9c5514f83c2829b004d1fee" > "$ANDROID_HOME/licenses/android-sdk-license"
+          echo -e "84831b9409646a918e30573bab4c9c91346d8abd\\n504667f4c0de7af1a06de9f4b1727b84351f2910" > "$ANDROID_HOME/licenses/android-sdk-preview-license"
+          if [ -x "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" ]; then
+            yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses 2>/dev/null || true
+          fi
 
-      - name: Setup Gradle
+      - name: Setup Gradle 8.10.2
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.8'
+          gradle-version: '8.10.2'
+
+      - name: Ensure Gradle Wrapper & Permissions
+        run: |
+          if [ ! -f "gradle/wrapper/gradle-wrapper.jar" ]; then
+            echo "Regenerating wrapper jar..."
+            gradle wrapper --gradle-version 8.10.2
+          fi
+          chmod +x ./gradlew
 
       - name: Assemble Debug APK
-        run: gradle assembleDebug --stacktrace
+        run: ./gradlew assembleDebug --stacktrace --no-daemon
 
       - name: Upload Debug APK Artifact
         uses: actions/upload-artifact@v4
@@ -1008,10 +1021,10 @@ kotlin.code.style=official`
   {
     path: 'gradle/wrapper/gradle-wrapper.properties',
     language: 'properties',
-    description: 'Gradle Wrapper 8.8 下载与运行配置',
+    description: 'Gradle Wrapper 8.10.2 下载与运行配置',
     content: `distributionBase=GRADLE_USER_HOME
 distributionPath=wrapper/dists
-distributionUrl=https\\://services.gradle.org/distributions/gradle-8.8-bin.zip
+distributionUrl=https\\://services.gradle.org/distributions/gradle-8.10.2-bin.zip
 networkTimeout=10000
 validateDistributionUrl=true
 zipStoreBase=GRADLE_USER_HOME
