@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Folder,
   FileCode,
@@ -11,7 +11,13 @@ import {
   ShieldCheck,
   Cpu,
   Layers,
-  Sparkles
+  Sparkles,
+  GitBranch,
+  Github,
+  Workflow,
+  ArrowRight,
+  ExternalLink,
+  PackageCheck
 } from 'lucide-react';
 import { ANDROID_PROJECT_FILES } from '../data/androidProjectSource';
 import { generateAndroidProjectZip, triggerDownload } from '../utils/zipGenerator';
@@ -19,13 +25,26 @@ import { generateAndroidProjectZip, triggerDownload } from '../utils/zipGenerato
 interface CodeExplorerModalProps {
   isOpen: boolean;
   onClose: () => void;
+  initialTab?: 'source' | 'architecture' | 'guide' | 'github';
 }
 
-export const CodeExplorerModal: React.FC<CodeExplorerModalProps> = ({ isOpen, onClose }) => {
+export const CodeExplorerModal: React.FC<CodeExplorerModalProps> = ({
+  isOpen,
+  onClose,
+  initialTab = 'source'
+}) => {
   const [selectedFileIndex, setSelectedFileIndex] = useState(0);
   const [copied, setCopied] = useState(false);
   const [isZipping, setIsZipping] = useState(false);
-  const [activeTab, setActiveTab] = useState<'source' | 'architecture' | 'guide'>('source');
+  const [activeTab, setActiveTab] = useState<'source' | 'architecture' | 'guide' | 'github'>(initialTab);
+  const [repoUrl, setRepoUrl] = useState('https://github.com/your-username/trading-multiview.git');
+  const [copiedGitCmd, setCopiedGitCmd] = useState(false);
+
+  useEffect(() => {
+    if (isOpen && initialTab) {
+      setActiveTab(initialTab);
+    }
+  }, [isOpen, initialTab]);
 
   if (!isOpen) return null;
 
@@ -48,6 +67,36 @@ export const CodeExplorerModal: React.FC<CodeExplorerModalProps> = ({ isOpen, on
       console.error('Failed to generate project zip', err);
     } finally {
       setIsZipping(false);
+    }
+  };
+
+  const gitCommands = `# 1. 进入解压后的工程根目录并初始化 Git 仓库
+git init
+git branch -M main
+
+# 2. 暂存所有源码及 .github/workflows 自动编译配置
+git add .
+git commit -m "feat: Android 多窗口看盘浏览器 (带 GitHub Actions 自动编译工作流)"
+
+# 3. 关联你的远程仓库
+git remote add origin ${repoUrl}
+
+# 4. 推送到 GitHub（将自动触发 GitHub Actions 编译并输出 APK）
+git push -u origin main`;
+
+  const handleCopyGitCommands = async () => {
+    await navigator.clipboard.writeText(gitCommands);
+    setCopiedGitCmd(true);
+    setTimeout(() => setCopiedGitCmd(false), 2000);
+  };
+
+  const goToGithubWorkflowFile = () => {
+    const workflowIdx = ANDROID_PROJECT_FILES.findIndex(
+      (f) => f.path === '.github/workflows/android-build.yml'
+    );
+    if (workflowIdx !== -1) {
+      setSelectedFileIndex(workflowIdx);
+      setActiveTab('source');
     }
   };
 
@@ -134,6 +183,20 @@ export const CodeExplorerModal: React.FC<CodeExplorerModalProps> = ({ isOpen, on
             >
               <Terminal className="w-3.5 h-3.5" />
               <span>编译与运行指南</span>
+            </button>
+            <button
+              onClick={() => setActiveTab('github')}
+              className={`py-2.5 font-medium border-b-2 transition-colors flex items-center gap-1.5 ${
+                activeTab === 'github'
+                  ? 'border-emerald-500 text-emerald-400 font-semibold'
+                  : 'border-transparent text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Github className="w-3.5 h-3.5" />
+              <span>GitHub 自动编译 (CI/CD)</span>
+              <span className="px-1.5 py-0.5 rounded-full text-[9px] bg-emerald-500/20 text-emerald-300 font-mono border border-emerald-500/30">
+                APK 产物
+              </span>
             </button>
           </div>
 
@@ -267,9 +330,9 @@ export const CodeExplorerModal: React.FC<CodeExplorerModalProps> = ({ isOpen, on
               </ul>
             </div>
           </div>
-        ) : (
+        ) : activeTab === 'guide' ? (
           <div className="flex-1 overflow-y-auto p-6 bg-[#0b0f19] space-y-4 text-slate-300 text-xs sm:text-sm">
-            <h3 className="font-bold text-base text-slate-100">Android Studio 编译运行 4 步指南</h3>
+            <h3 className="font-bold text-base text-slate-100">Android Studio 本地编译运行 4 步指南</h3>
             <ol className="list-decimal list-inside space-y-3 text-slate-300">
               <li className="space-y-1">
                 <strong>下载并解压工程：</strong>
@@ -296,6 +359,147 @@ export const CodeExplorerModal: React.FC<CodeExplorerModalProps> = ({ isOpen, on
                 </p>
               </li>
             </ol>
+          </div>
+        ) : (
+          /* GitHub Actions Auto-Build CI/CD Panel */
+          <div className="flex-1 overflow-y-auto p-6 bg-[#0b0f19] space-y-6 text-slate-300 text-xs sm:text-sm">
+            {/* Header Banner */}
+            <div className="p-4 rounded-xl bg-gradient-to-r from-emerald-950/70 via-slate-900 to-sky-950/70 border border-emerald-500/30 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2 text-emerald-400 font-bold text-sm sm:text-base">
+                  <Workflow className="w-5 h-5 text-emerald-400" />
+                  <span>GitHub Actions 自动编译流水线已就绪</span>
+                  <span className="px-2 py-0.5 rounded text-[10px] bg-emerald-500/20 text-emerald-300 font-mono border border-emerald-500/40">
+                    Push 即构建
+                  </span>
+                </div>
+                <p className="text-slate-400 text-xs">
+                  工程根目录已内置 <code className="text-emerald-300 font-mono">.github/workflows/android-build.yml</code>。只要代码 Push 到 GitHub，云端自动调度 Ubuntu 虚拟机执行编译并打包生成 APK。
+                </p>
+              </div>
+
+              <button
+                onClick={goToGithubWorkflowFile}
+                className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow-md transition-all cursor-pointer"
+              >
+                <FileCode className="w-4 h-4" />
+                <span>查看 Workflow 配置文件</span>
+              </button>
+            </div>
+
+            {/* Pipeline Flow Steps */}
+            <div className="p-4 rounded-xl bg-slate-900/90 border border-slate-800 space-y-3">
+              <div className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2">
+                <PackageCheck className="w-4 h-4 text-emerald-400" />
+                <span>自动编译流水线处理全流程 (Cloud Runner)</span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5 pt-1">
+                <div className="p-3 rounded-lg bg-[#111827] border border-slate-800 space-y-1">
+                  <div className="text-[10px] font-mono text-emerald-400 font-semibold">STEP 1</div>
+                  <div className="font-semibold text-slate-200 text-xs">代码 Push 触发</div>
+                  <p className="text-[11px] text-slate-400">监听 main 分支或打 Tag (v*) 提交</p>
+                </div>
+
+                <div className="p-3 rounded-lg bg-[#111827] border border-slate-800 space-y-1">
+                  <div className="text-[10px] font-mono text-emerald-400 font-semibold">STEP 2</div>
+                  <div className="font-semibold text-slate-200 text-xs">装载 JDK 17 & 缓存</div>
+                  <p className="text-[11px] text-slate-400">自动化秒级命中 Gradle 依赖缓存</p>
+                </div>
+
+                <div className="p-3 rounded-lg bg-[#111827] border border-slate-800 space-y-1">
+                  <div className="text-[10px] font-mono text-emerald-400 font-semibold">STEP 3</div>
+                  <div className="font-semibold text-slate-200 text-xs">执行 Gradle 编译</div>
+                  <p className="text-[11px] text-slate-400 font-mono">./gradlew assembleDebug</p>
+                </div>
+
+                <div className="p-3 rounded-lg bg-[#111827] border border-slate-800 space-y-1">
+                  <div className="text-[10px] font-mono text-emerald-400 font-semibold">STEP 4</div>
+                  <div className="font-semibold text-slate-200 text-xs">上传 APK 产物</div>
+                  <p className="text-[11px] text-slate-400">打包输出到 Actions Artifacts</p>
+                </div>
+
+                <div className="p-3 rounded-lg bg-[#111827] border border-slate-800 space-y-1">
+                  <div className="text-[10px] font-mono text-emerald-400 font-semibold">STEP 5</div>
+                  <div className="font-semibold text-slate-200 text-xs">Release 自动发布</div>
+                  <p className="text-[11px] text-slate-400">Tag 触发时附带安装包发布</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Interactive Git Push Command Box */}
+            <div className="p-4 rounded-xl bg-slate-900/90 border border-slate-800 space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2">
+                  <GitBranch className="w-4 h-4 text-sky-400" />
+                  <span>一键推送 GitHub 指令生成器</span>
+                </div>
+
+                {/* Custom Repo URL input */}
+                <div className="flex items-center gap-2">
+                  <label className="text-xs text-slate-400 shrink-0 font-mono">你的仓库 URL:</label>
+                  <input
+                    type="text"
+                    value={repoUrl}
+                    onChange={(e) => setRepoUrl(e.target.value)}
+                    placeholder="https://github.com/USERNAME/REPO.git"
+                    className="px-2.5 py-1 text-xs bg-slate-950 border border-slate-700 rounded text-sky-300 font-mono w-64 focus:outline-none focus:border-sky-500"
+                  />
+                </div>
+              </div>
+
+              {/* Terminal Snippet */}
+              <div className="relative rounded-lg bg-[#070b13] border border-slate-800 p-4 font-mono text-xs text-slate-300 leading-relaxed">
+                <div className="absolute top-2.5 right-2.5">
+                  <button
+                    onClick={handleCopyGitCommands}
+                    className="flex items-center gap-1.5 px-3 py-1 rounded bg-slate-800 hover:bg-slate-700 text-xs text-slate-200 hover:text-white transition-colors cursor-pointer"
+                  >
+                    {copiedGitCmd ? (
+                      <>
+                        <Check className="w-3.5 h-3.5 text-emerald-400" />
+                        <span className="text-emerald-400 font-semibold">已复制命令</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-3.5 h-3.5" />
+                        <span>复制全部 Git 命令</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+                <pre className="select-text whitespace-pre overflow-x-auto text-emerald-300/90">
+                  <code>{gitCommands}</code>
+                </pre>
+              </div>
+
+              <div className="text-[11px] text-slate-400 flex items-center gap-1.5">
+                <span className="text-sky-400">💡 提示：</span>
+                <span>工程 ZIP 内还贴心准备了 <code className="text-slate-300 font-mono">./push-to-github.sh</code> 脚本，解压后在终端直接运行也可一键完成提交！</span>
+              </div>
+            </div>
+
+            {/* How to download the compiled APK */}
+            <div className="p-4 rounded-xl bg-slate-900/90 border border-slate-800 space-y-3">
+              <h3 className="font-bold text-slate-100 flex items-center gap-2">
+                <Download className="w-4 h-4 text-emerald-400" />
+                <span>编译完成后，如何在 GitHub 上下载 APK 安装包？</span>
+              </h3>
+              <div className="space-y-2 text-xs text-slate-300">
+                <div className="flex items-start gap-2">
+                  <span className="w-5 h-5 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center shrink-0 font-bold text-slate-300 text-[11px]">1</span>
+                  <p>打开你的 GitHub 仓库主页，点击顶部菜单栏的 <strong className="text-sky-300 font-mono">Actions</strong> 标签页。</p>
+                </div>
+                <div className="flex items-start gap-2">
+                  <span className="w-5 h-5 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center shrink-0 font-bold text-slate-300 text-[11px]">2</span>
+                  <p>点击列表最顶部的 <strong className="text-emerald-300 font-mono">Android CI & Auto Build APK</strong> 构建任务（构建中会有黄色旋转圈，编译成功会显示绿色勾号 ✔）。</p>
+                </div>
+                <div className="flex items-start gap-2">
+                  <span className="w-5 h-5 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center shrink-0 font-bold text-slate-300 text-[11px]">3</span>
+                  <p>滑动至页面下方的 <strong className="text-amber-300 font-mono">Artifacts (产物)</strong> 区域，直接点击 <strong className="text-white font-mono bg-slate-800 px-1.5 py-0.5 rounded">TradingMultiView-Debug-APK</strong> 即可下载可以直接安装到平板或模拟器的 APK！</p>
+                </div>
+              </div>
+            </div>
           </div>
         )}
       </div>

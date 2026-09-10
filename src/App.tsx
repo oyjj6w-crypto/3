@@ -13,7 +13,9 @@ import {
   Sparkles,
   Info,
   Layers,
-  MonitorCheck
+  MonitorCheck,
+  Github,
+  Workflow
 } from 'lucide-react';
 import { WindowConfig, OrientationMode } from './types';
 import { TradingWindow } from './components/TradingWindow';
@@ -71,6 +73,7 @@ export default function App() {
   const [currentTime, setCurrentTime] = useState<string>('');
   const [sessionUptime, setSessionUptime] = useState<number>(0);
   const [isDownloading, setIsDownloading] = useState<boolean>(false);
+  const [modalInitialTab, setModalInitialTab] = useState<'source' | 'architecture' | 'guide' | 'github'>('source');
 
   // Tablet status bar clock
   useEffect(() => {
@@ -262,9 +265,28 @@ export default function App() {
             <span>{showFrame ? '平板外壳' : '纯净全屏'}</span>
           </button>
 
+          {/* GitHub Auto-Build CI/CD Button */}
+          <button
+            onClick={() => {
+              setModalInitialTab('github');
+              setIsCodeModalOpen(true);
+            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-semibold shadow-md shadow-emerald-950/60 transition-all cursor-pointer"
+            title="查看 Push 到 GitHub 自动编译工作流与 APK 下载指引"
+          >
+            <Github className="w-3.5 h-3.5" />
+            <span>GitHub 自动编译</span>
+            <span className="hidden lg:inline px-1 py-0.2 rounded bg-emerald-900/80 text-[9px] text-emerald-300 font-mono">
+              CI/CD
+            </span>
+          </button>
+
           {/* View Android Source Code Button */}
           <button
-            onClick={() => setIsCodeModalOpen(true)}
+            onClick={() => {
+              setModalInitialTab('source');
+              setIsCodeModalOpen(true);
+            }}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold shadow-md shadow-sky-950/60 transition-all cursor-pointer"
             title="查看完整 Kotlin + Compose Android 工程源码"
           >
@@ -276,10 +298,10 @@ export default function App() {
           <button
             onClick={handleQuickDownload}
             disabled={isDownloading}
-            className="p-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-white text-xs transition-colors cursor-pointer"
-            title="一键下载完整 Android Studio 工程 ZIP"
+            className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-white text-xs transition-colors cursor-pointer"
+            title="一键下载完整 Android Studio 工程 ZIP (含 GitHub Actions 工作流)"
           >
-            <Download className="w-4 h-4" />
+            <Download className="w-4 h-4 text-emerald-400" />
           </button>
         </div>
       </header>
@@ -403,16 +425,30 @@ export default function App() {
           <span>3 视窗排布规则：3窗=1:1:1 (各33.3%) | 2窗=50%:50% | 1窗=100% 独占</span>
         </div>
         <div className="hidden sm:flex items-center gap-3">
+          <button
+            onClick={() => {
+              setModalInitialTab('github');
+              setIsCodeModalOpen(true);
+            }}
+            className="text-emerald-400 hover:text-emerald-300 flex items-center gap-1 cursor-pointer transition-colors"
+          >
+            <Github className="w-3 h-3" />
+            <span>GitHub 自动编译 (CI/CD)</span>
+          </button>
+          <span className="text-slate-600">|</span>
           <span className="text-sky-400">
-            Activity: configChanges="orientation|screenSize|screenLayout"
+            Activity: configChanges 保活
           </span>
           <span className="text-slate-600">|</span>
           <button
-            onClick={() => setIsCodeModalOpen(true)}
-            className="text-emerald-400 hover:underline flex items-center gap-1 cursor-pointer"
+            onClick={() => {
+              setModalInitialTab('source');
+              setIsCodeModalOpen(true);
+            }}
+            className="text-slate-400 hover:text-slate-200 hover:underline flex items-center gap-1 cursor-pointer"
           >
             <Download className="w-3 h-3" />
-            <span>下载完整 Android 工程 (ZIP)</span>
+            <span>下载工程 (ZIP)</span>
           </button>
         </div>
       </footer>
@@ -420,6 +456,7 @@ export default function App() {
       {/* Android Source Code & Project Inspector Modal */}
       <CodeExplorerModal
         isOpen={isCodeModalOpen}
+        initialTab={modalInitialTab}
         onClose={() => setIsCodeModalOpen(false)}
       />
     </div>

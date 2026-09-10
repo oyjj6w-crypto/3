@@ -877,6 +877,98 @@ rootProject.name = "TradingMultiView"
 include(":app")`
   },
   {
+    path: '.github/workflows/android-build.yml',
+    language: 'yaml',
+    description: 'GitHub Actions 自动编译工作流：Push 代码后自动触发 Gradle 编译并输出 APK/AAB 产物',
+    content: `name: Android CI & Auto Build APK
+
+# 触发条件：Push 到 main/master 分支、提交 Tag (v*) 或发起 Pull Request，均会自动触发自动编译
+on:
+  push:
+    branches: [ "main", "master" ]
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch: # 支持在 GitHub Actions 控制台手动一键点击触发构建
+
+jobs:
+  build:
+    name: Build Android APK & Release Artifacts
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # 支持自动发布 GitHub Releases
+    
+    steps:
+      # 1. 检出仓库代码
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # 2. 配置 JDK 17 (与 compileSdk 35 及 AGP 8.8 完美兼容)
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: 'gradle'
+
+      # 3. 授予 gradlew 可执行权限
+      - name: Grant execute permission for gradlew
+        run: chmod +x ./gradlew
+
+      # 4. 配置 Gradle 缓存加速构建 (采用官方 gradle action)
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.8'
+
+      # 5. 执行代码静态检查 (Lint)
+      - name: Run Android Lint Check
+        run: ./gradlew lintDebug --continue || true
+
+      # 6. 执行 Debug APK 编译
+      - name: Assemble Debug APK
+        run: ./gradlew assembleDebug --stacktrace
+
+      # 7. 执行 Release APK 编译 (使用内置 debug 签名或直接输出无签名包)
+      - name: Assemble Release APK
+        run: ./gradlew assembleRelease --stacktrace || true
+
+      # 8. 上传编译生成的 Debug APK 到 GitHub Actions Artifacts (可直接点击下载)
+      - name: Upload Debug APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TradingMultiView-Debug-APK
+          path: app/build/outputs/apk/debug/*.apk
+          retention-days: 14
+
+      # 9. 上传编译生成的 Release APK/AAB 到 GitHub Actions Artifacts
+      - name: Upload Release APK Artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: TradingMultiView-Release-APK
+          path: app/build/outputs/apk/release/*.apk
+          retention-days: 30
+
+      # 10. 若本次提交包含版本 Tag (如 v1.0.0)，自动创建 GitHub Release 并附带 APK 安装包
+      - name: Auto Publish GitHub Release (On Tag Push)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            app/build/outputs/apk/debug/*.apk
+            app/build/outputs/apk/release/*.apk
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: \${{ secrets.GITHUB_TOKEN }}
+`
+  },
+  {
     path: 'app/src/main/res/values/strings.xml',
     language: 'xml',
     description: '应用字符串资源',
@@ -900,11 +992,50 @@ include(":app")`
   {
     path: 'README.md',
     language: 'markdown',
-    description: 'Android 工程直接运行与编译部署指南',
+    description: 'Android 工程编译指南 & Push 到 GitHub 自动编译 CI/CD 说明',
     content: `# Android 平板横屏轻量级原生看盘浏览器 (TradingMultiView)
 
 ## 📌 项目概述
 这是一个专为 **Android 平板横屏（16:10 / 16:9）与 Android 模拟器** 深度定制的轻量级原生看盘浏览器，采用最新 **Kotlin + Jetpack Compose + 系统 WebView** 架构。
+
+---
+
+## 🚀 自动编译 CI/CD (Push 到 GitHub 自动构建 APK)
+
+本项目已内置完整的 **GitHub Actions 自动化编译工作流**（位于 \`.github/workflows/android-build.yml\`）。无论何时 Push 代码，GitHub 云端都会自动拉取依赖并编译生成 **Debug APK** 和 **Release APK**，支持直接下载安装！
+
+### 快速推送到 GitHub 并触发自动编译：
+\`\`\`bash
+# 1. 在解压后的工程根目录下初始化 Git 仓库
+git init
+git branch -M main
+
+# 2. 添加所有源码与 GitHub Actions 工作流
+git add .
+git commit -m "feat: initial commit for trading multi-view browser with auto build"
+
+# 3. 关联你的 GitHub 远程仓库 (将 USERNAME 与 REPO 替换为你的真实仓库)
+git remote add origin https://github.com/USERNAME/REPO.git
+
+# 4. 推送到 GitHub (将立刻自动触发 GitHub Actions 编译!)
+git push -u origin main
+\`\`\`
+
+### 如何获取编译生成的 APK 安装包？
+1. 打开你的 GitHub 仓库主页，点击顶部导航栏的 **\`Actions\`** 标签页。
+2. 你会看到名为 **\`Android CI & Auto Build APK\`** 的工作流正在自动运行。
+3. 构建完成后（大约耗时 1~2 分钟），点击该次构建记录。
+4. 在页面底部的 **\`Artifacts\`** 区域，直接点击 **\`TradingMultiView-Debug-APK\`** 即可下载编译好的 \`.apk\` 文件！
+
+### 发布版本自动 Release：
+若需要正式发布新版本并自动生成下载页：
+\`\`\`bash
+git tag v1.0.0
+git push origin v1.0.0
+\`\`\`
+工作流会自动检测版本 Tag，并将编译生成的 APK 自动附加到 GitHub Releases 页面提供公开下载。
+
+---
 
 ### 核心需求规格与架构实现
 1. **视窗排布与多任务交互**：
@@ -925,14 +1056,14 @@ include(":app")`
 
 ---
 
-## 🛠️ 编译与运行环境要求
+## 🛠️ 本地编译与运行环境要求
 - **Android Studio**：Ladybug (2024.2+) 或更高版本
 - **JDK**：OpenJDK 17 / 21
 - **Gradle**：8.8+ (已集成 Gradle Wrapper)
 - **Min SDK**：26 (Android 8.0+)
 - **Target SDK / Compile SDK**：35 (Android 15)
 
-## 🚀 导入与快速启动
+## 💻 本地导入与快速启动
 1. 打开 **Android Studio**，选择 \`Open\` 打开解压后的根目录。
 2. 等待 Gradle Sync 完成。
 3. 创建或选择一个 **Android Tablet 模拟器**（推荐：Pixel Tablet API 34 或 10.1" WXGA Tablet 1280x800 横屏）。
