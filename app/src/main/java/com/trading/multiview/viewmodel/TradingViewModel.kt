@@ -1,11 +1,76 @@
 package com.trading.multiview.viewmodel
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import com.trading.multiview.webview.PersistentWebViewPool
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import org.json.JSONArray
+import org.json.JSONObject
+
+data class TabGroupItem(
+    val title: String,
+    val symbol: String,
+    val url: String,
+    val timeframe: String = "15m"
+)
+
+data class TabGroup(
+    val id: String,
+    val name: String,
+    val isPreset: Boolean = false,
+    val description: String = "",
+    val items: List<TabGroupItem>
+)
+
+val DEFAULT_TAB_GROUPS = listOf(
+    TabGroup(
+        id = "preset_tv_official",
+        name = "TradingView 官网",
+        isPreset = true,
+        description = "TradingView 官方网站 (www.tradingview.com)",
+        items = listOf(
+            TabGroupItem("TradingView 1", "BTCUSDT", "https://www.tradingview.com", "15m"),
+            TabGroupItem("TradingView 2", "ETHUSDT", "https://www.tradingview.com", "60m"),
+            TabGroupItem("TradingView 3", "SOLUSDT", "https://www.tradingview.com", "240m")
+        )
+    ),
+    TabGroup(
+        id = "preset_major",
+        name = "主流大盘 (BTC/ETH/SOL)",
+        isPreset = true,
+        description = "核心主流资产，跨 15m/1h/4h 周期对比",
+        items = listOf(
+            TabGroupItem("BTC/USDT 15M", "BTCUSDT", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:BTCUSDT&interval=15&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1", "15m"),
+            TabGroupItem("ETH/USDT 1H", "ETHUSDT", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:ETHUSDT&interval=60&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1", "60m"),
+            TabGroupItem("SOL/USDT 4H", "SOLUSDT", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:SOLUSDT&interval=240&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1", "240m")
+        )
+    ),
+    TabGroup(
+        id = "preset_l1",
+        name = "公链龙头 (BNB/AVAX/NEAR)",
+        isPreset = true,
+        description = "公链生态核心代币",
+        items = listOf(
+            TabGroupItem("BNB/USDT 15M", "BNBUSDT", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:BNBUSDT&interval=15&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1", "15m"),
+            TabGroupItem("AVAX/USDT 1H", "AVAXUSDT", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:AVAXUSDT&interval=60&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1", "60m"),
+            TabGroupItem("NEAR/USDT 4H", "NEARUSDT", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:NEARUSDT&interval=240&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1", "240m")
+        )
+    ),
+    TabGroup(
+        id = "preset_volatile",
+        name = "波动异动 (DOGE/PEPE/XRP)",
+        isPreset = true,
+        description = "高波动热门代币短线",
+        items = listOf(
+            TabGroupItem("DOGE/USDT 15M", "DOGEUSDT", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:DOGEUSDT&interval=15&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1", "15m"),
+            TabGroupItem("PEPE/USDT 15M", "PEPEUSDT", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:PEPEUSDT&interval=15&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1", "15m"),
+            TabGroupItem("XRP/USDT 1H", "XRPUSDT", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:XRPUSDT&interval=60&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1", "60m")
+        )
+    )
+)
 
 data class WindowState(
     val id: Int,
@@ -15,16 +80,21 @@ data class WindowState(
     val isHidden: Boolean = false,
     val isMaximized: Boolean = false,
     val isDesktopMode: Boolean = true, // 默认开启桌面模式，User-Agent 为 PC Chrome
-    val zoomPercent: Int = 100 // 全局网页缩放比例 (50% ~ 200%)
+    val zoomPercent: Int = 100, // 网页缩放比例 (50% ~ 200%)
+    val isUrlCollapsed: Boolean = false // 是否折叠网址输入框以放入更多按钮
 )
 
 data class MultiViewUiState(
     val windows: List<WindowState> = listOf(
-        WindowState(1, "BTC/USDT 15M", "BTCUSDT", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:BTCUSDT&interval=15&theme=dark"),
-        WindowState(2, "ETH/USDT 1H", "ETHUSDT", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:ETHUSDT&interval=60&theme=dark"),
-        WindowState(3, "SOL/USDT 4H", "SOLUSDT", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:SOLUSDT&interval=240&theme=dark")
+        WindowState(1, "TradingView 1", "BTCUSDT", "https://www.tradingview.com"),
+        WindowState(2, "TradingView 2", "ETHUSDT", "https://www.tradingview.com"),
+        WindowState(3, "TradingView 3", "SOLUSDT", "https://www.tradingview.com")
     ),
-    val maximizedWindowId: Int? = null
+    val maximizedWindowId: Int? = null,
+    val groups: List<TabGroup> = DEFAULT_TAB_GROUPS,
+    val activeGroupId: String = "preset_tv_official",
+    val globalZoomPercent: Int = 100,
+    val isGlobalUrlCollapsed: Boolean = false
 ) {
     // 获取当前活跃且未隐藏的窗口列表
     val visibleWindows: List<WindowState>
@@ -58,10 +128,210 @@ class TradingViewModel : ViewModel() {
     private val _uiState = MutableStateFlow(MultiViewUiState())
     val uiState: StateFlow<MultiViewUiState> = _uiState.asStateFlow()
 
+    companion object {
+        private const val PREFS_NAME = "trading_multiview_prefs"
+        private const val KEY_CUSTOM_GROUPS = "custom_tab_groups"
+    }
+
     init {
         // 挂载 WebView 实时 URL 变更监听，保证视窗地址栏与 WebView 浏览状态精准同步
         PersistentWebViewPool.onUrlChanged = { windowId, url, pageTitle ->
             updateWindowUrl(windowId, url, if (pageTitle.isNotBlank()) pageTitle else null)
+        }
+    }
+
+    /**
+     * 点击分组标签时，3 个窗口同时切换到该分组对应的 3 个目标 URL
+     */
+    fun switchGroup(groupId: String) {
+        val group = _uiState.value.groups.find { it.id == groupId } ?: return
+        _uiState.update { state ->
+            val updatedWindows = state.windows.mapIndexed { index, win ->
+                val targetItem = group.items.getOrNull(index) ?: group.items.first()
+                PersistentWebViewPool.loadCustomUrl(win.id, targetItem.url)
+                win.copy(
+                    title = targetItem.title,
+                    symbol = targetItem.symbol,
+                    currentUrl = targetItem.url
+                )
+            }
+            state.copy(
+                windows = updatedWindows,
+                activeGroupId = groupId
+            )
+        }
+    }
+
+    /**
+     * 3 个窗口网页同时全局缩放调节 (设置 textZoom 或 initialScale，提供快捷 +/- 缩放调整)
+     */
+    fun setGlobalZoom(zoomPercent: Int) {
+        val clamped = zoomPercent.coerceIn(50, 250)
+        listOf(1, 2, 3).forEach { windowId ->
+            PersistentWebViewPool.setZoom(windowId, clamped)
+        }
+        _uiState.update { state ->
+            state.copy(
+                globalZoomPercent = clamped,
+                windows = state.windows.map { it.copy(zoomPercent = clamped) }
+            )
+        }
+    }
+
+    fun zoomInAll() {
+        val current = _uiState.value.globalZoomPercent
+        setGlobalZoom((current + 10).coerceAtMost(250))
+    }
+
+    fun zoomOutAll() {
+        val current = _uiState.value.globalZoomPercent
+        setGlobalZoom((current - 10).coerceAtLeast(50))
+    }
+
+    fun resetGlobalZoom() {
+        setGlobalZoom(100)
+    }
+
+    /**
+     * 一键折叠/展开网址输入框，以便地址栏放入更多按钮
+     * @param windowId 若为 null 则切换全局折叠状态；否则切换单个窗口
+     */
+    fun toggleUrlBarCollapse(windowId: Int? = null) {
+        _uiState.update { state ->
+            if (windowId == null) {
+                val next = !state.isGlobalUrlCollapsed
+                state.copy(
+                    isGlobalUrlCollapsed = next,
+                    windows = state.windows.map { it.copy(isUrlCollapsed = next) }
+                )
+            } else {
+                state.copy(
+                    windows = state.windows.map { win ->
+                        if (win.id == windowId) win.copy(isUrlCollapsed = !win.isUrlCollapsed) else win
+                    }
+                )
+            }
+        }
+    }
+
+    /**
+     * 提供“保存当前三窗口为新分组”功能，将当前的实时 URL 持久化保存在本地 SharedPreferences 中
+     */
+    fun saveCurrentGroup(name: String, context: Context) {
+        val currentWindows = _uiState.value.windows
+        val customCount = _uiState.value.groups.filter { !it.isPreset }.size
+        val finalName = if (name.isNotBlank()) name.trim() else "自选看盘组合 #${customCount + 1}"
+        
+        val newGroup = TabGroup(
+            id = "custom_${System.currentTimeMillis()}",
+            name = finalName,
+            isPreset = false,
+            description = "用户自定义保存的 3 视窗配置",
+            items = currentWindows.map { win ->
+                TabGroupItem(
+                    title = win.title,
+                    symbol = win.symbol,
+                    url = win.currentUrl
+                )
+            }
+        )
+
+        val updatedGroups = _uiState.value.groups + newGroup
+        _uiState.update { it.copy(groups = updatedGroups, activeGroupId = newGroup.id) }
+
+        // 持久化保存至 SharedPreferences
+        persistCustomGroupsToPrefs(updatedGroups.filter { !it.isPreset }, context)
+    }
+
+    /**
+     * 从 SharedPreferences 加载已保存的用户自定义分组
+     */
+    fun loadSavedGroupsFromPrefs(context: Context) {
+        try {
+            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val jsonString = prefs.getString(KEY_CUSTOM_GROUPS, null) ?: return
+            val jsonArray = JSONArray(jsonString)
+            val customGroups = mutableListOf<TabGroup>()
+
+            for (i in 0 until jsonArray.length()) {
+                val obj = jsonArray.getJSONObject(i)
+                val id = obj.getString("id")
+                val name = obj.getString("name")
+                val desc = obj.optString("description", "")
+                val itemsArray = obj.getJSONArray("items")
+                val items = mutableListOf<TabGroupItem>()
+
+                for (j in 0 until itemsArray.length()) {
+                    val itemObj = itemsArray.getJSONObject(j)
+                    items.add(
+                        TabGroupItem(
+                            title = itemObj.getString("title"),
+                            symbol = itemObj.getString("symbol"),
+                            url = itemObj.getString("url"),
+                            timeframe = itemObj.optString("timeframe", "15m")
+                        )
+                    )
+                }
+
+                customGroups.add(
+                    TabGroup(
+                        id = id,
+                        name = name,
+                        isPreset = false,
+                        description = desc,
+                        items = items
+                    )
+                )
+            }
+
+            _uiState.update { state ->
+                state.copy(groups = DEFAULT_TAB_GROUPS + customGroups)
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    /**
+     * 删除自定义分组
+     */
+    fun deleteCustomGroup(groupId: String, context: Context) {
+        _uiState.update { state ->
+            val updated = state.groups.filter { it.id != groupId }
+            val nextActiveId = if (state.activeGroupId == groupId) "preset_major" else state.activeGroupId
+            persistCustomGroupsToPrefs(updated.filter { !it.isPreset }, context)
+            state.copy(groups = updated, activeGroupId = nextActiveId)
+        }
+    }
+
+    private fun persistCustomGroupsToPrefs(customGroups: List<TabGroup>, context: Context) {
+        try {
+            val jsonArray = JSONArray()
+            customGroups.forEach { group ->
+                val obj = JSONObject().apply {
+                    put("id", group.id)
+                    put("name", group.name)
+                    put("description", group.description)
+                    val itemsArr = JSONArray()
+                    group.items.forEach { item ->
+                        val itemObj = JSONObject().apply {
+                            put("title", item.title)
+                            put("symbol", item.symbol)
+                            put("url", item.url)
+                            put("timeframe", item.timeframe)
+                        }
+                        itemsArr.put(itemObj)
+                    }
+                    put("items", itemsArr)
+                }
+                jsonArray.put(obj)
+            }
+            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putString(KEY_CUSTOM_GROUPS, jsonArray.toString())
+                .apply()
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
     }
 
@@ -96,16 +366,16 @@ class TradingViewModel : ViewModel() {
     }
 
     /**
-     * 增加网页缩放比例 (+10%)
+     * 增加单视窗网页缩放比例 (+10%)
      */
     fun zoomIn(windowId: Int) {
         val current = _uiState.value.windows.find { it.id == windowId }?.zoomPercent ?: 100
-        val next = (current + 10).coerceAtMost(200)
+        val next = (current + 10).coerceAtMost(250)
         setWindowZoom(windowId, next)
     }
 
     /**
-     * 减少网页缩放比例 (-10%)
+     * 减少单视窗网页缩放比例 (-10%)
      */
     fun zoomOut(windowId: Int) {
         val current = _uiState.value.windows.find { it.id == windowId }?.zoomPercent ?: 100
@@ -124,7 +394,7 @@ class TradingViewModel : ViewModel() {
      * 设置视窗全局缩放比例 (textZoom & initialScale)
      */
     fun setWindowZoom(windowId: Int, zoomPercent: Int) {
-        val clamped = zoomPercent.coerceIn(50, 200)
+        val clamped = zoomPercent.coerceIn(50, 250)
         PersistentWebViewPool.setZoom(windowId, clamped)
         _uiState.update { state ->
             state.copy(
@@ -177,7 +447,6 @@ class TradingViewModel : ViewModel() {
      */
     fun hideWindow(windowId: Int) {
         _uiState.update { state ->
-            // 如果隐藏的是当前全屏最大化的窗口，重置最大化状态
             val newMaximizedId = if (state.maximizedWindowId == windowId) null else state.maximizedWindowId
 
             state.copy(

@@ -22,11 +22,11 @@ object PersistentWebViewPool {
     // URL 变化监听回调 (windowId, newUrl, pageTitle)
     var onUrlChanged: ((Int, String, String) -> Unit)? = null
 
-    // 默认看盘标的预设 (开启完整桌面侧边绘图工具栏、时间周期与指标)
+    // 默认看盘标的预设 (默认加载 TradingView 官网 www.tradingview.com)
     val DEFAULT_URLS = mapOf(
-        1 to "https://s.tradingview.com/widgetembed/?symbol=BINANCE:BTCUSDT&interval=15&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1",
-        2 to "https://s.tradingview.com/widgetembed/?symbol=BINANCE:ETHUSDT&interval=60&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1",
-        3 to "https://s.tradingview.com/widgetembed/?symbol=BINANCE:SOLUSDT&interval=240&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1"
+        1 to "https://www.tradingview.com",
+        2 to "https://www.tradingview.com",
+        3 to "https://www.tradingview.com"
     )
 
     // 快捷书签推荐网站

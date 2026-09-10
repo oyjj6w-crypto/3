@@ -9,10 +9,24 @@ export interface WindowConfig {
   isDesktopMode?: boolean;
   desktopWidth?: number;
   zoomLevel?: number;
+  isUrlCollapsed?: boolean;
   timeframe: string;
   wsActive: boolean;
   messageCount: number;
   connectTime: number;
+}
+
+export interface WindowGroup {
+  id: string;
+  name: string;
+  isPreset?: boolean;
+  description?: string;
+  items: {
+    title: string;
+    symbol: string;
+    url: string;
+    timeframe?: string;
+  }[];
 }
 
 export interface AndroidProjectFile {

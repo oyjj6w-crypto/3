@@ -1,5 +1,30 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Maximize2, Minimize2, EyeOff, RotateCw, ExternalLink, Activity, Wifi, Settings, Globe, ArrowLeft, ArrowRight, Bookmark, X, Search, ChevronDown, Monitor, Plus, Minus } from 'lucide-react';
+import {
+  Maximize2,
+  Minimize2,
+  EyeOff,
+  RotateCw,
+  ExternalLink,
+  Activity,
+  Wifi,
+  Settings,
+  Globe,
+  ArrowLeft,
+  ArrowRight,
+  Bookmark,
+  X,
+  Search,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Monitor,
+  Plus,
+  Minus,
+  Copy,
+  Check,
+} from 'lucide-react';
 import { WindowConfig } from '../types';
 
 interface TradingWindowProps {
@@ -53,6 +78,30 @@ export const TradingWindow: React.FC<TradingWindowProps> = ({
   const [isDesktopMode, setIsDesktopMode] = useState<boolean>(win.isDesktopMode ?? true);
   const [desktopWidth, setDesktopWidth] = useState<number>(win.desktopWidth ?? 1280);
   const [zoomLevel, setZoomLevel] = useState<number>(win.zoomLevel ?? 100);
+  const [isUrlCollapsed, setIsUrlCollapsed] = useState<boolean>(win.isUrlCollapsed ?? false);
+  const [copiedUrl, setCopiedUrl] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (win.zoomLevel !== undefined) {
+      setZoomLevel(win.zoomLevel);
+    }
+  }, [win.zoomLevel]);
+
+  useEffect(() => {
+    if (win.isUrlCollapsed !== undefined) {
+      setIsUrlCollapsed(win.isUrlCollapsed);
+    }
+  }, [win.isUrlCollapsed]);
+
+  const handleCopyCurrentUrl = () => {
+    try {
+      navigator.clipboard?.writeText(win.url);
+      setCopiedUrl(true);
+      setTimeout(() => setCopiedUrl(false), 2000);
+    } catch {
+      // ignore
+    }
+  };
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [containerSize, setContainerSize] = useState<{ width: number; height: number }>({ width: 0, height: 0 });
@@ -292,93 +341,194 @@ export const TradingWindow: React.FC<TradingWindowProps> = ({
           </button>
         </div>
 
-        {/* Center: Full Address Bar (URL Input + Go + Preset Bookmarks) */}
-        <div className="flex-1 relative flex items-center min-w-0">
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              handleNavigate(urlBarInput);
-            }}
-            className="w-full flex items-center bg-[#090d16] border border-slate-700/80 hover:border-slate-600 focus-within:border-sky-500 rounded-md px-2 py-0.5 transition-colors"
-          >
-            <Globe className="w-3 h-3 text-slate-500 shrink-0 mr-1.5" />
-            <input
-              type="text"
-              value={urlBarInput}
-              onChange={(e) => setUrlBarInput(e.target.value)}
-              placeholder="输入网址 (如 binance.com 或 tradingview.com)..."
-              className="flex-1 min-w-0 bg-transparent text-slate-200 text-xs font-mono outline-none placeholder:text-slate-600 truncate"
-            />
-            {urlBarInput && (
+        {/* Center: Collapsible Address Bar or Rich Buttons Strip */}
+        <div className="flex-1 relative flex items-center min-w-0 gap-1">
+          {isUrlCollapsed ? (
+            /* ================= 已折叠网址框模式：释放横向空间，展示丰富快捷按钮 ================= */
+            <div className="flex-1 flex items-center gap-1.5 min-w-0 overflow-x-auto no-scrollbar">
+              {/* 展开网址输入框按钮 */}
               <button
                 type="button"
-                onClick={() => setUrlBarInput('')}
-                className="p-0.5 text-slate-500 hover:text-slate-300 mr-1"
-                title="清空"
+                onClick={() => {
+                  setIsUrlCollapsed(false);
+                  onUpdateConfig(win.id, { isUrlCollapsed: false });
+                }}
+                className="flex items-center gap-1 px-2 py-1 rounded bg-[#090d16] hover:bg-slate-800 border border-slate-700/80 hover:border-sky-500 text-sky-400 text-xs font-mono shrink-0 transition-colors group"
+                title="展开完整网址输入框"
               >
-                <X className="w-3 h-3" />
+                <PanelLeftOpen className="w-3.5 h-3.5 text-sky-400 group-hover:scale-110 transition-transform" />
+                <span className="hidden sm:inline text-[11px] font-sans text-slate-300">展开网址</span>
               </button>
-            )}
-            <button
-              type="submit"
-              className="px-2 py-0.5 bg-sky-600 hover:bg-sky-500 text-white rounded text-[11px] font-semibold transition-colors shrink-0 mr-1 shadow-sm"
-            >
-              前往
-            </button>
 
-            {/* Quick Bookmarks Button */}
-            <div className="relative">
+              {/* 常用交易所/看盘直达按钮 */}
+              <div className="flex items-center gap-1 shrink-0 overflow-x-auto no-scrollbar">
+                {[
+                  { name: 'TradingView', icon: '📈', url: 'https://s.tradingview.com/widgetembed/?symbol=BINANCE:BTCUSDT&interval=15&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1' },
+                  { name: '币安', icon: '🟡', url: 'https://www.binance.com/zh-CN/trade/BTC_USDT' },
+                  { name: 'OKX', icon: '⬛', url: 'https://www.okx.com/zh-hans/trade-spot/btc-usdt' },
+                  { name: 'DexScreener', icon: '🦅', url: 'https://dexscreener.com' },
+                ].map((item) => (
+                  <button
+                    key={item.name}
+                    type="button"
+                    onClick={() => handleNavigate(item.url)}
+                    className="px-2 py-0.5 rounded bg-slate-800/80 hover:bg-sky-950/80 hover:text-sky-300 hover:border-sky-600/70 border border-slate-700/70 text-[11px] text-slate-200 transition-colors flex items-center gap-1 shrink-0 whitespace-nowrap"
+                    title={`直达 ${item.name}`}
+                  >
+                    <span>{item.icon}</span>
+                    <span className="truncate">{item.name}</span>
+                  </button>
+                ))}
+              </div>
+
+              {/* 快捷周期切换 */}
+              <div className="hidden sm:flex items-center gap-0.5 shrink-0 px-1 border-l border-slate-800">
+                {[
+                  { label: '15m', val: '15' },
+                  { label: '1h', val: '60' },
+                  { label: '4h', val: '240' },
+                ].map((tf) => (
+                  <button
+                    key={tf.label}
+                    type="button"
+                    onClick={() => {
+                      let updated = win.url;
+                      if (updated.includes('interval=')) {
+                        updated = updated.replace(/interval=\w+/, `interval=${tf.val}`);
+                      }
+                      handleNavigate(updated);
+                    }}
+                    className="px-1.5 py-0.5 rounded bg-slate-900/80 hover:bg-slate-800 text-[10px] font-mono text-slate-400 hover:text-sky-300 transition-colors shrink-0"
+                    title={`切换 ${tf.label} 周期`}
+                  >
+                    {tf.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* 复制当前 URL 按钮 */}
               <button
                 type="button"
-                onClick={() => setShowBookmarksDropdown(!showBookmarksDropdown)}
-                title="快捷书签（币安、OKX、DexScreener 等）"
-                className={`p-1 rounded transition-colors ${
-                  showBookmarksDropdown
-                    ? 'text-amber-400 bg-amber-950/40'
-                    : 'text-slate-400 hover:text-amber-400 hover:bg-slate-800'
-                }`}
+                onClick={handleCopyCurrentUrl}
+                className="p-1 rounded text-slate-400 hover:text-emerald-400 hover:bg-slate-800/80 transition-colors shrink-0"
+                title={copiedUrl ? '已复制网址！' : '复制当前网页 URL'}
               >
-                <Bookmark className="w-3 h-3" />
+                {copiedUrl ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
               </button>
 
-              {/* Bookmarks Dropdown */}
-              {showBookmarksDropdown && (
-                <div
-                  className="absolute right-0 top-full mt-1 w-48 bg-[#161f30] border border-slate-700 rounded-md shadow-2xl py-1 z-50 text-xs font-sans"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <div className="px-2.5 py-1 text-[10px] font-semibold text-slate-400 border-b border-slate-800">
-                    常用看盘与交易网站
-                  </div>
-                  {PRESET_BOOKMARKS.map((bookmark) => (
-                    <button
-                      key={bookmark.name}
-                      onClick={() => {
-                        handleNavigate(bookmark.url);
-                        setShowBookmarksDropdown(false);
-                      }}
-                      className="w-full text-left px-2.5 py-1.5 flex items-center gap-2 text-slate-200 hover:bg-sky-950/60 hover:text-sky-300 transition-colors"
-                    >
-                      <span>{bookmark.icon}</span>
-                      <span className="truncate">{bookmark.name}</span>
-                    </button>
-                  ))}
-                  <div className="border-t border-slate-800 mt-1 pt-1">
-                    <button
-                      onClick={() => {
-                        setShowBookmarksDropdown(false);
-                        setShowUrlDialog(true);
-                      }}
-                      className="w-full text-left px-2.5 py-1 text-[11px] text-sky-400 hover:bg-slate-800/80 flex items-center gap-1.5"
-                    >
-                      <Settings className="w-3 h-3" />
-                      <span>更多高级设置与多标的...</span>
-                    </button>
-                  </div>
-                </div>
-              )}
+              {/* 视窗设置按钮 */}
+              <button
+                type="button"
+                onClick={() => setShowUrlDialog(true)}
+                className="p-1 rounded text-slate-400 hover:text-sky-400 hover:bg-slate-800/80 transition-colors shrink-0"
+                title="看盘参数与高级设置"
+              >
+                <Settings className="w-3.5 h-3.5" />
+              </button>
             </div>
-          </form>
+          ) : (
+            /* ================= 展开网址框模式：完整输入栏 + 折叠触发按钮 ================= */
+            <div className="flex-1 flex items-center gap-1 min-w-0">
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  handleNavigate(urlBarInput);
+                }}
+                className="flex-1 flex items-center bg-[#090d16] border border-slate-700/80 hover:border-slate-600 focus-within:border-sky-500 rounded-md px-2 py-0.5 transition-colors min-w-0"
+              >
+                <Globe className="w-3 h-3 text-slate-500 shrink-0 mr-1.5" />
+                <input
+                  type="text"
+                  value={urlBarInput}
+                  onChange={(e) => setUrlBarInput(e.target.value)}
+                  placeholder="输入网址 (如 binance.com 或 tradingview.com)..."
+                  className="flex-1 min-w-0 bg-transparent text-slate-200 text-xs font-mono outline-none placeholder:text-slate-600 truncate"
+                />
+                {urlBarInput && (
+                  <button
+                    type="button"
+                    onClick={() => setUrlBarInput('')}
+                    className="p-0.5 text-slate-500 hover:text-slate-300 mr-1"
+                    title="清空"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                )}
+                <button
+                  type="submit"
+                  className="px-2 py-0.5 bg-sky-600 hover:bg-sky-500 text-white rounded text-[11px] font-semibold transition-colors shrink-0 mr-1 shadow-sm"
+                >
+                  前往
+                </button>
+
+                {/* Quick Bookmarks Button */}
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setShowBookmarksDropdown(!showBookmarksDropdown)}
+                    title="快捷书签（币安、OKX、DexScreener 等）"
+                    className={`p-1 rounded transition-colors ${
+                      showBookmarksDropdown
+                        ? 'text-amber-400 bg-amber-950/40'
+                        : 'text-slate-400 hover:text-amber-400 hover:bg-slate-800'
+                    }`}
+                  >
+                    <Bookmark className="w-3 h-3" />
+                  </button>
+
+                  {/* Bookmarks Dropdown */}
+                  {showBookmarksDropdown && (
+                    <div
+                      className="absolute right-0 top-full mt-1 w-48 bg-[#161f30] border border-slate-700 rounded-md shadow-2xl py-1 z-50 text-xs font-sans"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <div className="px-2.5 py-1 text-[10px] font-semibold text-slate-400 border-b border-slate-800">
+                        常用看盘与交易网站
+                      </div>
+                      {PRESET_BOOKMARKS.map((bookmark) => (
+                        <button
+                          key={bookmark.name}
+                          onClick={() => {
+                            handleNavigate(bookmark.url);
+                            setShowBookmarksDropdown(false);
+                          }}
+                          className="w-full text-left px-2.5 py-1.5 flex items-center gap-2 text-slate-200 hover:bg-sky-950/60 hover:text-sky-300 transition-colors"
+                        >
+                          <span>{bookmark.icon}</span>
+                          <span className="truncate">{bookmark.name}</span>
+                        </button>
+                      ))}
+                      <div className="border-t border-slate-800 mt-1 pt-1">
+                        <button
+                          onClick={() => {
+                            setShowBookmarksDropdown(false);
+                            setShowUrlDialog(true);
+                          }}
+                          className="w-full text-left px-2.5 py-1 text-[11px] text-sky-400 hover:bg-slate-800/80 flex items-center gap-1.5"
+                        >
+                          <Settings className="w-3 h-3" />
+                          <span>更多高级设置与多标的...</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </form>
+
+              {/* 一键折叠输入框按钮 */}
+              <button
+                type="button"
+                onClick={() => {
+                  setIsUrlCollapsed(true);
+                  onUpdateConfig(win.id, { isUrlCollapsed: true });
+                }}
+                className="p-1 rounded text-slate-400 hover:text-sky-400 hover:bg-slate-800/80 transition-colors shrink-0"
+                title="一键折叠网址输入框，释放空间放入更多快捷按钮"
+              >
+                <PanelLeftClose className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Right: Price Badge, Maximize/Restore, Hide */}
