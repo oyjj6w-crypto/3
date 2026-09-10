@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- 网络通信权限：看盘行情与 WebSocket 实时推送必备 -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <application
+        android:allowBackup="true"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.TradingMultiView"
+        android:hardwareAccelerated="true"
+        android:usesCleartextTraffic="true"
+        tools:targetApi="34">
+
+        <!-- 
+          关键点：配置 configChanges 包含：
+          - orientation: 旋转屏幕（横屏/竖屏）时不销毁 Activity
+          - screenSize: 屏幕物理尺寸改变（如折叠屏展开或多窗口分屏）时不重建
+          - screenLayout: 屏幕布局模式变更时不重建
+          - smallestScreenSize: 最小屏幕尺寸变更
+          - keyboardHidden|keyboard: 键盘弹出/收起时不重建
+          配合 hardwareAccelerated="true" 保证 TradingView Canvas/WebGL 60FPS 流畅渲染
+        -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:theme="@style/Theme.TradingMultiView"
+            android:windowSoftInputMode="adjustNothing"
+            android:hardwareAccelerated="true"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|uiMode|keyboardHidden|keyboard">
+            
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+
+</manifest>

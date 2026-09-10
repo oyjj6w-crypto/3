@@ -365,16 +365,16 @@ git push -u origin main`;
           <div className="flex-1 overflow-y-auto p-6 bg-[#0b0f19] space-y-6 text-slate-300 text-xs sm:text-sm">
             {/* Header Banner */}
             <div className="p-4 rounded-xl bg-gradient-to-r from-emerald-950/70 via-slate-900 to-sky-950/70 border border-emerald-500/30 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-              <div className="space-y-1">
+              <div className="space-y-1.5">
                 <div className="flex items-center gap-2 text-emerald-400 font-bold text-sm sm:text-base">
                   <Workflow className="w-5 h-5 text-emerald-400" />
-                  <span>GitHub Actions 自动编译流水线已就绪</span>
+                  <span>支持直接点击页面右上角的「Push to GitHub」触发 Actions 自动编译</span>
                   <span className="px-2 py-0.5 rounded text-[10px] bg-emerald-500/20 text-emerald-300 font-mono border border-emerald-500/40">
-                    Push 即构建
+                    已就绪
                   </span>
                 </div>
-                <p className="text-slate-400 text-xs">
-                  工程根目录已内置 <code className="text-emerald-300 font-mono">.github/workflows/android-build.yml</code>。只要代码 Push 到 GitHub，云端自动调度 Ubuntu 虚拟机执行编译并打包生成 APK。
+                <p className="text-slate-300 text-xs leading-relaxed">
+                  当前工作区根目录已正式写入并包含 <code className="text-emerald-300 font-mono bg-emerald-950/60 px-1 py-0.5 rounded">.github/workflows/android-build.yml</code> 及完整 Android 源码。无论通过<strong>页面右上角平台自带的 Push to GitHub</strong>，还是通过终端 Git 推送，GitHub 均会<strong>立刻自动触发 Actions 云端编译并生成 APK 产物</strong>！
                 </p>
               </div>
 
@@ -383,8 +383,22 @@ git push -u origin main`;
                 className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold shadow-md transition-all cursor-pointer"
               >
                 <FileCode className="w-4 h-4" />
-                <span>查看 Workflow 配置文件</span>
+                <span>查看 Workflow 源码</span>
               </button>
+            </div>
+
+            {/* Quick Action Guide for Top Right Push */}
+            <div className="p-4 rounded-xl bg-sky-950/40 border border-sky-500/30 space-y-2">
+              <div className="flex items-center gap-2 text-sky-400 font-bold text-xs">
+                <Github className="w-4 h-4 text-sky-400" />
+                <span>通过页面右上角「Push to GitHub」的操作方法：</span>
+              </div>
+              <ol className="list-decimal list-inside space-y-1 text-xs text-slate-300 leading-relaxed pl-1">
+                <li>点击网页<strong>右上角的【GitHub / Push to GitHub】图标或菜单</strong>，选择或授权绑定你的 GitHub 仓库；</li>
+                <li>确认提交并完成 Push 后，直接打开你的 GitHub 仓库页面；</li>
+                <li>点击仓库上方的 <strong>Actions</strong> 选项卡，即可看到名为 <strong className="text-emerald-300 font-mono">Android CI & Auto Build APK</strong> 的工作流正在自动运行；</li>
+                <li>构建耗时约 1~2 分钟，完成后点击进入，在最下方的 <strong>Artifacts</strong> 处直接下载 <strong className="text-amber-300 font-mono">TradingMultiView-Debug-APK</strong> 即可在平板或模拟器中安装使用！</li>
+              </ol>
             </div>
 
             {/* Pipeline Flow Steps */}

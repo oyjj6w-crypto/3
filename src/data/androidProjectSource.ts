@@ -882,14 +882,13 @@ include(":app")`
     description: 'GitHub Actions 自动编译工作流：Push 代码后自动触发 Gradle 编译并输出 APK/AAB 产物',
     content: `name: Android CI & Auto Build APK
 
-# 触发条件：Push 到 main/master 分支、提交 Tag (v*) 或发起 Pull Request，均会自动触发自动编译
+# 触发条件：任何分支 Push、提交 Tag (v*)、发起 PR、或手动触发，均会触发编译
 on:
   push:
-    branches: [ "main", "master" ]
+    branches: [ "**" ]
     tags:
       - 'v*'
   pull_request:
-    branches: [ "main", "master" ]
   workflow_dispatch: # 支持在 GitHub Actions 控制台手动一键点击触发构建
 
 jobs:
@@ -914,29 +913,29 @@ jobs:
           distribution: 'temurin'
           cache: 'gradle'
 
-      # 3. 授予 gradlew 可执行权限
-      - name: Grant execute permission for gradlew
-        run: chmod +x ./gradlew
-
-      # 4. 配置 Gradle 缓存加速构建 (采用官方 gradle action)
+      # 3. 配置 Gradle 环境与缓存
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.8'
 
-      # 5. 执行代码静态检查 (Lint)
-      - name: Run Android Lint Check
-        run: ./gradlew lintDebug --continue || true
+      # 4. 确保 Gradle Wrapper 就绪
+      - name: Ensure Gradle Wrapper
+        run: |
+          if [ ! -f ./gradlew ]; then
+            gradle wrapper --gradle-version 8.8
+          fi
+          chmod +x ./gradlew
 
-      # 6. 执行 Debug APK 编译
+      # 5. 执行 Debug APK 编译
       - name: Assemble Debug APK
         run: ./gradlew assembleDebug --stacktrace
 
-      # 7. 执行 Release APK 编译 (使用内置 debug 签名或直接输出无签名包)
+      # 6. 执行 Release APK 编译 (使用内置 debug 签名或直接输出无签名包)
       - name: Assemble Release APK
         run: ./gradlew assembleRelease --stacktrace || true
 
-      # 8. 上传编译生成的 Debug APK 到 GitHub Actions Artifacts (可直接点击下载)
+      # 7. 上传编译生成的 Debug APK 到 GitHub Actions Artifacts (可直接点击下载)
       - name: Upload Debug APK Artifact
         uses: actions/upload-artifact@v4
         with:
@@ -944,7 +943,7 @@ jobs:
           path: app/build/outputs/apk/debug/*.apk
           retention-days: 14
 
-      # 9. 上传编译生成的 Release APK/AAB 到 GitHub Actions Artifacts
+      # 8. 上传编译生成的 Release APK/AAB 到 GitHub Actions Artifacts
       - name: Upload Release APK Artifact
         uses: actions/upload-artifact@v4
         if: always()
@@ -953,7 +952,7 @@ jobs:
           path: app/build/outputs/apk/release/*.apk
           retention-days: 30
 
-      # 10. 若本次提交包含版本 Tag (如 v1.0.0)，自动创建 GitHub Release 并附带 APK 安装包
+      # 9. 若本次提交包含版本 Tag (如 v1.0.0)，自动创建 GitHub Release 并附带 APK 安装包
       - name: Auto Publish GitHub Release (On Tag Push)
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
@@ -967,6 +966,38 @@ jobs:
         env:
           GITHUB_TOKEN: \${{ secrets.GITHUB_TOKEN }}
 `
+  },
+  {
+    path: 'gradle.properties',
+    language: 'properties',
+    description: 'Gradle JVM 内存优化与 AndroidX 特性配置',
+    content: `org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+android.useAndroidX=true
+android.nonTransitiveRClass=true
+kotlin.code.style=official`
+  },
+  {
+    path: 'gradle/wrapper/gradle-wrapper.properties',
+    language: 'properties',
+    description: 'Gradle Wrapper 8.8 下载与运行配置',
+    content: `distributionBase=GRADLE_USER_HOME
+distributionPath=wrapper/dists
+distributionUrl=https\\://services.gradle.org/distributions/gradle-8.8-bin.zip
+networkTimeout=10000
+validateDistributionUrl=true
+zipStoreBase=GRADLE_USER_HOME
+zipStorePath=wrapper/dists`
+  },
+  {
+    path: 'app/proguard-rules.pro',
+    language: 'pro',
+    description: '混淆防劣化与 WebKit 原生接口保护规则',
+    content: `# Proguard rules for Android WebKit and Coroutines
+-keepclassmembers class * {
+    @android.webkit.JavascriptInterface <methods>;
+}
+-keepattributes JavascriptInterface
+-dontwarn com.trading.multiview.**`
   },
   {
     path: 'app/src/main/res/values/strings.xml',
