@@ -59,37 +59,6 @@ gradlew text eol=lf
 *.png binary
 `);
 
-  zip.file('push-to-github.sh', `#!/usr/bin/env bash
-# 一键初始化并 Push 到 GitHub 脚本
-set -e
-
-if [ -z "$1" ]; then
-  echo "使用方法: ./push-to-github.sh <你的GitHub仓库地址>"
-  echo "示例: ./push-to-github.sh https://github.com/your-username/trading-multiview.git"
-  exit 1
-fi
-
-REPO_URL="$1"
-
-echo "==> 1. 初始化 Git 仓库与分支..."
-git init
-git branch -M main
-
-echo "==> 2. 提交代码与 GitHub Actions 自动编译工作流..."
-git add .
-git commit -m "feat: Android 多视窗看盘浏览器 (含 GitHub Actions 自动编译 APK 工作流)"
-
-echo "==> 3. 设置远程仓库: $REPO_URL"
-git remote remove origin 2>/dev/null || true
-git remote add origin "$REPO_URL"
-
-echo "==> 4. 推送到 GitHub (将自动触发 Actions 云端编译)..."
-git push -u origin main
-
-echo ""
-echo "🎉 推送成功！请打开你的 GitHub 仓库 -> 点击 Actions 标签页查看实时自动编译进度。"
-`);
-
   return await zip.generateAsync({ type: 'blob' });
 }
 
