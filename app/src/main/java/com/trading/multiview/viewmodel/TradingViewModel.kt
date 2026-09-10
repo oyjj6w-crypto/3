@@ -27,10 +27,10 @@ data class TabGroup(
 
 val DEFAULT_TAB_GROUPS = listOf(
     TabGroup(
-        id = "preset_tv_official",
-        name = "TradingView 官网",
-        isPreset = true,
-        description = "TradingView 官方网站 (www.tradingview.com)",
+        id = "preset_1",
+        name = "1",
+        isPreset = false,
+        description = "分组 1 (TradingView 官方行情)",
         items = listOf(
             TabGroupItem("TradingView 1", "BTCUSDT", "https://www.tradingview.com", "15m"),
             TabGroupItem("TradingView 2", "ETHUSDT", "https://www.tradingview.com", "60m"),
@@ -38,10 +38,10 @@ val DEFAULT_TAB_GROUPS = listOf(
         )
     ),
     TabGroup(
-        id = "preset_major",
-        name = "主流大盘 (BTC/ETH/SOL)",
-        isPreset = true,
-        description = "核心主流资产，跨 15m/1h/4h 周期对比",
+        id = "preset_2",
+        name = "2",
+        isPreset = false,
+        description = "分组 2 (主流大盘 BTC/ETH/SOL)",
         items = listOf(
             TabGroupItem("BTC/USDT 15M", "BTCUSDT", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:BTCUSDT&interval=15&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1", "15m"),
             TabGroupItem("ETH/USDT 1H", "ETHUSDT", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:ETHUSDT&interval=60&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1", "60m"),
@@ -49,25 +49,14 @@ val DEFAULT_TAB_GROUPS = listOf(
         )
     ),
     TabGroup(
-        id = "preset_l1",
-        name = "公链龙头 (BNB/AVAX/NEAR)",
-        isPreset = true,
-        description = "公链生态核心代币",
+        id = "preset_3",
+        name = "3",
+        isPreset = false,
+        description = "分组 3 (公链龙头 BNB/AVAX/NEAR)",
         items = listOf(
             TabGroupItem("BNB/USDT 15M", "BNBUSDT", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:BNBUSDT&interval=15&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1", "15m"),
             TabGroupItem("AVAX/USDT 1H", "AVAXUSDT", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:AVAXUSDT&interval=60&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1", "60m"),
             TabGroupItem("NEAR/USDT 4H", "NEARUSDT", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:NEARUSDT&interval=240&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1", "240m")
-        )
-    ),
-    TabGroup(
-        id = "preset_volatile",
-        name = "波动异动 (DOGE/PEPE/XRP)",
-        isPreset = true,
-        description = "高波动热门代币短线",
-        items = listOf(
-            TabGroupItem("DOGE/USDT 15M", "DOGEUSDT", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:DOGEUSDT&interval=15&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1", "15m"),
-            TabGroupItem("PEPE/USDT 15M", "PEPEUSDT", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:PEPEUSDT&interval=15&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1", "15m"),
-            TabGroupItem("XRP/USDT 1H", "XRPUSDT", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:XRPUSDT&interval=60&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1", "60m")
         )
     )
 )
@@ -92,7 +81,7 @@ data class MultiViewUiState(
     ),
     val maximizedWindowId: Int? = null,
     val groups: List<TabGroup> = DEFAULT_TAB_GROUPS,
-    val activeGroupId: String = "preset_tv_official",
+    val activeGroupId: String = "preset_1",
     val globalZoomPercent: Int = 100,
     val isGlobalUrlCollapsed: Boolean = false
 ) {
@@ -356,6 +345,29 @@ class TradingViewModel : ViewModel() {
      */
     fun goForward(windowId: Int): Boolean {
         return PersistentWebViewPool.goForward(windowId)
+    }
+
+    /**
+     * 全局一键刷新全部 3 个视窗 (保持常驻单例并重载页面)
+     */
+    fun reloadAll() {
+        listOf(1, 2, 3).forEach { windowId ->
+            PersistentWebViewPool.reloadWindow(windowId)
+        }
+    }
+
+    /**
+     * 方式1：重命名分组名称
+     */
+    fun renameGroup(groupId: String, newName: String, context: Context) {
+        val trimmed = newName.trim().ifEmpty { "未命名" }
+        _uiState.update { state ->
+            val updated = state.groups.map { g ->
+                if (g.id == groupId) g.copy(name = trimmed) else g
+            }
+            persistCustomGroupsToPrefs(updated.filter { !it.isPreset }, context)
+            state.copy(groups = updated)
+        }
     }
 
     /**

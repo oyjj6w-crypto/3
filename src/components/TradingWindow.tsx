@@ -314,303 +314,7 @@ export const TradingWindow: React.FC<TradingWindowProps> = ({
       id={`trading-window-${win.id}`}
       className="flex flex-col h-full w-full bg-[#0d131f] border border-slate-800/80 overflow-hidden relative select-none"
     >
-      {/* ================= 专业综合地址栏与控制栏 (Address Bar & Controls) ================= */}
-      <div
-        id={`micro-bar-${win.id}`}
-        className="h-10 px-2 bg-[#141c2c] border-b border-slate-800 flex items-center justify-between gap-1.5 z-20 shrink-0 text-slate-200"
-      >
-        {/* Left: Window Identifier & WebSocket status */}
-        <div className="flex items-center gap-1.5 shrink-0">
-          <span className="relative flex h-2 w-2" title={`WebSocket 活跃保活 • 累计推送 ${msgCount} 条`}>
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-            <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-          </span>
-          <span className="px-1.5 py-0.5 rounded bg-sky-950/80 border border-sky-800/50 text-[10px] text-sky-400 font-bold font-mono">
-            W{win.id}
-          </span>
-        </div>
-
-        {/* Navigation Controls: Back, Forward, Reload */}
-        <div className="flex items-center gap-0.5 shrink-0">
-          <button
-            onClick={() => handleManualReload()}
-            title="手动刷新视窗"
-            className="p-1 rounded text-slate-400 hover:text-slate-100 hover:bg-slate-800/80 transition-colors"
-          >
-            <RotateCw className="w-3.5 h-3.5" />
-          </button>
-        </div>
-
-        {/* Center: Collapsible Address Bar or Rich Buttons Strip */}
-        <div className="flex-1 relative flex items-center min-w-0 gap-1">
-          {isUrlCollapsed ? (
-            /* ================= 已折叠网址框模式：释放横向空间，展示丰富快捷按钮 ================= */
-            <div className="flex-1 flex items-center gap-1.5 min-w-0 overflow-x-auto no-scrollbar">
-              {/* 展开网址输入框按钮 */}
-              <button
-                type="button"
-                onClick={() => {
-                  setIsUrlCollapsed(false);
-                  onUpdateConfig(win.id, { isUrlCollapsed: false });
-                }}
-                className="flex items-center gap-1 px-2 py-1 rounded bg-[#090d16] hover:bg-slate-800 border border-slate-700/80 hover:border-sky-500 text-sky-400 text-xs font-mono shrink-0 transition-colors group"
-                title="展开完整网址输入框"
-              >
-                <PanelLeftOpen className="w-3.5 h-3.5 text-sky-400 group-hover:scale-110 transition-transform" />
-                <span className="hidden sm:inline text-[11px] font-sans text-slate-300">展开网址</span>
-              </button>
-
-              {/* 常用交易所/看盘直达按钮 */}
-              <div className="flex items-center gap-1 shrink-0 overflow-x-auto no-scrollbar">
-                {[
-                  { name: 'TradingView', icon: '📈', url: 'https://s.tradingview.com/widgetembed/?symbol=BINANCE:BTCUSDT&interval=15&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1' },
-                  { name: '币安', icon: '🟡', url: 'https://www.binance.com/zh-CN/trade/BTC_USDT' },
-                  { name: 'OKX', icon: '⬛', url: 'https://www.okx.com/zh-hans/trade-spot/btc-usdt' },
-                  { name: 'DexScreener', icon: '🦅', url: 'https://dexscreener.com' },
-                ].map((item) => (
-                  <button
-                    key={item.name}
-                    type="button"
-                    onClick={() => handleNavigate(item.url)}
-                    className="px-2 py-0.5 rounded bg-slate-800/80 hover:bg-sky-950/80 hover:text-sky-300 hover:border-sky-600/70 border border-slate-700/70 text-[11px] text-slate-200 transition-colors flex items-center gap-1 shrink-0 whitespace-nowrap"
-                    title={`直达 ${item.name}`}
-                  >
-                    <span>{item.icon}</span>
-                    <span className="truncate">{item.name}</span>
-                  </button>
-                ))}
-              </div>
-
-              {/* 快捷周期切换 */}
-              <div className="hidden sm:flex items-center gap-0.5 shrink-0 px-1 border-l border-slate-800">
-                {[
-                  { label: '15m', val: '15' },
-                  { label: '1h', val: '60' },
-                  { label: '4h', val: '240' },
-                ].map((tf) => (
-                  <button
-                    key={tf.label}
-                    type="button"
-                    onClick={() => {
-                      let updated = win.url;
-                      if (updated.includes('interval=')) {
-                        updated = updated.replace(/interval=\w+/, `interval=${tf.val}`);
-                      }
-                      handleNavigate(updated);
-                    }}
-                    className="px-1.5 py-0.5 rounded bg-slate-900/80 hover:bg-slate-800 text-[10px] font-mono text-slate-400 hover:text-sky-300 transition-colors shrink-0"
-                    title={`切换 ${tf.label} 周期`}
-                  >
-                    {tf.label}
-                  </button>
-                ))}
-              </div>
-
-              {/* 复制当前 URL 按钮 */}
-              <button
-                type="button"
-                onClick={handleCopyCurrentUrl}
-                className="p-1 rounded text-slate-400 hover:text-emerald-400 hover:bg-slate-800/80 transition-colors shrink-0"
-                title={copiedUrl ? '已复制网址！' : '复制当前网页 URL'}
-              >
-                {copiedUrl ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-              </button>
-
-              {/* 视窗设置按钮 */}
-              <button
-                type="button"
-                onClick={() => setShowUrlDialog(true)}
-                className="p-1 rounded text-slate-400 hover:text-sky-400 hover:bg-slate-800/80 transition-colors shrink-0"
-                title="看盘参数与高级设置"
-              >
-                <Settings className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          ) : (
-            /* ================= 展开网址框模式：完整输入栏 + 折叠触发按钮 ================= */
-            <div className="flex-1 flex items-center gap-1 min-w-0">
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  handleNavigate(urlBarInput);
-                }}
-                className="flex-1 flex items-center bg-[#090d16] border border-slate-700/80 hover:border-slate-600 focus-within:border-sky-500 rounded-md px-2 py-0.5 transition-colors min-w-0"
-              >
-                <Globe className="w-3 h-3 text-slate-500 shrink-0 mr-1.5" />
-                <input
-                  type="text"
-                  value={urlBarInput}
-                  onChange={(e) => setUrlBarInput(e.target.value)}
-                  placeholder="输入网址 (如 binance.com 或 tradingview.com)..."
-                  className="flex-1 min-w-0 bg-transparent text-slate-200 text-xs font-mono outline-none placeholder:text-slate-600 truncate"
-                />
-                {urlBarInput && (
-                  <button
-                    type="button"
-                    onClick={() => setUrlBarInput('')}
-                    className="p-0.5 text-slate-500 hover:text-slate-300 mr-1"
-                    title="清空"
-                  >
-                    <X className="w-3 h-3" />
-                  </button>
-                )}
-                <button
-                  type="submit"
-                  className="px-2 py-0.5 bg-sky-600 hover:bg-sky-500 text-white rounded text-[11px] font-semibold transition-colors shrink-0 mr-1 shadow-sm"
-                >
-                  前往
-                </button>
-
-                {/* Quick Bookmarks Button */}
-                <div className="relative">
-                  <button
-                    type="button"
-                    onClick={() => setShowBookmarksDropdown(!showBookmarksDropdown)}
-                    title="快捷书签（币安、OKX、DexScreener 等）"
-                    className={`p-1 rounded transition-colors ${
-                      showBookmarksDropdown
-                        ? 'text-amber-400 bg-amber-950/40'
-                        : 'text-slate-400 hover:text-amber-400 hover:bg-slate-800'
-                    }`}
-                  >
-                    <Bookmark className="w-3 h-3" />
-                  </button>
-
-                  {/* Bookmarks Dropdown */}
-                  {showBookmarksDropdown && (
-                    <div
-                      className="absolute right-0 top-full mt-1 w-48 bg-[#161f30] border border-slate-700 rounded-md shadow-2xl py-1 z-50 text-xs font-sans"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <div className="px-2.5 py-1 text-[10px] font-semibold text-slate-400 border-b border-slate-800">
-                        常用看盘与交易网站
-                      </div>
-                      {PRESET_BOOKMARKS.map((bookmark) => (
-                        <button
-                          key={bookmark.name}
-                          onClick={() => {
-                            handleNavigate(bookmark.url);
-                            setShowBookmarksDropdown(false);
-                          }}
-                          className="w-full text-left px-2.5 py-1.5 flex items-center gap-2 text-slate-200 hover:bg-sky-950/60 hover:text-sky-300 transition-colors"
-                        >
-                          <span>{bookmark.icon}</span>
-                          <span className="truncate">{bookmark.name}</span>
-                        </button>
-                      ))}
-                      <div className="border-t border-slate-800 mt-1 pt-1">
-                        <button
-                          onClick={() => {
-                            setShowBookmarksDropdown(false);
-                            setShowUrlDialog(true);
-                          }}
-                          className="w-full text-left px-2.5 py-1 text-[11px] text-sky-400 hover:bg-slate-800/80 flex items-center gap-1.5"
-                        >
-                          <Settings className="w-3 h-3" />
-                          <span>更多高级设置与多标的...</span>
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </form>
-
-              {/* 一键折叠输入框按钮 */}
-              <button
-                type="button"
-                onClick={() => {
-                  setIsUrlCollapsed(true);
-                  onUpdateConfig(win.id, { isUrlCollapsed: true });
-                }}
-                className="p-1 rounded text-slate-400 hover:text-sky-400 hover:bg-slate-800/80 transition-colors shrink-0"
-                title="一键折叠网址输入框，释放空间放入更多快捷按钮"
-              >
-                <PanelLeftClose className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          )}
-        </div>
-
-        {/* Right: Price Badge, Maximize/Restore, Hide */}
-        <div className="flex items-center gap-1 shrink-0">
-          {/* Live Price Tag */}
-          <div
-            className={`hidden md:flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-mono transition-colors ${
-              flashColor === 'green'
-                ? 'bg-emerald-950/80 text-emerald-400'
-                : flashColor === 'red'
-                ? 'bg-rose-950/80 text-rose-400'
-                : 'text-slate-300'
-            }`}
-          >
-            <span>${livePrice}</span>
-          </div>
-
-          {/* Quick +/- Global Web Zoom Adjustment (textZoom & initialScale) */}
-          <div
-            className="flex items-center bg-[#090d16] border border-slate-700/80 rounded h-6 px-0.5 text-slate-200"
-            title="全局网页缩放调节 (对应 Android WebView textZoom 与 initialScale，点击重置 100%)"
-          >
-            <button
-              type="button"
-              onClick={handleZoomOut}
-              disabled={zoomLevel <= 50}
-              className="p-1 text-slate-400 hover:text-sky-400 disabled:opacity-30 disabled:hover:text-slate-400 transition-colors"
-              title="缩小网页 (每次 -10%)"
-            >
-              <Minus className="w-3 h-3" />
-            </button>
-            <button
-              type="button"
-              onClick={handleResetZoom}
-              className={`px-1 text-[10px] font-mono font-bold transition-colors ${
-                zoomLevel === 100 ? 'text-slate-400 hover:text-slate-200' : 'text-sky-400 hover:text-sky-300'
-              }`}
-              title="点击重置为 100%"
-            >
-              {zoomLevel}%
-            </button>
-            <button
-              type="button"
-              onClick={handleZoomIn}
-              disabled={zoomLevel >= 200}
-              className="p-1 text-slate-400 hover:text-sky-400 disabled:opacity-30 disabled:hover:text-slate-400 transition-colors"
-              title="放大网页 (每次 +10%)"
-            >
-              <Plus className="w-3 h-3" />
-            </button>
-          </div>
-
-          {/* One-Click Maximize / Restore */}
-          <button
-            onClick={() => onToggleMaximize(win.id)}
-            title={isMaximized ? '还原并列排布' : '一键全屏最大化'}
-            className={`p-1 rounded transition-colors ${
-              isMaximized
-                ? 'text-sky-400 bg-sky-950/60 hover:bg-sky-900/80'
-                : 'text-slate-300 hover:text-sky-400 hover:bg-slate-800'
-            }`}
-          >
-            {isMaximized ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
-          </button>
-
-          {/* Hide Window Button */}
-          <button
-            onClick={() => onHideWindow(win.id)}
-            disabled={!canHide}
-            title={canHide ? '隐藏当前窗口（剩余窗口自动等比拉伸）' : '无法隐藏（至少需保留 1 个视窗）'}
-            className={`p-1 rounded transition-colors ${
-              canHide
-                ? 'text-slate-400 hover:text-rose-400 hover:bg-rose-950/40'
-                : 'text-slate-600 cursor-not-allowed opacity-40'
-            }`}
-          >
-            <EyeOff className="w-3.5 h-3.5" />
-          </button>
-        </div>
-      </div>
-
-      {/* ================= 底层常驻 WebView 渲染区 ================= */}
+      {/* ================= 底层常驻 WebView 渲染区 (纯净无常驻地址栏遮挡) ================= */}
       <div
         ref={containerRef}
         className="flex-1 w-full h-full relative bg-[#090d16] overflow-hidden"
@@ -654,6 +358,38 @@ export const TradingWindow: React.FC<TradingWindowProps> = ({
             </div>
           </div>
         )}
+
+        {/* 左上角极轻量半透明状态徽标 */}
+        <div className="absolute top-2 left-2 flex items-center gap-1.5 z-20 pointer-events-auto">
+          <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-slate-900/85 backdrop-blur-md border border-slate-700/60 shadow-lg text-[10px] font-mono">
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+            </span>
+            <span className="text-sky-400 font-bold">W{win.id}</span>
+            <span className="text-slate-400 hidden sm:inline">${livePrice}</span>
+          </div>
+        </div>
+
+        {/* 右上角快捷最大化与隐藏悬浮控制 */}
+        <div className="absolute top-2 right-2 flex items-center gap-1 z-20 pointer-events-auto">
+          <button
+            onClick={() => onToggleMaximize(win.id)}
+            title={isMaximized ? '还原并列排布' : '一键全屏最大化'}
+            className="p-1.5 rounded-md bg-slate-900/85 backdrop-blur-md border border-slate-700/60 text-slate-300 hover:text-sky-300 hover:bg-slate-800 shadow-lg transition-colors"
+          >
+            {isMaximized ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
+          </button>
+          {canHide && (
+            <button
+              onClick={() => onHideWindow(win.id)}
+              title="隐藏当前视窗"
+              className="p-1.5 rounded-md bg-slate-900/85 backdrop-blur-md border border-slate-700/60 text-slate-400 hover:text-rose-400 hover:bg-rose-950/60 shadow-lg transition-colors"
+            >
+              <EyeOff className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
 
         {/* Floating WebSocket Activity Telemetry Badge (Bottom-Right) */}
         <div className="absolute bottom-1 right-1.5 px-1.5 py-0.5 rounded bg-slate-900/85 backdrop-blur-sm border border-slate-800/80 text-[10px] font-mono text-slate-400 flex items-center gap-1.5 pointer-events-none z-20">

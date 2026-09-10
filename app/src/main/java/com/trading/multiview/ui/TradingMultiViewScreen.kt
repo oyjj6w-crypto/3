@@ -2,8 +2,11 @@ package com.trading.multiview.ui
 
 import android.content.Context
 import android.view.ViewGroup
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -23,15 +26,19 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -48,6 +55,9 @@ fun TradingMultiViewScreen(
     val uiState by viewModel.uiState.collectAsState()
     val context = LocalContext.current
     var showSaveDialog by remember { mutableStateOf(false) }
+    var editingGroupId by remember { mutableStateOf<String?>(null) }
+    var editingName by remember { mutableStateOf(TextFieldValue("")) }
+    val focusManager = LocalFocusManager.current
 
     // 初始化时加载本地存储的自定义分组
     LaunchedEffect(Unit) {
@@ -59,11 +69,11 @@ fun TradingMultiViewScreen(
             .fillMaxSize()
             .background(Color(0xFF0F141C)) // 专业深色看盘背景
     ) {
-        // ================= 顶部地址栏标签页集合与全局缩放栏 =================
+        // ================= 方案C: 极简统一顶部顶栏 (融合分组标签 + 全局刷新 + 统一缩放 + 网址配置抽屉) =================
         Surface(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(40.dp),
+                .height(42.dp),
             color = Color(0xFF0D1424),
             border = BorderStroke(width = 0.5.dp, color = Color(0xFF1E293B))
         ) {
@@ -74,7 +84,7 @@ fun TradingMultiViewScreen(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                // 左侧：标签页集合 (预设 3 个分组 + 自定义保存分组)
+                // 左侧：分组标签集合 (方式1: 支持双击/编辑图标内联修改名称，默认 1/2/3)
                 Row(
                     modifier = Modifier
                         .weight(1f)
@@ -83,53 +93,146 @@ fun TradingMultiViewScreen(
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     Text(
-                        text = "分组标签:",
-                        color = Color(0xFF94A3B8),
+                        text = "分组:",
+                        color = Color(0xFF64748B),
                         fontSize = 11.sp,
                         fontWeight = FontWeight.SemiBold
                     )
 
                     uiState.groups.forEach { group ->
                         val isActive = uiState.activeGroupId == group.id
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(if (isActive) Color(0xFF0284C7) else Color(0xFF1E293B))
-                                .border(
-                                    1.dp,
-                                    if (isActive) Color(0xFF38BDF8) else Color(0xFF334155),
-                                    RoundedCornerShape(6.dp)
-                                )
-                                .clickable { viewModel.switchGroup(group.id) }
-                                .padding(horizontal = 8.dp, vertical = 4.dp)
-                        ) {
-                            Text(
-                                text = if (group.isPreset) "📑 " else "⭐ ",
-                                fontSize = 10.sp
-                            )
-                            Text(
-                                text = group.name,
-                                color = if (isActive) Color.White else Color(0xFFE2E8F0),
-                                fontSize = 11.sp,
-                                fontWeight = if (isActive) FontWeight.Bold else FontWeight.Medium
-                            )
+                        val isEditing = editingGroupId == group.id
 
-                            if (!group.isPreset) {
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Icon(
-                                    imageVector = Icons.Default.Close,
-                                    contentDescription = "删除分组",
-                                    tint = Color(0xFFEF4444),
+                        if (isEditing) {
+                            // 内联编辑输入框 (方式 1)
+                            val focusRequester = remember { FocusRequester() }
+                            LaunchedEffect(group.id) {
+                                focusRequester.requestFocus()
+                            }
+
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(Color(0xFF0B132B))
+                                    .border(1.dp, Color(0xFF38BDF8), RoundedCornerShape(6.dp))
+                                    .padding(horizontal = 6.dp, vertical = 3.dp)
+                            ) {
+                                BasicTextField(
+                                    value = editingName,
+                                    onValueChange = { editingName = it },
                                     modifier = Modifier
-                                        .size(12.dp)
-                                        .clickable { viewModel.deleteCustomGroup(group.id, context) }
+                                        .width(60.dp)
+                                        .focusRequester(focusRequester),
+                                    singleLine = true,
+                                    textStyle = TextStyle(
+                                        color = Color.White,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold
+                                    ),
+                                    cursorBrush = SolidColor(Color(0xFF38BDF8)),
+                                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                                    keyboardActions = KeyboardActions(
+                                        onDone = {
+                                            if (editingName.text.isNotBlank()) {
+                                                viewModel.renameGroup(group.id, editingName.text, context)
+                                            }
+                                            editingGroupId = null
+                                            focusManager.clearFocus()
+                                        }
+                                    )
                                 )
+
+                                Spacer(modifier = Modifier.width(2.dp))
+
+                                // 保存修改按钮
+                                IconButton(
+                                    onClick = {
+                                        if (editingName.text.isNotBlank()) {
+                                            viewModel.renameGroup(group.id, editingName.text, context)
+                                        }
+                                        editingGroupId = null
+                                        focusManager.clearFocus()
+                                    },
+                                    modifier = Modifier.size(18.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Check,
+                                        contentDescription = "保存名称",
+                                        tint = Color(0xFF10B981),
+                                        modifier = Modifier.size(12.dp)
+                                    )
+                                }
+
+                                // 取消修改按钮
+                                IconButton(
+                                    onClick = { editingGroupId = null },
+                                    modifier = Modifier.size(18.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "取消修改",
+                                        tint = Color(0xFF94A3B8),
+                                        modifier = Modifier.size(12.dp)
+                                    )
+                                }
+                            }
+                        } else {
+                            // 正常状态标签胶囊
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(if (isActive) Color(0xFF0284C7) else Color(0xFF1E293B))
+                                    .border(
+                                        1.dp,
+                                        if (isActive) Color(0xFF38BDF8) else Color(0xFF334155),
+                                        RoundedCornerShape(6.dp)
+                                    )
+                                    .clickable { viewModel.switchGroup(group.id) }
+                                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                            ) {
+                                Text(
+                                    text = group.name,
+                                    color = if (isActive) Color.White else Color(0xFFE2E8F0),
+                                    fontSize = 11.sp,
+                                    fontWeight = if (isActive) FontWeight.Bold else FontWeight.Medium
+                                )
+
+                                Spacer(modifier = Modifier.width(4.dp))
+
+                                // 重命名按钮 (方式 1 触发)
+                                Icon(
+                                    imageVector = Icons.Default.Edit,
+                                    contentDescription = "重命名分组",
+                                    tint = if (isActive) Color(0xFFBAE6FD) else Color(0xFF64748B),
+                                    modifier = Modifier
+                                        .size(11.dp)
+                                        .clickable {
+                                            editingGroupId = group.id
+                                            editingName = TextFieldValue(
+                                                text = group.name,
+                                                selection = TextRange(group.name.length)
+                                            )
+                                        }
+                                )
+
+                                if (!group.isPreset) {
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "删除分组",
+                                        tint = Color(0xFFEF4444),
+                                        modifier = Modifier
+                                            .size(11.dp)
+                                            .clickable { viewModel.deleteCustomGroup(group.id, context) }
+                                    )
+                                }
                             }
                         }
                     }
 
-                    // 保存当前三窗口为新分组按钮
+                    // 保存当前为新分组按钮
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
@@ -137,7 +240,7 @@ fun TradingMultiViewScreen(
                             .background(Color(0xFF064E3B))
                             .border(1.dp, Color(0xFF059669), RoundedCornerShape(6.dp))
                             .clickable { showSaveDialog = true }
-                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                            .padding(horizontal = 6.dp, vertical = 4.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Default.Add,
@@ -145,11 +248,11 @@ fun TradingMultiViewScreen(
                             tint = Color(0xFF34D399),
                             modifier = Modifier.size(12.dp)
                         )
-                        Spacer(modifier = Modifier.width(3.dp))
+                        Spacer(modifier = Modifier.width(2.dp))
                         Text(
-                            text = "保存三窗为新分组",
+                            text = "保存分组",
                             color = Color(0xFFA7F3D0),
-                            fontSize = 11.sp,
+                            fontSize = 10.sp,
                             fontWeight = FontWeight.Medium
                         )
                     }
@@ -157,12 +260,37 @@ fun TradingMultiViewScreen(
 
                 Spacer(modifier = Modifier.width(8.dp))
 
-                // 右侧：3 窗口网页同时全局缩放调节 + 一键折叠全部网址输入框
+                // 右侧：全局控制区 (全局刷新 + 统一全局缩放 + 网址配置抽屉开关)
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    // 全局 3 窗口缩放调节 (textZoom / initialScale)
+                    // 全局一键刷新按钮 (3 个窗口同时刷新)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(Color(0xFF1E293B))
+                            .border(1.dp, Color(0xFF334155), RoundedCornerShape(4.dp))
+                            .clickable { viewModel.reloadAll() }
+                            .padding(horizontal = 6.dp, vertical = 4.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = "全局刷新",
+                            tint = Color(0xFF38BDF8),
+                            modifier = Modifier.size(13.dp)
+                        )
+                        Spacer(modifier = Modifier.width(3.dp))
+                        Text(
+                            text = "全局刷新",
+                            color = Color(0xFFE2E8F0),
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+
+                    // 统一全局缩放调节器 (仅保留顶部统一缩放，支持 +/- 与点击重置)
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
@@ -173,10 +301,10 @@ fun TradingMultiViewScreen(
                             .padding(horizontal = 2.dp)
                     ) {
                         Text(
-                            text = "3窗同步:",
+                            text = "统一缩放:",
                             color = Color(0xFF64748B),
                             fontSize = 10.sp,
-                            modifier = Modifier.padding(horizontal = 4.dp)
+                            modifier = Modifier.padding(horizontal = 3.dp)
                         )
                         IconButton(
                             onClick = { viewModel.zoomOutAll() },
@@ -194,6 +322,7 @@ fun TradingMultiViewScreen(
                             color = Color(0xFF38BDF8),
                             fontSize = 10.sp,
                             fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace,
                             modifier = Modifier
                                 .clickable { viewModel.resetGlobalZoom() }
                                 .padding(horizontal = 2.dp)
@@ -211,32 +340,155 @@ fun TradingMultiViewScreen(
                         }
                     }
 
-                    // 一键折叠/展开全部网址输入框按钮
+                    // 网址配置抽屉开关按钮
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
                             .clip(RoundedCornerShape(4.dp))
-                            .background(if (uiState.isGlobalUrlCollapsed) Color(0xFF78350F) else Color(0xFF1E293B))
+                            .background(if (!uiState.isGlobalUrlCollapsed) Color(0xFF075985) else Color(0xFF1E293B))
                             .border(
                                 1.dp,
-                                if (uiState.isGlobalUrlCollapsed) Color(0xFFD97706) else Color(0xFF334155),
+                                if (!uiState.isGlobalUrlCollapsed) Color(0xFF38BDF8) else Color(0xFF334155),
                                 RoundedCornerShape(4.dp)
                             )
                             .clickable { viewModel.toggleUrlBarCollapse(null) }
                             .padding(horizontal = 6.dp, vertical = 4.dp)
                     ) {
                         Icon(
-                            imageVector = if (uiState.isGlobalUrlCollapsed) Icons.Default.UnfoldMore else Icons.Default.UnfoldLess,
+                            imageVector = if (!uiState.isGlobalUrlCollapsed) Icons.Default.ExpandLess else Icons.Default.Settings,
                             contentDescription = null,
-                            tint = if (uiState.isGlobalUrlCollapsed) Color(0xFFFDE68A) else Color(0xFF94A3B8),
+                            tint = if (!uiState.isGlobalUrlCollapsed) Color(0xFFBAE6FD) else Color(0xFF94A3B8),
                             modifier = Modifier.size(13.dp)
                         )
                         Spacer(modifier = Modifier.width(3.dp))
                         Text(
-                            text = if (uiState.isGlobalUrlCollapsed) "展开输入框" else "折叠输入框",
-                            color = if (uiState.isGlobalUrlCollapsed) Color(0xFFFEF3C7) else Color(0xFFCBD5E1),
-                            fontSize = 10.sp
+                            text = if (!uiState.isGlobalUrlCollapsed) "收起网址配置" else "配置网址",
+                            color = if (!uiState.isGlobalUrlCollapsed) Color.White else Color(0xFFCBD5E1),
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Medium
                         )
+                    }
+                }
+            }
+        }
+
+        // ================= 方案C: 展开式统一网址配置抽屉 (当点击配置网址时平滑展开) =================
+        AnimatedVisibility(
+            visible = !uiState.isGlobalUrlCollapsed,
+            enter = expandVertically(),
+            exit = shrinkVertically()
+        ) {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = Color(0xFF0F172A),
+                border = BorderStroke(width = 0.5.dp, color = Color(0xFF334155))
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    uiState.windows.forEach { win ->
+                        var inputUrl by remember(win.currentUrl) { mutableStateOf(win.currentUrl) }
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(Color(0xFF090D16))
+                                .border(1.dp, Color(0xFF1E293B), RoundedCornerShape(4.dp))
+                                .padding(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(6.dp)
+                                            .clip(CircleShape)
+                                            .background(Color(0xFF10B981))
+                                    )
+                                    Text(
+                                        text = "窗口 ${win.id}",
+                                        color = Color(0xFF38BDF8),
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    // 窗口单独刷新
+                                    Icon(
+                                        imageVector = Icons.Default.Refresh,
+                                        contentDescription = "刷新",
+                                        tint = Color(0xFF94A3B8),
+                                        modifier = Modifier
+                                            .size(13.dp)
+                                            .clickable { viewModel.reload(win.id) }
+                                    )
+
+                                    // 快捷前往
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(3.dp))
+                                            .background(Color(0xFF0284C7))
+                                            .clickable {
+                                                if (inputUrl.isNotBlank()) {
+                                                    viewModel.navigateToUrl(win.id, inputUrl)
+                                                }
+                                                focusManager.clearFocus()
+                                            }
+                                            .padding(horizontal = 5.dp, vertical = 1.dp)
+                                    ) {
+                                        Text(text = "前往", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                            }
+
+                            // 极简 URL 输入栏 (删除了后面的常用书签按钮)
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(24.dp)
+                                    .clip(RoundedCornerShape(3.dp))
+                                    .background(Color(0xFF161E2E))
+                                    .border(1.dp, Color(0xFF334155), RoundedCornerShape(3.dp))
+                                    .padding(horizontal = 4.dp),
+                                contentAlignment = Alignment.CenterStart
+                            ) {
+                                BasicTextField(
+                                    value = inputUrl,
+                                    onValueChange = { inputUrl = it },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    singleLine = true,
+                                    textStyle = TextStyle(
+                                        color = Color(0xFFF1F5F9),
+                                        fontSize = 10.sp,
+                                        fontFamily = FontFamily.Monospace
+                                    ),
+                                    cursorBrush = SolidColor(Color(0xFF38BDF8)),
+                                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go, keyboardType = KeyboardType.Uri),
+                                    keyboardActions = KeyboardActions(
+                                        onGo = {
+                                            if (inputUrl.isNotBlank()) {
+                                                viewModel.navigateToUrl(win.id, inputUrl)
+                                            }
+                                            focusManager.clearFocus()
+                                        }
+                                    )
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -274,11 +526,7 @@ fun TradingMultiViewScreen(
                                 onToggleMaximize = { viewModel.toggleMaximize(window.id) },
                                 onHideWindow = { viewModel.hideWindow(window.id) },
                                 onReload = { viewModel.reload(window.id) },
-                                onNavigateToUrl = { url -> viewModel.navigateToUrl(window.id, url) },
-                                onZoomIn = { viewModel.zoomIn(window.id) },
-                                onZoomOut = { viewModel.zoomOut(window.id) },
-                                onResetZoom = { viewModel.resetZoom(window.id) },
-                                onToggleUrlCollapse = { viewModel.toggleUrlBarCollapse(window.id) }
+                                onNavigateToUrl = { url -> viewModel.navigateToUrl(window.id, url) }
                             )
                         }
                     }
@@ -404,14 +652,9 @@ fun SingleTradingWindowView(
     onHideWindow: () -> Unit,
     onReload: () -> Unit,
     onNavigateToUrl: (String) -> Unit,
-    onZoomIn: () -> Unit,
-    onZoomOut: () -> Unit,
-    onResetZoom: () -> Unit,
-    onToggleUrlCollapse: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     var urlInputText by remember(window.currentUrl) { mutableStateOf(window.currentUrl) }
-    var showBookmarkMenu by remember { mutableStateOf(false) }
     val focusManager = LocalFocusManager.current
 
     Column(
@@ -419,11 +662,11 @@ fun SingleTradingWindowView(
             .fillMaxSize()
             .background(Color(0xFF121824))
     ) {
-        // ================= 顶部综合地址栏与控制栏 =================
+        // ================= 顶部综合地址栏与控制栏 (已精简：移除了独立缩放与书签按钮) =================
         Surface(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(42.dp),
+                .height(38.dp),
             color = Color(0xFF161E2E),
             tonalElevation = 4.dp
         ) {
@@ -455,280 +698,120 @@ fun SingleTradingWindowView(
                     )
                 }
 
-                // 视窗刷新控制按钮
+                // 视窗独立刷新按钮
                 IconButton(
                     onClick = onReload,
-                    modifier = Modifier.size(26.dp)
+                    modifier = Modifier.size(24.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Default.Refresh,
                         contentDescription = "刷新页面",
                         tint = Color(0xFF94A3B8),
-                        modifier = Modifier.size(14.dp)
+                        modifier = Modifier.size(13.dp)
                     )
                 }
 
-                // 一键折叠/展开本窗口地址栏按钮
-                IconButton(
-                    onClick = onToggleUrlCollapse,
-                    modifier = Modifier.size(26.dp)
+                // ================= 核心地址栏区域 (保留输入与前往，已删除常用书签按钮) =================
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(28.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(Color(0xFF0A0F1A))
+                        .border(1.dp, Color(0xFF334155), RoundedCornerShape(4.dp))
+                        .padding(horizontal = 6.dp),
+                    contentAlignment = Alignment.CenterStart
                 ) {
-                    Icon(
-                        imageVector = if (window.isUrlCollapsed) Icons.Default.UnfoldMore else Icons.Default.UnfoldLess,
-                        contentDescription = if (window.isUrlCollapsed) "展开网址栏" else "折叠网址栏以腾出更多按钮空间",
-                        tint = if (window.isUrlCollapsed) Color(0xFFF59E0B) else Color(0xFF94A3B8),
-                        modifier = Modifier.size(14.dp)
-                    )
-                }
-
-                // ================= 核心地址栏区域：支持一键折叠以放入更多按钮 =================
-                if (window.isUrlCollapsed) {
-                    // 折叠模式：放入丰富平台快捷键与周期按钮
                     Row(
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(30.dp)
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(Color(0xFF0A0F1A))
-                            .border(1.dp, Color(0xFF1E293B), RoundedCornerShape(6.dp))
-                            .padding(horizontal = 4.dp),
+                        modifier = Modifier.fillMaxSize(),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        Text(
-                            text = window.title,
-                            color = Color(0xFFE2E8F0),
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(horizontal = 4.dp)
+                        Icon(
+                            imageVector = Icons.Default.Public,
+                            contentDescription = null,
+                            tint = Color(0xFF64748B),
+                            modifier = Modifier.size(12.dp)
                         )
 
-                        // 快速常用平台按钮
-                        Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-                            listOf(
-                                "TV" to "https://s.tradingview.com/widgetembed/?symbol=BINANCE:${window.symbol}&interval=15&theme=dark",
-                                "币安" to "https://www.binance.com/zh-CN/trade/${window.symbol}?type=spot",
-                                "OKX" to "https://www.okx.com/zh-hans/trade-spot/${window.symbol.replace("USDT", "")}-usdt"
-                            ).forEach { (label, targetUrl) ->
-                                Box(
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(4.dp))
-                                        .background(Color(0xFF1E293B))
-                                        .clickable { onNavigateToUrl(targetUrl) }
-                                        .padding(horizontal = 5.dp, vertical = 2.dp)
-                                ) {
-                                    Text(text = label, color = Color(0xFF38BDF8), fontSize = 10.sp)
-                                }
-                            }
-                        }
-                    }
-                } else {
-                    // 展开模式：完整的可输入 URL 地址栏
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(30.dp)
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(Color(0xFF0A0F1A))
-                            .border(1.dp, Color(0xFF334155), RoundedCornerShape(6.dp))
-                            .padding(horizontal = 6.dp),
-                        contentAlignment = Alignment.CenterStart
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxSize(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Public,
-                                contentDescription = null,
-                                tint = Color(0xFF64748B),
-                                modifier = Modifier.size(13.dp)
-                            )
-
-                            BasicTextField(
-                                value = urlInputText,
-                                onValueChange = { urlInputText = it },
-                                modifier = Modifier.weight(1f),
-                                singleLine = true,
-                                textStyle = TextStyle(
-                                    color = Color(0xFFF1F5F9),
-                                    fontSize = 11.sp,
-                                    fontFamily = FontFamily.Monospace
-                                ),
-                                cursorBrush = SolidColor(Color(0xFF38BDF8)),
-                                keyboardOptions = KeyboardOptions(
-                                    imeAction = ImeAction.Go,
-                                    keyboardType = KeyboardType.Uri
-                                ),
-                                keyboardActions = KeyboardActions(
-                                    onGo = {
-                                        focusManager.clearFocus()
-                                        if (urlInputText.isNotBlank()) {
-                                            onNavigateToUrl(urlInputText)
-                                        }
+                        BasicTextField(
+                            value = urlInputText,
+                            onValueChange = { urlInputText = it },
+                            modifier = Modifier.weight(1f),
+                            singleLine = true,
+                            textStyle = TextStyle(
+                                color = Color(0xFFF1F5F9),
+                                fontSize = 11.sp,
+                                fontFamily = FontFamily.Monospace
+                            ),
+                            cursorBrush = SolidColor(Color(0xFF38BDF8)),
+                            keyboardOptions = KeyboardOptions(
+                                imeAction = ImeAction.Go,
+                                keyboardType = KeyboardType.Uri
+                            ),
+                            keyboardActions = KeyboardActions(
+                                onGo = {
+                                    focusManager.clearFocus()
+                                    if (urlInputText.isNotBlank()) {
+                                        onNavigateToUrl(urlInputText)
                                     }
-                                ),
-                                decorationBox = { innerTextField ->
-                                    if (urlInputText.isEmpty()) {
-                                        Text(
-                                            text = "输入网址 (如 binance.com)...",
-                                            color = Color(0xFF475569),
-                                            fontSize = 11.sp,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                    }
-                                    innerTextField()
                                 }
-                            )
-
-                            if (urlInputText.isNotEmpty()) {
-                                IconButton(
-                                    onClick = { urlInputText = "" },
-                                    modifier = Modifier.size(18.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Close,
-                                        contentDescription = "清空输入",
-                                        tint = Color(0xFF64748B),
-                                        modifier = Modifier.size(12.dp)
+                            ),
+                            decorationBox = { innerTextField ->
+                                if (urlInputText.isEmpty()) {
+                                    Text(
+                                        text = "输入网址 (如 binance.com)...",
+                                        color = Color(0xFF475569),
+                                        fontSize = 11.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
                                     )
                                 }
+                                innerTextField()
                             }
+                        )
 
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(4.dp))
-                                    .background(Color(0xFF0284C7))
-                                    .clickable {
-                                        focusManager.clearFocus()
-                                        if (urlInputText.isNotBlank()) {
-                                            onNavigateToUrl(urlInputText)
-                                        }
-                                    }
-                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                        if (urlInputText.isNotEmpty()) {
+                            IconButton(
+                                onClick = { urlInputText = "" },
+                                modifier = Modifier.size(18.dp)
                             ) {
-                                Text(
-                                    text = "前往",
-                                    color = Color.White,
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Bold
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "清空输入",
+                                    tint = Color(0xFF64748B),
+                                    modifier = Modifier.size(12.dp)
                                 )
                             }
+                        }
 
-                            // 预设书签推荐下拉菜单按钮
-                            Box {
-                                IconButton(
-                                    onClick = { showBookmarkMenu = true },
-                                    modifier = Modifier.size(20.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Bookmarks,
-                                        contentDescription = "常用交易网站书签",
-                                        tint = Color(0xFFF59E0B),
-                                        modifier = Modifier.size(13.dp)
-                                    )
-                                }
-
-                                DropdownMenu(
-                                    expanded = showBookmarkMenu,
-                                    onDismissRequest = { showBookmarkMenu = false },
-                                    modifier = Modifier
-                                        .background(Color(0xFF1E293B))
-                                        .border(1.dp, Color(0xFF334155))
-                                ) {
-                                    Text(
-                                        text = "常用看盘与交易网站",
-                                        color = Color(0xFF94A3B8),
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
-                                    )
-                                    HorizontalDivider(color = Color(0xFF334155))
-
-                                    PersistentWebViewPool.PRESET_BOOKMARKS.forEach { bookmark ->
-                                        DropdownMenuItem(
-                                            text = {
-                                                Row(
-                                                    verticalAlignment = Alignment.CenterVertically,
-                                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                                ) {
-                                                    Text(text = bookmark.icon, fontSize = 14.sp)
-                                                    Text(
-                                                        text = bookmark.title,
-                                                        color = Color(0xFFF1F5F9),
-                                                        fontSize = 12.sp
-                                                    )
-                                                }
-                                            },
-                                            onClick = {
-                                                urlInputText = bookmark.url
-                                                onNavigateToUrl(bookmark.url)
-                                                showBookmarkMenu = false
-                                            }
-                                        )
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(Color(0xFF0284C7))
+                                .clickable {
+                                    focusManager.clearFocus()
+                                    if (urlInputText.isNotBlank()) {
+                                        onNavigateToUrl(urlInputText)
                                     }
                                 }
-                            }
+                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                text = "前往",
+                                color = Color.White,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold
+                            )
                         }
                     }
                 }
 
-                // ================= 视窗窗口动作：网页缩放调节 (+/-)、全屏最大化 / 还原、隐藏 =================
+                // ================= 视窗窗口动作：全屏最大化 / 还原、隐藏 (已移除独立缩放按钮) =================
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    // 网页全局缩放调节器 (快捷 +/- 调整，支持 textZoom 与 initialScale)
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .height(26.dp)
-                            .clip(RoundedCornerShape(4.dp))
-                            .background(Color(0xFF090D16))
-                            .border(1.dp, Color(0xFF334155), RoundedCornerShape(4.dp))
-                            .padding(horizontal = 2.dp)
-                    ) {
-                        // 缩小 -
-                        IconButton(
-                            onClick = onZoomOut,
-                            modifier = Modifier.size(22.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Remove,
-                                contentDescription = "缩小网页",
-                                tint = Color(0xFF94A3B8),
-                                modifier = Modifier.size(12.dp)
-                            )
-                        }
-
-                        // 缩放百分比，点击重置 100%
-                        Text(
-                            text = "${window.zoomPercent}%",
-                            color = if (window.zoomPercent == 100) Color(0xFF94A3B8) else Color(0xFF38BDF8),
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            fontFamily = FontFamily.Monospace,
-                            modifier = Modifier
-                                .clickable { onResetZoom() }
-                                .padding(horizontal = 2.dp)
-                        )
-
-                        // 放大 +
-                        IconButton(
-                            onClick = onZoomIn,
-                            modifier = Modifier.size(22.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Add,
-                                contentDescription = "放大网页",
-                                tint = Color(0xFF94A3B8),
-                                modifier = Modifier.size(12.dp)
-                            )
-                        }
-                    }
-
                     // 一键全屏最大化 / 还原按钮
                     IconButton(
                         onClick = onToggleMaximize,

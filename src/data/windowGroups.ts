@@ -2,10 +2,10 @@ import { WindowGroup } from '../types';
 
 export const PRESET_GROUPS: WindowGroup[] = [
   {
-    id: 'preset_tv_official',
-    name: 'TradingView 官网',
-    isPreset: true,
-    description: 'TradingView 官方网站 (www.tradingview.com)',
+    id: 'preset_1',
+    name: '1',
+    isPreset: false,
+    description: '分组 1 (TradingView 官方行情)',
     items: [
       {
         title: 'TradingView 1',
@@ -28,10 +28,10 @@ export const PRESET_GROUPS: WindowGroup[] = [
     ],
   },
   {
-    id: 'preset_major',
-    name: '主流大盘 (BTC/ETH/SOL)',
-    isPreset: true,
-    description: '核心主流资产，涵盖 15m/1h/4h 周期跨度',
+    id: 'preset_2',
+    name: '2',
+    isPreset: false,
+    description: '分组 2 (主流大盘 BTC/ETH/SOL)',
     items: [
       {
         title: 'BTC/USDT 15M',
@@ -54,10 +54,10 @@ export const PRESET_GROUPS: WindowGroup[] = [
     ],
   },
   {
-    id: 'preset_l1',
-    name: '公链龙头 (BNB/AVAX/NEAR)',
-    isPreset: true,
-    description: '公链生态龙头代币，多周期趋势看盘',
+    id: 'preset_3',
+    name: '3',
+    isPreset: false,
+    description: '分组 3 (公链龙头 BNB/AVAX/NEAR)',
     items: [
       {
         title: 'BNB/USDT 15M',
@@ -76,32 +76,6 @@ export const PRESET_GROUPS: WindowGroup[] = [
         symbol: 'NEARUSDT',
         url: 'https://s.tradingview.com/widgetembed/?symbol=BINANCE:NEARUSDT&interval=240&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1',
         timeframe: '240m',
-      },
-    ],
-  },
-  {
-    id: 'preset_volatile',
-    name: '波动异动 (DOGE/PEPE/XRP)',
-    isPreset: true,
-    description: '高波动与热门异动标的，超短线敏锐捕捉',
-    items: [
-      {
-        title: 'DOGE/USDT 15M',
-        symbol: 'DOGEUSDT',
-        url: 'https://s.tradingview.com/widgetembed/?symbol=BINANCE:DOGEUSDT&interval=15&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1',
-        timeframe: '15m',
-      },
-      {
-        title: 'PEPE/USDT 15M',
-        symbol: 'PEPEUSDT',
-        url: 'https://s.tradingview.com/widgetembed/?symbol=BINANCE:PEPEUSDT&interval=15&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1',
-        timeframe: '15m',
-      },
-      {
-        title: 'XRP/USDT 1H',
-        symbol: 'XRPUSDT',
-        url: 'https://s.tradingview.com/widgetembed/?symbol=BINANCE:XRPUSDT&interval=60&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1',
-        timeframe: '60m',
       },
     ],
   },

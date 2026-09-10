@@ -24,7 +24,11 @@ import {
   Save,
   Check,
   X,
-  ExternalLink
+  ExternalLink,
+  Edit2,
+  SlidersHorizontal,
+  RefreshCw,
+  Globe
 } from 'lucide-react';
 import { WindowConfig, OrientationMode, WindowGroup } from './types';
 import { TradingWindow } from './components/TradingWindow';
@@ -95,17 +99,27 @@ export default function App() {
   const [modalInitialTab, setModalInitialTab] = useState<'source' | 'architecture' | 'guide' | 'github'>('source');
 
   // 地址栏分组标签集合状态 (预设 3 个分组 + 本地持久化保存的分组)
-  const [groups, setGroups] = useState<WindowGroup[]>(() => [
-    ...PRESET_GROUPS,
-    ...loadSavedGroups(),
-  ]);
-  const [activeGroupId, setActiveGroupId] = useState<string>('preset_tv_official');
+  const [groups, setGroups] = useState<WindowGroup[]>(() => {
+    const saved = loadSavedGroups();
+    return saved.length > 0 ? saved : PRESET_GROUPS;
+  });
+  const [activeGroupId, setActiveGroupId] = useState<string>(() => {
+    const saved = loadSavedGroups();
+    return (saved.length > 0 ? saved[0].id : PRESET_GROUPS[0].id);
+  });
   const [isSaveGroupModalOpen, setIsSaveGroupModalOpen] = useState<boolean>(false);
   const [newGroupName, setNewGroupName] = useState<string>('');
 
+  // 方式1重命名分组状态：双击或点击编辑进入内联修改
+  const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
+  const [editingGroupName, setEditingGroupName] = useState<string>('');
+
+  // 方案C：顶部地址栏展开配置面板开关 (默认收起，点击地址图标展开查看与修改 3 个窗口的详细网址)
+  const [showAddressConfigPanel, setShowAddressConfigPanel] = useState<boolean>(false);
+
   // 3 视窗网页全局缩放与全局折叠状态
   const [globalZoom, setGlobalZoom] = useState<number>(100);
-  const [allUrlCollapsed, setAllUrlCollapsed] = useState<boolean>(false);
+  const [refreshTrigger, setRefreshTrigger] = useState<number>(0);
 
   // Tablet status bar clock
   useEffect(() => {
@@ -216,27 +230,51 @@ export default function App() {
     );
   };
 
-  // 一键折叠/展开所有窗口的网址输入框，以便地址栏放入更多快捷按钮
-  const handleToggleAllUrlCollapse = () => {
-    const next = !allUrlCollapsed;
-    setAllUrlCollapsed(next);
+  // 全局一键刷新 3 个窗口 (保持 WebSocket 连接重新触发行情拉取)
+  const handleGlobalRefresh = () => {
+    setRefreshTrigger((t) => t + 1);
     setWindows((prev) =>
-      prev.map((win) => ({
-        ...win,
-        isUrlCollapsed: next,
-      }))
+      prev.map((win) => {
+        // 通过给 url 加上微小时间戳或者触发重载
+        return {
+          ...win,
+          url: win.url, // 触发重载
+        };
+      })
     );
+  };
+
+  // 方式1：就地重命名分组名称 (支持双击或点击重命名图标，回车或失焦确认保存)
+  const handleStartRenameGroup = (group: WindowGroup, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setEditingGroupId(group.id);
+    setEditingGroupName(group.name);
+  };
+
+  const handleCommitRenameGroup = () => {
+    if (!editingGroupId) return;
+    const finalName = editingGroupName.trim() || '未命名';
+    const updated = groups.map((g) => {
+      if (g.id === editingGroupId) {
+        return { ...g, name: finalName };
+      }
+      return g;
+    });
+    setGroups(updated);
+    saveCustomGroups(updated);
+    setEditingGroupId(null);
+    setEditingGroupName('');
   };
 
   // 提供“保存当前三窗口为新分组”功能，将当前的实时 URL 持久化保存在本地存储 (SharedPreferences)
   const handleSaveCurrentGroup = () => {
-    const customCount = groups.filter((g) => !g.isPreset).length;
-    const finalName = newGroupName.trim() || `自选看盘组合 #${customCount + 1}`;
+    const customCount = groups.length;
+    const finalName = newGroupName.trim() || `${customCount + 1}`;
     const newGroup: WindowGroup = {
       id: `custom_${Date.now()}`,
       name: finalName,
       isPreset: false,
-      description: `用户自定义保存的 3 视窗配置 (${windows.map((w) => w.symbol || w.title).join(' / ')})`,
+      description: `用户保存的 3 视窗配置`,
       items: windows.map((w) => ({
         title: w.title,
         symbol: w.symbol,
@@ -256,11 +294,12 @@ export default function App() {
   // 删除自定义分组
   const handleDeleteCustomGroup = (groupId: string, e: React.MouseEvent) => {
     e.stopPropagation();
+    if (groups.length <= 1) return; // 至少保留一个分组
     const updated = groups.filter((g) => g.id !== groupId);
     setGroups(updated);
     saveCustomGroups(updated);
     if (activeGroupId === groupId) {
-      handleSwitchGroup(PRESET_GROUPS[0].id);
+      handleSwitchGroup(updated[0].id);
     }
   };
 
@@ -469,44 +508,82 @@ export default function App() {
               </div>
             </div>
 
-            {/* ================= 地址栏标签页集合与全局同步控制栏 (Tab Groups & Global Zoom) ================= */}
+            {/* ================= 方案 C：顶部一体化控制中枢 (Unified Control Bar) ================= */}
             <div
-              id="address-bar-tab-groups"
+              id="unified-top-control-bar"
               className="h-10 px-2.5 bg-[#0d1424] border-b border-slate-800/90 flex items-center justify-between gap-2 z-20 shrink-0 select-none overflow-x-auto no-scrollbar"
             >
-              {/* 左侧：标签页集合 (预设 3 个分组 + 自定义本地保存分组) */}
+              {/* 左侧：分组标签 (默认 1, 2, 3，支持方式1双击/点击图标就地重命名) */}
               <div className="flex items-center gap-1.5 min-w-0 overflow-x-auto no-scrollbar">
                 <div className="flex items-center gap-1 text-[11px] font-semibold text-slate-400 shrink-0 mr-0.5">
                   <Bookmark className="w-3.5 h-3.5 text-sky-400" />
-                  <span className="hidden sm:inline">分组标签:</span>
+                  <span className="hidden sm:inline">分组:</span>
                 </div>
 
                 {groups.map((group) => {
                   const isActive = activeGroupId === group.id;
+                  const isEditing = editingGroupId === group.id;
+
                   return (
-                    <button
+                    <div
                       key={group.id}
-                      type="button"
-                      onClick={() => handleSwitchGroup(group.id)}
-                      className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium transition-all shrink-0 border cursor-pointer ${
+                      onClick={() => !isEditing && handleSwitchGroup(group.id)}
+                      className={`group/tab relative flex items-center gap-1 px-2.5 py-1 rounded-md text-xs transition-all shrink-0 border cursor-pointer select-none ${
                         isActive
                           ? 'bg-sky-600 text-white border-sky-500 shadow-sm shadow-sky-950/60 font-semibold'
                           : 'bg-slate-900/80 text-slate-300 border-slate-700/70 hover:bg-slate-800 hover:text-white hover:border-slate-600'
                       }`}
-                      title={group.description || group.name}
+                      title="单击切换分组，双击或点击重命名编辑名称"
                     >
-                      <span className="text-[11px]">{group.isPreset ? '📑' : '⭐'}</span>
-                      <span className="truncate max-w-[130px] sm:max-w-[170px]">{group.name}</span>
-                      {!group.isPreset && (
+                      {isEditing ? (
+                        <input
+                          type="text"
+                          value={editingGroupName}
+                          onChange={(e) => setEditingGroupName(e.target.value)}
+                          onBlur={handleCommitRenameGroup}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') handleCommitRenameGroup();
+                            if (e.key === 'Escape') setEditingGroupId(null);
+                          }}
+                          autoFocus
+                          className="w-16 bg-slate-950 text-white text-xs px-1.5 py-0.5 rounded border border-sky-400 outline-none font-bold"
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                      ) : (
                         <span
-                          onClick={(e) => handleDeleteCustomGroup(group.id, e)}
-                          className="p-0.5 rounded hover:bg-red-500/20 text-slate-400 hover:text-red-400 ml-0.5 transition-colors"
-                          title="删除此自定义分组"
+                          onDoubleClick={(e) => handleStartRenameGroup(group, e)}
+                          className="truncate max-w-[80px] sm:max-w-[120px] font-mono font-bold"
                         >
-                          <Trash2 className="w-2.5 h-2.5" />
+                          {group.name}
                         </span>
                       )}
-                    </button>
+
+                      {/* 方式1 重命名按钮图标 (Hover 或处于活跃时显现) */}
+                      {!isEditing && (
+                        <button
+                          type="button"
+                          onClick={(e) => handleStartRenameGroup(group, e)}
+                          className={`p-0.5 rounded hover:bg-white/20 transition-colors ${
+                            isActive ? 'text-white/80 hover:text-white' : 'text-slate-400 hover:text-sky-300'
+                          }`}
+                          title="方式1：重命名此分组名称"
+                        >
+                          <Edit2 className="w-2.5 h-2.5" />
+                        </button>
+                      )}
+
+                      {/* 删除自定义分组 */}
+                      {!group.isPreset && groups.length > 1 && !isEditing && (
+                        <button
+                          type="button"
+                          onClick={(e) => handleDeleteCustomGroup(group.id, e)}
+                          className="p-0.5 rounded hover:bg-red-500/30 text-red-300 transition-colors"
+                          title="删除此分组"
+                        >
+                          <Trash2 className="w-2.5 h-2.5" />
+                        </button>
+                      )}
+                    </div>
                   );
                 })}
 
@@ -514,27 +591,38 @@ export default function App() {
                 <button
                   type="button"
                   onClick={() => setIsSaveGroupModalOpen(true)}
-                  className="flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium bg-emerald-950/80 border border-emerald-700/60 text-emerald-300 hover:bg-emerald-900 hover:text-white transition-colors shrink-0 shadow-sm cursor-pointer"
-                  title="将当前 3 个视窗的实时 URL 与配置保存为新的分组标签 (持久化至 SharedPreferences / LocalStorage)"
+                  className="flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-emerald-950/80 border border-emerald-700/60 text-emerald-300 hover:bg-emerald-900 hover:text-white transition-colors shrink-0 shadow-sm cursor-pointer"
+                  title="将当前 3 个视窗的实时配置保存为新分组 (默认按数字顺延编号)"
                 >
                   <Plus className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>保存三窗为新分组</span>
+                  <span className="hidden sm:inline">新分组</span>
                 </button>
               </div>
 
-              {/* 右侧：3个窗口网页同时全局缩放调节 + 一键折叠全部网址输入框 */}
-              <div className="flex items-center gap-2 shrink-0">
-                {/* 3 窗口网页全局缩放调节 (textZoom / initialScale) */}
+              {/* 右侧：全局一键刷新 + 全局统一缩放 (删除了独立的窗口缩放) + 3窗口详细网址面板折叠开关 */}
+              <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+                {/* 全局一键刷新按钮 */}
+                <button
+                  type="button"
+                  onClick={handleGlobalRefresh}
+                  className="flex items-center gap-1 px-2 py-1 rounded-md bg-slate-900 hover:bg-slate-800 border border-slate-700/80 text-slate-300 hover:text-sky-300 text-xs font-medium transition-colors shadow-sm cursor-pointer"
+                  title="全局一键刷新全部 3 个视窗 (保持 WebSocket 重新触发行情拉取)"
+                >
+                  <RefreshCw className="w-3.5 h-3.5 text-sky-400" />
+                  <span className="hidden md:inline">全局刷新</span>
+                </button>
+
+                {/* 统一全局缩放控制器 (仅保留此处的统一调节) */}
                 <div
                   className="flex items-center bg-slate-900 border border-slate-700/80 rounded-md px-1 py-0.5 text-slate-200"
-                  title="3 个窗口网页同时全局缩放调节（设置 textZoom 或 initialScale）"
+                  title="统一缩放全部视窗网页（50% ~ 200%）"
                 >
-                  <span className="text-[10px] text-slate-400 px-1 font-mono hidden md:inline">3窗同步缩放:</span>
+                  <span className="text-[10px] text-slate-400 px-1 font-mono hidden lg:inline">统一缩放:</span>
                   <button
                     type="button"
                     onClick={() => handleGlobalZoom(globalZoom - 10)}
                     className="p-1 rounded text-slate-400 hover:text-sky-300 hover:bg-slate-800 transition-colors"
-                    title="3 窗口同步缩放 -10%"
+                    title="全局缩小 -10%"
                   >
                     <Minus className="w-3 h-3" />
                   </button>
@@ -542,7 +630,7 @@ export default function App() {
                     type="button"
                     onClick={() => handleGlobalZoom(100)}
                     className="px-1 text-[11px] font-mono text-sky-400 hover:text-sky-300 font-semibold"
-                    title="重置全局缩放为 100%"
+                    title="点击重置缩放为 100%"
                   >
                     {globalZoom}%
                   </button>
@@ -550,28 +638,110 @@ export default function App() {
                     type="button"
                     onClick={() => handleGlobalZoom(globalZoom + 10)}
                     className="p-1 rounded text-slate-400 hover:text-sky-300 hover:bg-slate-800 transition-colors"
-                    title="3 窗口同步缩放 +10%"
+                    title="全局放大 +10%"
                   >
                     <Plus className="w-3 h-3" />
                   </button>
                 </div>
 
-                {/* 一键折叠/展开全部网址输入框 */}
+                {/* 方案 C 核心：3 窗口网址快速配置抽屉面板开关 */}
                 <button
                   type="button"
-                  onClick={handleToggleAllUrlCollapse}
+                  onClick={() => setShowAddressConfigPanel((prev) => !prev)}
                   className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium border transition-colors cursor-pointer ${
-                    allUrlCollapsed
-                      ? 'bg-amber-950/80 border-amber-600/70 text-amber-300 hover:bg-amber-900 hover:text-white'
-                      : 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700 hover:text-white'
+                    showAddressConfigPanel
+                      ? 'bg-sky-950/90 border-sky-500 text-sky-300 shadow-sm'
+                      : 'bg-slate-900/80 border-slate-700/80 text-slate-300 hover:bg-slate-800 hover:text-white'
                   }`}
-                  title={allUrlCollapsed ? '一键展开所有视窗的完整网址输入框' : '一键折叠所有视窗网址输入框，以便地址栏放入更多按钮'}
+                  title={showAddressConfigPanel ? '收起 3 窗口地址配置面板' : '展开 3 窗口统一地址配置面板 (集中查看与修改 3 个窗口网址)'}
                 >
-                  {allUrlCollapsed ? <PanelLeftOpen className="w-3.5 h-3.5" /> : <PanelLeftClose className="w-3.5 h-3.5" />}
-                  <span className="hidden sm:inline">{allUrlCollapsed ? '展开全部输入框' : '一键折叠输入框'}</span>
+                  <SlidersHorizontal className="w-3.5 h-3.5 text-sky-400" />
+                  <span className="hidden sm:inline">3窗地址</span>
+                  <span className="text-[10px] font-mono bg-sky-900/60 text-sky-300 px-1 rounded">
+                    {showAddressConfigPanel ? '▲' : '▼'}
+                  </span>
                 </button>
               </div>
             </div>
+
+            {/* ================= 方案 C：可展开的 3 窗口集中地址配置面板 (Address Config Drawer) ================= */}
+            {showAddressConfigPanel && (
+              <div
+                id="three-window-address-panel"
+                className="bg-[#0b101c] border-b border-slate-800 px-3 py-2.5 z-20 shrink-0 shadow-lg text-xs"
+              >
+                <div className="flex items-center justify-between pb-1.5 mb-2 border-b border-slate-800/80 text-slate-400">
+                  <span className="font-semibold text-sky-400 flex items-center gap-1.5">
+                    <Globe className="w-3.5 h-3.5 text-sky-400" />
+                    3 视窗集中地址配置面板 (即时修改生效并保存至当前分组)
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setShowAddressConfigPanel(false)}
+                    className="text-slate-400 hover:text-slate-200 text-xs px-1"
+                  >
+                    ✕ 收起
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                  {windows.map((w) => (
+                    <div
+                      key={w.id}
+                      className="bg-[#121826] border border-slate-700/80 rounded-lg p-2 flex flex-col gap-1.5"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1 font-mono font-bold text-sky-400 text-[11px]">
+                          <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                          <span>视窗 {w.id} (W{w.id})</span>
+                        </div>
+                        <span className="text-[10px] text-slate-400">{w.symbol}</span>
+                      </div>
+
+                      <div className="flex items-center gap-1">
+                        <input
+                          type="text"
+                          defaultValue={w.url}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              const target = e.currentTarget.value;
+                              handleUpdateConfig(w.id, { url: target });
+                            }
+                          }}
+                          onBlur={(e) => {
+                            const target = e.target.value;
+                            if (target !== w.url) {
+                              handleUpdateConfig(w.id, { url: target });
+                            }
+                          }}
+                          className="flex-1 min-w-0 bg-[#070b13] border border-slate-700 rounded px-2 py-1 text-[11px] font-mono text-slate-200 focus:border-sky-500 outline-none truncate"
+                          placeholder="输入看盘网址..."
+                        />
+                      </div>
+
+                      {/* 常用交易所直达快捷点选 */}
+                      <div className="flex items-center gap-1 overflow-x-auto no-scrollbar pt-0.5">
+                        {[
+                          { name: 'TV', url: `https://s.tradingview.com/widgetembed/?symbol=BINANCE:${w.symbol}&interval=15&theme=dark` },
+                          { name: '币安', url: `https://www.binance.com/zh-CN/trade/${w.symbol}` },
+                          { name: 'OKX', url: `https://www.okx.com/zh-hans/trade-spot/${w.symbol.replace('USDT', '')}-usdt` },
+                          { name: '官网', url: 'https://www.tradingview.com' },
+                        ].map((site) => (
+                          <button
+                            key={site.name}
+                            type="button"
+                            onClick={() => handleUpdateConfig(w.id, { url: site.url })}
+                            className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-sky-900 hover:text-sky-200 text-[10px] text-slate-400 font-mono transition-colors shrink-0"
+                          >
+                            {site.name}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* ================= 核心视窗排布容器 (Row Layout) ================= */}
             {/*
@@ -714,7 +884,7 @@ export default function App() {
                   type="text"
                   value={newGroupName}
                   onChange={(e) => setNewGroupName(e.target.value)}
-                  placeholder={`自选看盘组合 #${groups.filter((g) => !g.isPreset).length + 1}`}
+                  placeholder={`${groups.length + 1}`}
                   className="w-full bg-[#080d18] border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-sky-500 transition-colors"
                   autoFocus
                   onKeyDown={(e) => {
