@@ -808,7 +808,7 @@ fun HiddenWindowsTray(
         shape = RoundedCornerShape(24.dp),
         color = Color(0xFF1E293B).copy(alpha = 0.95f),
         tonalElevation = 8.dp,
-        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF334155))
+        border = BorderStroke(1.dp, Color(0xFF334155))
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
@@ -842,7 +842,7 @@ fun HiddenWindowsTray(
                     colors = AssistChipDefaults.assistChipColors(
                         containerColor = Color(0xFF0F172A)
                     ),
-                    border = AssistChipDefaults.assistChipBorder(enabled = true, borderColor = Color(0xFF38BDF8).copy(alpha = 0.4f)),
+                    border = BorderStroke(1.dp, Color(0xFF38BDF8).copy(alpha = 0.4f)),
                     shape = RoundedCornerShape(16.dp)
                 )
             }
