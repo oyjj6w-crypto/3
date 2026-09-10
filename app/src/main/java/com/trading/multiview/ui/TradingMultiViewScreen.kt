@@ -605,6 +605,12 @@ fun SingleTradingWindowView(
 
                 // 确保从旧父容器解绑并添加到当前视窗
                 (webView.parent as? ViewGroup)?.removeView(webView)
+                
+                // 当 View 完成排版测量拥有实际像素尺寸后，注入基于实际物理宽度的黄金桌面自适应缩放
+                webView.post {
+                    PersistentWebViewPool.injectDesktopViewport(webView, window.zoomPercent)
+                }
+
                 webView
             },
             update = { webView ->

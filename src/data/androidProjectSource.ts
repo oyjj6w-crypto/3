@@ -186,59 +186,96 @@ object PersistentWebViewPool {
     var currentZoomPercent: Int = 100
 
     /**
-     * 极简稳定、无死循环、无闪烁的 PC 桌面视口脚本 (Safe Desktop Viewport Injection)
-     * 解决要点：
-     * 1. 绝对不挂载 window.resize 监听，杜绝与 TradingView 8 联屏 WebGL Canvas 重绘死循环导致显存溢出闪退；
-     * 2. 不修改 DOM 元素的 minWidth/overflowX 样式，避免扰动图表布局计算；
-     * 3. 将 viewport 设为固定的标准宽屏桌面宽度 1440px（不带冲突的 scale 限制），
-     *    配合 Android WebView 原生的 loadWithOverviewMode = true 与 useWideViewPort = true，
-     *    WebView 会由底层直接将 1440px 内容完整等比缩放贴合到当前屏幕，实现加载与刷新后自动全景完整显示！
+     * 动态桌面视口与全景自适应缩放引擎 (Auto-Fit Desktop Viewport Engine)
+     * 核心设计：
+     * 1. 强制设定 width=1280 桌面宽屏标准，击穿 TradingView @media 手机端断点，确保展示全部 8 分屏与桌面工具栏；
+     * 2. 根据当前视窗在平板上的精确物理/显示宽度（以 dp 为单位，如 3 分屏下单窗 ~380-426dp），
+     *    动态计算最优缩放系数 autoScale = (widthDp / 1280.0) * (currentZoomPercent / 100.0)；
+     *    例如：单窗宽度 384dp -> autoScale = 0.3000；1280 * 0.3000 = 384dp，刚好 100% 贴合屏幕宽度！
+     * 3. 彻底告别刷新后右侧被截断、需手动两指捏合缩放的痛点；
+     * 4. 不挂载 window.resize 监听，不修改 DOM 尺寸，杜绝 WebGL 上下文重建死循环与 GPU 闪退！
      */
-    const val DESKTOP_VIEWPORT_JS = """
-        (function() {
-            if (window.__desktopViewportApplied) return;
-            window.__desktopViewportApplied = true;
+    fun injectDesktopViewport(webView: WebView, zoomPercent: Int = currentZoomPercent) {
+        val metrics = webView.context.resources.displayMetrics
+        val density = metrics.density
+        // 获取当前视窗在当前屏幕密度下的精确 CSS 像素宽度 (dp)
+        val widthDp = if (webView.width > 0) {
+            webView.width / density
+        } else {
+            (metrics.widthPixels / density) / 3f
+        }
+        val desktopWidth = 1280f
+        val zoomFactor = (zoomPercent.coerceIn(50, 250)) / 100f
+        val calculatedScale = ((widthDp / desktopWidth) * zoomFactor).coerceIn(0.15f, 2.0f)
+        val scaleStr = String.format(java.util.Locale.US, "%.4f", calculatedScale)
 
-            try {
-                // 1. 设置视口为固定 1440px 桌面标准宽度，交由 WebView 原生 overview 机制自适应缩放到视窗
-                var meta = document.querySelector('meta[name="viewport"]');
-                if (!meta) {
-                    meta = document.createElement('meta');
-                    meta.name = 'viewport';
-                    if (document.head) document.head.appendChild(meta);
-                }
-                if (meta) {
-                    meta.setAttribute('content', 'width=1440, user-scalable=yes');
+        val script = """
+            (function() {
+                var targetContent = 'width=1280, initial-scale=$scaleStr, minimum-scale=0.1, maximum-scale=5.0, user-scalable=yes';
+                function applyDesktop() {
+                    try {
+                        var metas = document.getElementsByTagName('meta');
+                        var found = false;
+                        for (var i = 0; i < metas.length; i++) {
+                            if (metas[i].getAttribute('name') === 'viewport') {
+                                metas[i].setAttribute('content', targetContent);
+                                found = true;
+                            }
+                        }
+                        if (!found) {
+                            var meta = document.createElement('meta');
+                            meta.setAttribute('name', 'viewport');
+                            meta.setAttribute('content', targetContent);
+                            if (document.head) document.head.appendChild(meta);
+                        }
+                        if (window.navigator) {
+                            Object.defineProperty(navigator, 'userAgentData', {
+                                get: function() {
+                                    return {
+                                        mobile: false,
+                                        platform: 'Windows',
+                                        brands: [
+                                            { brand: 'Chromium', version: '128' },
+                                            { brand: 'Google Chrome', version: '128' },
+                                            { brand: 'Not;A=Brand', version: '24' }
+                                        ]
+                                    };
+                                },
+                                configurable: true
+                            });
+                            Object.defineProperty(navigator, 'platform', {
+                                get: function() { return 'Win32'; },
+                                configurable: true
+                            });
+                            Object.defineProperty(navigator, 'maxTouchPoints', {
+                                get: function() { return 0; },
+                                configurable: true
+                            });
+                        }
+                    } catch(e) {}
                 }
 
-                // 2. 伪装标准 PC 桌面平台标识 (规避移动端跳转与强制降级)
-                if (window.navigator) {
-                    Object.defineProperty(navigator, 'userAgentData', {
-                        get: function() {
-                            return {
-                                mobile: false,
-                                platform: 'Windows',
-                                brands: [
-                                    { brand: 'Chromium', version: '128' },
-                                    { brand: 'Google Chrome', version: '128' },
-                                    { brand: 'Not;A=Brand', version: '24' }
-                                ]
-                            };
-                        },
-                        configurable: true
-                    });
-                    Object.defineProperty(navigator, 'platform', {
-                        get: function() { return 'Win32'; },
-                        configurable: true
-                    });
-                    Object.defineProperty(navigator, 'maxTouchPoints', {
-                        get: function() { return 0; },
-                        configurable: true
-                    });
+                if (document.readyState === 'loading') {
+                    document.addEventListener('DOMContentLoaded', applyDesktop, { once: true });
+                } else {
+                    applyDesktop();
                 }
-            } catch (e) {}
-        })();
-    """
+                // 针对 TradingView 等 SPA 异步脚本初始化完毕后再执行一次加固，防止被其内部脚本重置
+                setTimeout(applyDesktop, 300);
+                setTimeout(applyDesktop, 1200);
+            })();
+        """.trimIndent()
+
+        webView.evaluateJavascript(script, null)
+    }
+
+    val DESKTOP_VIEWPORT_JS: String
+        get() = """
+            (function() {
+                var m = document.querySelector('meta[name="viewport"]');
+                if (m) m.setAttribute('content', 'width=1280, initial-scale=0.33, minimum-scale=0.1, maximum-scale=5.0, user-scalable=yes');
+            })();
+        """.trimIndent()
 
     fun init(context: Context) {
         if (isInitialized) return
@@ -293,8 +330,8 @@ object PersistentWebViewPool {
             webViewClient = object : WebViewClient() {
                 override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                     super.onPageStarted(view, url, favicon)
-                    // 页面开始加载时，注入桌面虚拟视口脚本，确保媒体查询判定为 PC 宽屏桌面
-                    view?.evaluateJavascript(DESKTOP_VIEWPORT_JS, null)
+                    // 页面开始加载时，注入根据当前窗口宽度计算的黄金缩放桌面视口
+                    view?.let { injectDesktopViewport(it) }
                     if (url != null) {
                         onUrlChanged?.invoke(windowId, url, view?.title ?: "")
                     }
@@ -302,12 +339,8 @@ object PersistentWebViewPool {
 
                 override fun onPageFinished(view: WebView?, url: String?) {
                     super.onPageFinished(view, url)
-                    // 页面渲染完成后再次加固注入
-                    view?.evaluateJavascript(DESKTOP_VIEWPORT_JS, null)
-                    if (currentZoomPercent != 100) {
-                        val zoomScale = currentZoomPercent / 100.0
-                        view?.evaluateJavascript("document.documentElement.style.zoom = '$zoomScale';", null)
-                    }
+                    // 页面渲染完成后再次加固注入，确保 TradingView 异步初始化后依然保持桌面宽屏自适应
+                    view?.let { injectDesktopViewport(it) }
                     if (url != null) {
                         onUrlChanged?.invoke(windowId, url, view?.title ?: "")
                     }
@@ -348,7 +381,7 @@ object PersistentWebViewPool {
     }
 
     /**
-     * 网页全局缩放调节 (使用纯净 CSS zoom 与 textZoom，不触发 WebGL 重新初始化与闪退)
+     * 网页全局缩放调节 (动态更新视口缩放系数，支持用户在顶部栏 +/- 微调)
      * @param windowId 视窗 ID
      * @param zoomPercent 缩放百分比 (50% ~ 250%)
      */
@@ -357,8 +390,7 @@ object PersistentWebViewPool {
         val clampedZoom = zoomPercent.coerceIn(50, 250)
         currentZoomPercent = clampedZoom
         webView.settings.textZoom = clampedZoom
-        val zoomScale = clampedZoom / 100.0
-        webView.evaluateJavascript("document.documentElement.style.zoom = '$zoomScale';", null)
+        injectDesktopViewport(webView, clampedZoom)
     }
 
     /**
@@ -368,8 +400,7 @@ object PersistentWebViewPool {
         val webView = webViewMap[windowId] ?: return
         currentZoomPercent = 100
         webView.settings.textZoom = 100
-        webView.evaluateJavascript("document.documentElement.style.zoom = '1.0';", null)
-        webView.evaluateJavascript(DESKTOP_VIEWPORT_JS, null)
+        injectDesktopViewport(webView, 100)
     }
 
     /**
@@ -390,7 +421,7 @@ object PersistentWebViewPool {
             }
         }
         if (enableDesktop) {
-            webView.evaluateJavascript(DESKTOP_VIEWPORT_JS, null)
+            injectDesktopViewport(webView)
         }
         webView.reload()
     }
@@ -1577,6 +1608,12 @@ fun SingleTradingWindowView(
 
                 // 确保从旧父容器解绑并添加到当前视窗
                 (webView.parent as? ViewGroup)?.removeView(webView)
+                
+                // 当 View 完成排版测量拥有实际像素尺寸后，注入基于实际物理宽度的黄金桌面自适应缩放
+                webView.post {
+                    PersistentWebViewPool.injectDesktopViewport(webView, window.zoomPercent)
+                }
+
                 webView
             },
             update = { webView ->
