@@ -1004,6 +1004,7 @@ fun TradingMultiViewScreen(
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val context = LocalContext.current
+    val focusManager = LocalFocusManager.current
     var showSaveDialog by remember { mutableStateOf(false) }
 
     // 初始化时加载本地存储的自定义分组
