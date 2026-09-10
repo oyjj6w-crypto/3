@@ -513,7 +513,7 @@ export default function App() {
             {/* ================= 方案 C：顶部一体化控制中枢 (Unified Control Bar) ================= */}
             <div
               id="unified-top-control-bar"
-              className="h-10 px-2.5 bg-[#0d1424] border-b border-slate-800/90 flex items-center justify-between gap-2 z-20 shrink-0 select-none overflow-x-auto no-scrollbar"
+              className="h-11 px-2.5 bg-[#0d1424] border-b border-slate-800/90 flex items-center justify-between gap-2 z-20 shrink-0 select-none overflow-x-auto no-scrollbar"
             >
               {/* 左侧：分组标签集合 (纯净标签 1, 2, 3，去掉“分组”二字，无更改名称与删除) */}
               <div className="flex items-center gap-1.5 min-w-0 overflow-x-auto no-scrollbar">
@@ -524,7 +524,7 @@ export default function App() {
                     <div
                       key={group.id}
                       onClick={() => handleSwitchGroup(group.id)}
-                      className={`flex items-center px-2.5 py-1 rounded-md text-xs transition-all shrink-0 border cursor-pointer select-none font-mono font-bold ${
+                      className={`h-[30px] min-w-[32px] flex items-center justify-center px-2.5 rounded-md text-xs transition-all shrink-0 border cursor-pointer select-none font-mono font-bold ${
                         isActive
                           ? 'bg-sky-600 text-white border-sky-500 shadow-sm shadow-sky-950/60'
                           : 'bg-slate-900/80 text-slate-300 border-slate-700/70 hover:bg-slate-800 hover:text-white hover:border-slate-600'
@@ -536,14 +536,14 @@ export default function App() {
                   );
                 })}
 
-                {/* 保存当前三窗口为新分组按钮 */}
+                {/* 保存当前三窗口为新分组按钮：高度统一为 30px x 30px，与标签高度完全齐平 */}
                 <button
                   type="button"
                   onClick={() => setIsSaveGroupModalOpen(true)}
-                  className="p-1 rounded-md bg-emerald-950/80 border border-emerald-700/60 text-emerald-300 hover:bg-emerald-900 hover:text-white transition-colors shrink-0 shadow-sm cursor-pointer"
+                  className="w-[30px] h-[30px] flex items-center justify-center rounded-md bg-emerald-950/80 border border-emerald-700/60 text-emerald-300 hover:bg-emerald-900 hover:text-white transition-colors shrink-0 shadow-sm cursor-pointer"
                   title="保存当前 3 视窗为新分组"
                 >
-                  <Plus className="w-3.5 h-3.5 text-emerald-400" />
+                  <Plus className="w-4 h-4 text-emerald-400" />
                 </button>
               </div>
 
@@ -552,7 +552,7 @@ export default function App() {
                 {windows.map((w) => (
                   <div
                     key={w.id}
-                    className={`flex items-center gap-0.5 px-1.5 py-0.5 rounded-md border text-xs font-mono transition-colors ${
+                    className={`h-[30px] flex items-center gap-0.5 px-1.5 rounded-md border text-xs font-mono transition-colors ${
                       w.isMaximized
                         ? 'bg-sky-900/80 border-sky-500 text-white'
                         : w.isHidden
@@ -571,10 +571,10 @@ export default function App() {
                         if (w.isHidden) handleRestoreWindow(w.id);
                         handleToggleMaximize(w.id);
                       }}
-                      className="p-1 rounded text-slate-300 hover:text-white hover:bg-slate-800 transition-colors"
+                      className="w-6 h-6 flex items-center justify-center rounded text-slate-300 hover:text-white hover:bg-slate-800 transition-colors"
                       title={w.isMaximized ? `还原窗口 ${w.id}` : `最大化窗口 ${w.id}`}
                     >
-                      {w.isMaximized ? <Minimize className="w-3 h-3 text-sky-400" /> : <Maximize className="w-3 h-3" />}
+                      {w.isMaximized ? <Minimize className="w-3.5 h-3.5 text-sky-400" /> : <Maximize className="w-3.5 h-3.5" />}
                     </button>
 
                     {/* 隐藏 / 显示 */}
@@ -587,40 +587,40 @@ export default function App() {
                           handleHideWindow(w.id);
                         }
                       }}
-                      className={`p-1 rounded transition-colors ${
+                      className={`w-6 h-6 flex items-center justify-center rounded transition-colors ${
                         w.isHidden
                           ? 'text-red-400 hover:text-red-300 hover:bg-red-950/60'
                           : 'text-slate-400 hover:text-red-400 hover:bg-slate-800'
                       }`}
                       title={w.isHidden ? `恢复窗口 ${w.id}` : `隐藏窗口 ${w.id}`}
                     >
-                      {w.isHidden ? <Eye className="w-3 h-3 text-red-400" /> : <EyeOff className="w-3 h-3" />}
+                      {w.isHidden ? <Eye className="w-3.5 h-3.5 text-red-400" /> : <EyeOff className="w-3.5 h-3.5" />}
                     </button>
                   </div>
                 ))}
               </div>
 
-              {/* 右侧：全局一键刷新(仅图标) + 全局统一缩放(无文字) + 3窗口详细网址面板折叠(仅图标) */}
+              {/* 右侧：全局一键刷新(仅图标) + 全局统一缩放(无文字) + 3窗口详细网址面板折叠(仅图标)，全部 30px 高度齐平 */}
               <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-                {/* 全局一键刷新按钮：去掉“全局刷新”几个字，只留下刷新的图标 */}
+                {/* 全局一键刷新按钮：高度 30px x 30px，与左侧保持严格一致 */}
                 <button
                   type="button"
                   onClick={handleGlobalRefresh}
-                  className="p-1.5 rounded-md bg-slate-900 hover:bg-slate-800 border border-slate-700/80 text-slate-300 hover:text-sky-300 text-xs transition-colors shadow-sm cursor-pointer"
+                  className="w-[30px] h-[30px] flex items-center justify-center rounded-md bg-slate-900 hover:bg-slate-800 border border-slate-700/80 text-slate-300 hover:text-sky-300 transition-colors shadow-sm cursor-pointer"
                   title="全局刷新全部 3 个视窗"
                 >
                   <RefreshCw className="w-3.5 h-3.5 text-sky-400" />
                 </button>
 
-                {/* 统一全局缩放控制器：去掉“统一缩放”4个字，仅保留 - 100% + */}
+                {/* 统一全局缩放控制器：高度统一 30px，与旁边按钮完美平齐 */}
                 <div
-                  className="flex items-center bg-slate-900 border border-slate-700/80 rounded-md px-1 py-0.5 text-slate-200"
+                  className="h-[30px] flex items-center bg-slate-900 border border-slate-700/80 rounded-md px-1 text-slate-200"
                   title="统一缩放全部视窗网页（50% ~ 200%）"
                 >
                   <button
                     type="button"
                     onClick={() => handleGlobalZoom(globalZoom - 10)}
-                    className="p-1 rounded text-slate-400 hover:text-sky-300 hover:bg-slate-800 transition-colors"
+                    className="w-6 h-6 flex items-center justify-center rounded text-slate-400 hover:text-sky-300 hover:bg-slate-800 transition-colors"
                     title="全局缩小 -10%"
                   >
                     <Minus className="w-3 h-3" />
@@ -628,7 +628,7 @@ export default function App() {
                   <button
                     type="button"
                     onClick={() => handleGlobalZoom(100)}
-                    className="px-1 text-[11px] font-mono text-sky-400 hover:text-sky-300 font-semibold"
+                    className="px-1 text-xs font-mono text-sky-400 hover:text-sky-300 font-semibold"
                     title="点击重置缩放为 100%"
                   >
                     {globalZoom}%
@@ -636,18 +636,18 @@ export default function App() {
                   <button
                     type="button"
                     onClick={() => handleGlobalZoom(globalZoom + 10)}
-                    className="p-1 rounded text-slate-400 hover:text-sky-300 hover:bg-slate-800 transition-colors"
+                    className="w-6 h-6 flex items-center justify-center rounded text-slate-400 hover:text-sky-300 hover:bg-slate-800 transition-colors"
                     title="全局放大 +10%"
                   >
                     <Plus className="w-3 h-3" />
                   </button>
                 </div>
 
-                {/* 网址配置开关：去掉文字与箭头，只留下配置图标 */}
+                {/* 网址配置开关：标准 30px x 30px 方形，高度齐平 */}
                 <button
                   type="button"
                   onClick={() => setShowAddressConfigPanel((prev) => !prev)}
-                  className={`p-1.5 rounded-md text-xs border transition-colors cursor-pointer ${
+                  className={`w-[30px] h-[30px] flex items-center justify-center rounded-md border transition-colors cursor-pointer ${
                     showAddressConfigPanel
                       ? 'bg-sky-950/90 border-sky-500 text-sky-300 shadow-sm'
                       : 'bg-slate-900/80 border-slate-700/80 text-slate-300 hover:bg-slate-800 hover:text-white'

@@ -947,7 +947,7 @@ class TradingViewModel : ViewModel() {
   {
     path: 'app/src/main/java/com/trading/multiview/ui/TradingMultiViewScreen.kt',
     language: 'kotlin',
-    description: 'Jetpack Compose 多视窗排布视图：纯净沉浸式顶栏、标签栏集成全屏/隐藏控制、无多余文字与状态遮挡',
+    description: 'Jetpack Compose 多视窗排布视图：标准化顶栏所有按钮高度(30dp)与圆角，统一对齐无凹凸',
     content: `package com.trading.multiview.ui
 
 import android.content.Context
@@ -1021,7 +1021,7 @@ fun TradingMultiViewScreen(
         Surface(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(42.dp),
+                .height(44.dp),
             color = Color(0xFF0D1424),
             border = BorderStroke(width = 0.5.dp, color = Color(0xFF1E293B))
         ) {
@@ -1032,7 +1032,7 @@ fun TradingMultiViewScreen(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                // 左侧：分组标签集合 (纯净标签 1, 2, 3，去掉“分组”二字，无重命名与删除功能)
+                // 左侧：分组标签集合 (纯净标签 1, 2, 3 + 标准方形尺寸的加号按钮)
                 Row(
                     modifier = Modifier.weight(1f, fill = false),
                     verticalAlignment = Alignment.CenterVertically,
@@ -1042,6 +1042,8 @@ fun TradingMultiViewScreen(
                         val isActive = uiState.activeGroupId == group.id
                         Box(
                             modifier = Modifier
+                                .height(30.dp)
+                                .defaultMinSize(minWidth = 32.dp)
                                 .clip(RoundedCornerShape(6.dp))
                                 .background(if (isActive) Color(0xFF0284C7) else Color(0xFF1E293B))
                                 .border(
@@ -1050,7 +1052,7 @@ fun TradingMultiViewScreen(
                                     RoundedCornerShape(6.dp)
                                 )
                                 .clickable { viewModel.switchGroup(group.id) }
-                                .padding(horizontal = 10.dp, vertical = 5.dp),
+                                .padding(horizontal = 10.dp),
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
@@ -1062,27 +1064,28 @@ fun TradingMultiViewScreen(
                         }
                     }
 
-                    // 保存当前分组小按钮
-                    IconButton(
-                        onClick = { showSaveDialog = true },
+                    // 保存当前分组小按钮：严格保持与旁边标签一致的 30dp 高度与统一方形圆角
+                    Box(
                         modifier = Modifier
-                            .size(28.dp)
+                            .size(30.dp)
                             .clip(RoundedCornerShape(6.dp))
-                            .background(Color(0xFF064E3B))
+                            .background(Color(0xFF064E3B).copy(alpha = 0.8f))
                             .border(1.dp, Color(0xFF059669), RoundedCornerShape(6.dp))
+                            .clickable { showSaveDialog = true },
+                        contentAlignment = Alignment.Center
                     ) {
                         Icon(
                             imageVector = Icons.Default.Add,
                             contentDescription = "保存为新分组",
                             tint = Color(0xFF34D399),
-                            modifier = Modifier.size(14.dp)
+                            modifier = Modifier.size(16.dp)
                         )
                     }
                 }
 
                 Spacer(modifier = Modifier.width(8.dp))
 
-                // 中部：每个窗口的最大化按钮和隐藏按钮 (把每个窗口的最大化按钮和隐藏按钮，放到标签栏)
+                // 中部：每个窗口的最大化按钮和隐藏按钮 (严格 30dp 高度胶囊)
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -1094,7 +1097,8 @@ fun TradingMultiViewScreen(
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier
-                                .clip(RoundedCornerShape(5.dp))
+                                .height(30.dp)
+                                .clip(RoundedCornerShape(6.dp))
                                 .background(
                                     when {
                                         isMaximized -> Color(0xFF0369A1)
@@ -1109,9 +1113,9 @@ fun TradingMultiViewScreen(
                                         isHidden -> Color(0xFFEF4444).copy(alpha = 0.5f)
                                         else -> Color(0xFF334155)
                                     },
-                                    RoundedCornerShape(5.dp)
+                                    RoundedCornerShape(6.dp)
                                 )
-                                .padding(horizontal = 4.dp, vertical = 2.dp)
+                                .padding(horizontal = 4.dp)
                         ) {
                             Text(
                                 text = "\${win.id}",
@@ -1119,41 +1123,47 @@ fun TradingMultiViewScreen(
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
                                 fontFamily = FontFamily.Monospace,
-                                modifier = Modifier.padding(horizontal = 3.dp)
+                                modifier = Modifier.padding(horizontal = 4.dp)
                             )
 
                             // 独立最大化 / 还原按钮
-                            IconButton(
-                                onClick = {
-                                    if (isHidden) viewModel.restoreWindow(win.id)
-                                    viewModel.toggleMaximize(win.id)
-                                },
-                                modifier = Modifier.size(24.dp)
+                            Box(
+                                modifier = Modifier
+                                    .size(24.dp)
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .clickable {
+                                        if (isHidden) viewModel.restoreWindow(win.id)
+                                        viewModel.toggleMaximize(win.id)
+                                    },
+                                contentAlignment = Alignment.Center
                             ) {
                                 Icon(
                                     imageVector = if (isMaximized) Icons.Default.FullscreenExit else Icons.Default.Fullscreen,
                                     contentDescription = if (isMaximized) "还原窗口\${win.id}" else "最大化窗口\${win.id}",
                                     tint = if (isMaximized) Color.White else Color(0xFFCBD5E1),
-                                    modifier = Modifier.size(13.dp)
+                                    modifier = Modifier.size(14.dp)
                                 )
                             }
 
                             // 独立隐藏 / 显示按钮
-                            IconButton(
-                                onClick = {
-                                    if (isHidden) {
-                                        viewModel.restoreWindow(win.id)
-                                    } else {
-                                        viewModel.hideWindow(win.id)
-                                    }
-                                },
-                                modifier = Modifier.size(24.dp)
+                            Box(
+                                modifier = Modifier
+                                    .size(24.dp)
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .clickable {
+                                        if (isHidden) {
+                                            viewModel.restoreWindow(win.id)
+                                        } else {
+                                            viewModel.hideWindow(win.id)
+                                        }
+                                    },
+                                contentAlignment = Alignment.Center
                             ) {
                                 Icon(
                                     imageVector = if (isHidden) Icons.Default.Visibility else Icons.Default.VisibilityOff,
                                     contentDescription = if (isHidden) "显示窗口\${win.id}" else "隐藏窗口\${win.id}",
                                     tint = if (isHidden) Color(0xFFEF4444) else Color(0xFF94A3B8),
-                                    modifier = Modifier.size(13.dp)
+                                    modifier = Modifier.size(14.dp)
                                 )
                             }
                         }
@@ -1162,90 +1172,98 @@ fun TradingMultiViewScreen(
 
                 Spacer(modifier = Modifier.width(8.dp))
 
-                // 右侧：全局控制区 (全局刷新仅留图标 + 统一缩放去掉文字 + 网址配置仅留图标)
+                // 右侧：全局控制区 (全局刷新仅留图标 + 统一缩放去掉文字 + 网址配置仅留图标，全部统一 30dp 高度)
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    // 全局一键刷新按钮：去掉“全局刷新”几个字，只留下刷新的图标
-                    IconButton(
-                        onClick = { viewModel.reloadAll() },
+                    // 全局一键刷新按钮：标准 30dp x 30dp 方形，圆角 6dp，与左侧保持严格一致
+                    Box(
                         modifier = Modifier
-                            .size(28.dp)
-                            .clip(RoundedCornerShape(4.dp))
+                            .size(30.dp)
+                            .clip(RoundedCornerShape(6.dp))
                             .background(Color(0xFF1E293B))
-                            .border(1.dp, Color(0xFF334155), RoundedCornerShape(4.dp))
+                            .border(1.dp, Color(0xFF334155), RoundedCornerShape(6.dp))
+                            .clickable { viewModel.reloadAll() },
+                        contentAlignment = Alignment.Center
                     ) {
                         Icon(
                             imageVector = Icons.Default.Refresh,
                             contentDescription = "全局刷新",
                             tint = Color(0xFF38BDF8),
-                            modifier = Modifier.size(14.dp)
+                            modifier = Modifier.size(15.dp)
                         )
                     }
 
-                    // 统一全局缩放调节器：去掉“统一缩放”4个字，只留下 - 100% +
+                    // 统一全局缩放调节器：高度统一为 30dp，圆角 6dp，与旁边按钮完美对齐
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
-                            .height(28.dp)
-                            .clip(RoundedCornerShape(4.dp))
+                            .height(30.dp)
+                            .clip(RoundedCornerShape(6.dp))
                             .background(Color(0xFF090D16))
-                            .border(1.dp, Color(0xFF334155), RoundedCornerShape(4.dp))
+                            .border(1.dp, Color(0xFF334155), RoundedCornerShape(6.dp))
                             .padding(horizontal = 2.dp)
                     ) {
-                        IconButton(
-                            onClick = { viewModel.zoomOutAll() },
-                            modifier = Modifier.size(22.dp)
+                        Box(
+                            modifier = Modifier
+                                .size(26.dp)
+                                .clip(RoundedCornerShape(4.dp))
+                                .clickable { viewModel.zoomOutAll() },
+                            contentAlignment = Alignment.Center
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Remove,
                                 contentDescription = "缩小",
                                 tint = Color(0xFF94A3B8),
-                                modifier = Modifier.size(12.dp)
+                                modifier = Modifier.size(13.dp)
                             )
                         }
                         Text(
                             text = "\${uiState.globalZoomPercent}%",
                             color = Color(0xFF38BDF8),
-                            fontSize = 10.sp,
+                            fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
                             fontFamily = FontFamily.Monospace,
                             modifier = Modifier
                                 .clickable { viewModel.resetGlobalZoom() }
-                                .padding(horizontal = 2.dp)
+                                .padding(horizontal = 4.dp)
                         )
-                        IconButton(
-                            onClick = { viewModel.zoomInAll() },
-                            modifier = Modifier.size(22.dp)
+                        Box(
+                            modifier = Modifier
+                                .size(26.dp)
+                                .clip(RoundedCornerShape(4.dp))
+                                .clickable { viewModel.zoomInAll() },
+                            contentAlignment = Alignment.Center
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Add,
                                 contentDescription = "放大",
                                 tint = Color(0xFF94A3B8),
-                                modifier = Modifier.size(12.dp)
+                                modifier = Modifier.size(13.dp)
                             )
                         }
                     }
 
-                    // 网址配置抽屉开关按钮：去掉文字，只留下配置的图标
-                    IconButton(
-                        onClick = { viewModel.toggleUrlBarCollapse(null) },
+                    // 网址配置抽屉开关按钮：标准 30dp x 30dp 方形，圆角 6dp，与旁边按钮严格一致
+                    Box(
                         modifier = Modifier
-                            .size(28.dp)
-                            .clip(RoundedCornerShape(4.dp))
+                            .size(30.dp)
+                            .clip(RoundedCornerShape(6.dp))
                             .background(if (!uiState.isGlobalUrlCollapsed) Color(0xFF075985) else Color(0xFF1E293B))
                             .border(
                                 1.dp,
                                 if (!uiState.isGlobalUrlCollapsed) Color(0xFF38BDF8) else Color(0xFF334155),
-                                RoundedCornerShape(4.dp)
+                                RoundedCornerShape(6.dp)
                             )
+                            .clickable { viewModel.toggleUrlBarCollapse(null) },
+                        contentAlignment = Alignment.Center
                     ) {
                         Icon(
                             imageVector = if (!uiState.isGlobalUrlCollapsed) Icons.Default.ExpandLess else Icons.Default.Settings,
                             contentDescription = "配置网址",
                             tint = if (!uiState.isGlobalUrlCollapsed) Color.White else Color(0xFFCBD5E1),
-                            modifier = Modifier.size(14.dp)
+                            modifier = Modifier.size(15.dp)
                         )
                     }
                 }
