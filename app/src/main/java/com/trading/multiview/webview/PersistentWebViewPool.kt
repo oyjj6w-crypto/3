@@ -19,12 +19,29 @@ object PersistentWebViewPool {
     private val webViewMap = mutableMapOf<Int, WebView>()
     private var isInitialized = false
 
+    // URL 变化监听回调 (windowId, newUrl, pageTitle)
+    var onUrlChanged: ((Int, String, String) -> Unit)? = null
+
     // 默认看盘标的预设
     val DEFAULT_URLS = mapOf(
         1 to "https://s.tradingview.com/widgetembed/?symbol=BINANCE:BTCUSDT&interval=15&theme=dark",
         2 to "https://s.tradingview.com/widgetembed/?symbol=BINANCE:ETHUSDT&interval=60&theme=dark",
         3 to "https://s.tradingview.com/widgetembed/?symbol=BINANCE:SOLUSDT&interval=240&theme=dark"
     )
+
+    // 快捷书签推荐网站
+    val PRESET_BOOKMARKS = listOf(
+        BookmarkItem("TradingView", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:BTCUSDT&interval=15&theme=dark", "📈"),
+        BookmarkItem("Binance 现货", "https://www.binance.com/zh-CN/trade/BTC_USDT", "🟡"),
+        BookmarkItem("OKX 欧易", "https://www.okx.com/zh-hans/trade-spot/btc-usdt", "⬛"),
+        BookmarkItem("DexScreener", "https://dexscreener.com", "🦅"),
+        BookmarkItem("CoinGecko", "https://www.coingecko.com", "🦎"),
+        BookmarkItem("CoinMarketCap", "https://coinmarketcap.com", "🪙"),
+        BookmarkItem("TradingView ETH", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:ETHUSDT&interval=60&theme=dark", "📊"),
+        BookmarkItem("TradingView SOL", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:SOLUSDT&interval=240&theme=dark", "📊")
+    )
+
+    data class BookmarkItem(val title: String, val url: String, val icon: String)
 
     fun init(context: Context) {
         if (isInitialized) return
@@ -76,6 +93,16 @@ object PersistentWebViewPool {
             webViewClient = object : WebViewClient() {
                 override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                     super.onPageStarted(view, url, favicon)
+                    if (url != null) {
+                        onUrlChanged?.invoke(windowId, url, view?.title ?: "")
+                    }
+                }
+
+                override fun onPageFinished(view: WebView?, url: String?) {
+                    super.onPageFinished(view, url)
+                    if (url != null) {
+                        onUrlChanged?.invoke(windowId, url, view?.title ?: "")
+                    }
                 }
 
                 override fun shouldOverrideUrlLoading(
@@ -88,6 +115,14 @@ object PersistentWebViewPool {
             }
 
             webChromeClient = object : WebChromeClient() {
+                override fun onReceivedTitle(view: WebView?, title: String?) {
+                    super.onReceivedTitle(view, title)
+                    val currentUrl = view?.url
+                    if (currentUrl != null && !title.isNullOrBlank()) {
+                        onUrlChanged?.invoke(windowId, currentUrl, title)
+                    }
+                }
+
                 override fun onConsoleMessage(consoleMessage: ConsoleMessage?): Boolean {
                     // 过滤调试日志
                     return true
@@ -104,8 +139,50 @@ object PersistentWebViewPool {
         webViewMap[windowId]?.reload()
     }
 
+    fun goBack(windowId: Int): Boolean {
+        val wv = webViewMap[windowId]
+        return if (wv != null && wv.canGoBack()) {
+            wv.goBack()
+            true
+        } else {
+            false
+        }
+    }
+
+    fun goForward(windowId: Int): Boolean {
+        val wv = webViewMap[windowId]
+        return if (wv != null && wv.canGoForward()) {
+            wv.goForward()
+            true
+        } else {
+            false
+        }
+    }
+
+    fun canGoBack(windowId: Int): Boolean {
+        return webViewMap[windowId]?.canGoBack() == true
+    }
+
+    fun canGoForward(windowId: Int): Boolean {
+        return webViewMap[windowId]?.canGoForward() == true
+    }
+
+    /**
+     * 智能格式化用户输入的网址或搜索词
+     */
+    fun formatUrl(rawUrl: String): String {
+        val trimmed = rawUrl.trim()
+        return when {
+            trimmed.isEmpty() -> "https://www.tradingview.com"
+            trimmed.startsWith("http://") || trimmed.startsWith("https://") -> trimmed
+            trimmed.contains(".") && !trimmed.contains(" ") -> "https://$trimmed"
+            else -> "https://www.google.com/search?q=" + java.net.URLEncoder.encode(trimmed, "UTF-8")
+        }
+    }
+
     fun loadCustomUrl(windowId: Int, url: String) {
-        webViewMap[windowId]?.loadUrl(url)
+        val formatted = formatUrl(url)
+        webViewMap[windowId]?.loadUrl(formatted)
     }
 
     fun destroyAll() {

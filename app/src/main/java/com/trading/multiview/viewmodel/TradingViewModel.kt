@@ -1,6 +1,7 @@
 package com.trading.multiview.viewmodel
 
 import androidx.lifecycle.ViewModel
+import com.trading.multiview.webview.PersistentWebViewPool
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -54,6 +55,43 @@ class TradingViewModel : ViewModel() {
 
     private val _uiState = MutableStateFlow(MultiViewUiState())
     val uiState: StateFlow<MultiViewUiState> = _uiState.asStateFlow()
+
+    init {
+        // 挂载 WebView 实时 URL 变更监听，保证视窗地址栏与 WebView 浏览状态精准同步
+        PersistentWebViewPool.onUrlChanged = { windowId, url, pageTitle ->
+            updateWindowUrl(windowId, url, if (pageTitle.isNotBlank()) pageTitle else null)
+        }
+    }
+
+    /**
+     * 前往自定义网址或搜索
+     */
+    fun navigateToUrl(windowId: Int, rawUrl: String) {
+        val formatted = PersistentWebViewPool.formatUrl(rawUrl)
+        updateWindowUrl(windowId, formatted)
+        PersistentWebViewPool.loadCustomUrl(windowId, formatted)
+    }
+
+    /**
+     * 后退
+     */
+    fun goBack(windowId: Int): Boolean {
+        return PersistentWebViewPool.goBack(windowId)
+    }
+
+    /**
+     * 前进
+     */
+    fun goForward(windowId: Int): Boolean {
+        return PersistentWebViewPool.goForward(windowId)
+    }
+
+    /**
+     * 刷新
+     */
+    fun reload(windowId: Int) {
+        PersistentWebViewPool.reloadWindow(windowId)
+    }
 
     /**
      * 一键全屏最大化 / 还原

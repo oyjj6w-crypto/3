@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Maximize2, Minimize2, EyeOff, RotateCw, ExternalLink, Activity, Wifi, Settings, Globe } from 'lucide-react';
+import { Maximize2, Minimize2, EyeOff, RotateCw, ExternalLink, Activity, Wifi, Settings, Globe, ArrowLeft, ArrowRight, Bookmark, X, Search, ChevronDown } from 'lucide-react';
 import { WindowConfig } from '../types';
 
 interface TradingWindowProps {
@@ -20,6 +20,23 @@ const PRESET_SYMBOLS = [
   { symbol: 'PEPEUSDT', name: 'PEPE/USDT', interval: '15', title: 'PEPE/USDT 15M' },
 ];
 
+const PRESET_BOOKMARKS = [
+  { name: 'TradingView BTC', icon: '📈', url: 'https://s.tradingview.com/widgetembed/?symbol=BINANCE:BTCUSDT&interval=15&theme=dark', title: 'BTC/USDT 15M' },
+  { name: '币安 Binance', icon: '🟡', url: 'https://www.binance.com/zh-CN/trade/BTC_USDT', title: '币安 现货' },
+  { name: 'OKX 欧易', icon: '⬛', url: 'https://www.okx.com/zh-hans/trade-spot/btc-usdt', title: 'OKX 交易' },
+  { name: 'DexScreener', icon: '🦅', url: 'https://dexscreener.com', title: 'DexScreener 链上' },
+  { name: 'CoinGecko', icon: '🦎', url: 'https://www.coingecko.com', title: 'CoinGecko' },
+  { name: 'CoinMarketCap', icon: '🪙', url: 'https://coinmarketcap.com', title: 'CoinMarketCap' },
+];
+
+const formatWebUrl = (raw: string) => {
+  const trimmed = raw.trim();
+  if (!trimmed) return 'https://www.tradingview.com';
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) return trimmed;
+  if (trimmed.includes('.') && !trimmed.includes(' ')) return `https://${trimmed}`;
+  return `https://www.google.com/search?q=${encodeURIComponent(trimmed)}`;
+};
+
 export const TradingWindow: React.FC<TradingWindowProps> = ({
   window: win,
   isMaximized,
@@ -29,6 +46,8 @@ export const TradingWindow: React.FC<TradingWindowProps> = ({
   onUpdateConfig,
 }) => {
   const [showUrlDialog, setShowUrlDialog] = useState(false);
+  const [showBookmarksDropdown, setShowBookmarksDropdown] = useState(false);
+  const [urlBarInput, setUrlBarInput] = useState(win.url);
   const [customUrlInput, setCustomUrlInput] = useState(win.url);
   const [customTitleInput, setCustomTitleInput] = useState(win.title);
   
@@ -44,6 +63,11 @@ export const TradingWindow: React.FC<TradingWindowProps> = ({
   const startTimeRef = useRef<number>(Date.now());
   const [uptimeSec, setUptimeSec] = useState<number>(0);
   const [renderEngine, setRenderEngine] = useState<'tradingview' | 'native_chart'>('tradingview');
+
+  // Synchronize urlBarInput if win.url changes
+  useEffect(() => {
+    setUrlBarInput(win.url);
+  }, [win.url]);
 
   // Keep uptime counter running without reload
   useEffect(() => {
@@ -156,41 +180,146 @@ export const TradingWindow: React.FC<TradingWindowProps> = ({
     }
   };
 
+  const handleNavigate = (targetUrl: string) => {
+    const formatted = formatWebUrl(targetUrl);
+    setUrlBarInput(formatted);
+    // Find if it matches a preset to give it a nice title
+    const matchedPreset = PRESET_BOOKMARKS.find(b => b.url === formatted);
+    onUpdateConfig(win.id, {
+      url: formatted,
+      title: matchedPreset ? matchedPreset.title : formatted.replace(/^https?:\/\//, '').split('/')[0],
+    });
+    if (iframeRef.current) {
+      iframeRef.current.src = formatted;
+    }
+  };
+
   return (
     <div
       id={`trading-window-${win.id}`}
       className="flex flex-col h-full w-full bg-[#0d131f] border border-slate-800/80 overflow-hidden relative select-none"
     >
-      {/* ================= 微型控制栏 (Micro Control Bar) ================= */}
+      {/* ================= 专业综合地址栏与控制栏 (Address Bar & Controls) ================= */}
       <div
         id={`micro-bar-${win.id}`}
-        className="h-9 px-2.5 bg-[#141c2c] border-b border-slate-800 flex items-center justify-between z-10 shrink-0 text-slate-200"
+        className="h-10 px-2 bg-[#141c2c] border-b border-slate-800 flex items-center justify-between gap-1.5 z-20 shrink-0 text-slate-200"
       >
-        {/* Left: Window Title, Symbol, Live Indicator & Price */}
-        <div className="flex items-center gap-2 overflow-hidden mr-2">
-          {/* Active WebSocket Pulse */}
-          <div className="flex items-center gap-1.5 shrink-0" title={`WebSocket 活跃保活 • 累计推送 ${msgCount} 条 • 延时 ${latency}ms`}>
-            <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-            </span>
-          </div>
+        {/* Left: Window Identifier & WebSocket status */}
+        <div className="flex items-center gap-1.5 shrink-0">
+          <span className="relative flex h-2 w-2" title={`WebSocket 活跃保活 • 累计推送 ${msgCount} 条`}>
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+            <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+          </span>
+          <span className="px-1.5 py-0.5 rounded bg-sky-950/80 border border-sky-800/50 text-[10px] text-sky-400 font-bold font-mono">
+            W{win.id}
+          </span>
+        </div>
 
-          {/* Window Identifier / Title */}
+        {/* Navigation Controls: Back, Forward, Reload */}
+        <div className="flex items-center gap-0.5 shrink-0">
           <button
-            onClick={() => setShowUrlDialog(true)}
-            className="flex items-center gap-1 font-mono text-xs font-semibold text-slate-200 hover:text-sky-400 transition-colors truncate"
-            title="点击切换标的或输入自定义网址"
+            onClick={() => handleManualReload()}
+            title="手动刷新视窗"
+            className="p-1 rounded text-slate-400 hover:text-slate-100 hover:bg-slate-800/80 transition-colors"
           >
-            <span className="px-1.5 py-0.5 rounded bg-slate-800/90 text-[10px] text-sky-400 font-bold">
-              W{win.id}
-            </span>
-            <span className="truncate max-w-[90px] sm:max-w-[130px]">{win.title}</span>
+            <RotateCw className="w-3.5 h-3.5" />
           </button>
+        </div>
 
-          {/* Live Price Tag with Flash */}
+        {/* Center: Full Address Bar (URL Input + Go + Preset Bookmarks) */}
+        <div className="flex-1 relative flex items-center min-w-0">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              handleNavigate(urlBarInput);
+            }}
+            className="w-full flex items-center bg-[#090d16] border border-slate-700/80 hover:border-slate-600 focus-within:border-sky-500 rounded-md px-2 py-0.5 transition-colors"
+          >
+            <Globe className="w-3 h-3 text-slate-500 shrink-0 mr-1.5" />
+            <input
+              type="text"
+              value={urlBarInput}
+              onChange={(e) => setUrlBarInput(e.target.value)}
+              placeholder="输入网址 (如 binance.com 或 tradingview.com)..."
+              className="flex-1 min-w-0 bg-transparent text-slate-200 text-xs font-mono outline-none placeholder:text-slate-600 truncate"
+            />
+            {urlBarInput && (
+              <button
+                type="button"
+                onClick={() => setUrlBarInput('')}
+                className="p-0.5 text-slate-500 hover:text-slate-300 mr-1"
+                title="清空"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            )}
+            <button
+              type="submit"
+              className="px-2 py-0.5 bg-sky-600 hover:bg-sky-500 text-white rounded text-[11px] font-semibold transition-colors shrink-0 mr-1 shadow-sm"
+            >
+              前往
+            </button>
+
+            {/* Quick Bookmarks Button */}
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setShowBookmarksDropdown(!showBookmarksDropdown)}
+                title="快捷书签（币安、OKX、DexScreener 等）"
+                className={`p-1 rounded transition-colors ${
+                  showBookmarksDropdown
+                    ? 'text-amber-400 bg-amber-950/40'
+                    : 'text-slate-400 hover:text-amber-400 hover:bg-slate-800'
+                }`}
+              >
+                <Bookmark className="w-3 h-3" />
+              </button>
+
+              {/* Bookmarks Dropdown */}
+              {showBookmarksDropdown && (
+                <div
+                  className="absolute right-0 top-full mt-1 w-48 bg-[#161f30] border border-slate-700 rounded-md shadow-2xl py-1 z-50 text-xs font-sans"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div className="px-2.5 py-1 text-[10px] font-semibold text-slate-400 border-b border-slate-800">
+                    常用看盘与交易网站
+                  </div>
+                  {PRESET_BOOKMARKS.map((bookmark) => (
+                    <button
+                      key={bookmark.name}
+                      onClick={() => {
+                        handleNavigate(bookmark.url);
+                        setShowBookmarksDropdown(false);
+                      }}
+                      className="w-full text-left px-2.5 py-1.5 flex items-center gap-2 text-slate-200 hover:bg-sky-950/60 hover:text-sky-300 transition-colors"
+                    >
+                      <span>{bookmark.icon}</span>
+                      <span className="truncate">{bookmark.name}</span>
+                    </button>
+                  ))}
+                  <div className="border-t border-slate-800 mt-1 pt-1">
+                    <button
+                      onClick={() => {
+                        setShowBookmarksDropdown(false);
+                        setShowUrlDialog(true);
+                      }}
+                      className="w-full text-left px-2.5 py-1 text-[11px] text-sky-400 hover:bg-slate-800/80 flex items-center gap-1.5"
+                    >
+                      <Settings className="w-3 h-3" />
+                      <span>更多高级设置与多标的...</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </form>
+        </div>
+
+        {/* Right: Price Badge, Maximize/Restore, Hide */}
+        <div className="flex items-center gap-1 shrink-0">
+          {/* Live Price Tag */}
           <div
-            className={`hidden sm:flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-mono transition-colors ${
+            className={`hidden md:flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-mono transition-colors ${
               flashColor === 'green'
                 ? 'bg-emerald-950/80 text-emerald-400'
                 : flashColor === 'red'
@@ -199,35 +328,7 @@ export const TradingWindow: React.FC<TradingWindowProps> = ({
             }`}
           >
             <span>${livePrice}</span>
-            <span
-              className={`text-[9px] font-bold ${
-                priceChange >= 0 ? 'text-emerald-400' : 'text-rose-400'
-              }`}
-            >
-              {priceChange >= 0 ? `+${priceChange.toFixed(2)}%` : `${priceChange.toFixed(2)}%`}
-            </span>
           </div>
-        </div>
-
-        {/* Right: Micro Actions (URL Setup, Reload, Maximize/Restore, Hide) */}
-        <div className="flex items-center gap-1 shrink-0">
-          {/* Engine Switcher / Setup */}
-          <button
-            onClick={() => setShowUrlDialog(true)}
-            title="设置看盘 URL / 切换行情源"
-            className="p-1 rounded text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition-colors"
-          >
-            <Settings className="w-3.5 h-3.5" />
-          </button>
-
-          {/* Manual Reload */}
-          <button
-            onClick={handleManualReload}
-            title="手动刷新 WebView（默认绝不自动刷新）"
-            className="p-1 rounded text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition-colors"
-          >
-            <RotateCw className="w-3.5 h-3.5" />
-          </button>
 
           {/* One-Click Maximize / Restore */}
           <button
