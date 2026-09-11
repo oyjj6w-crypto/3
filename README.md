@@ -58,6 +58,11 @@ git push origin v1.0.0
      ```
    - 配合 `PersistentWebViewPool` 单例池机制，将 `WebView` 实例常驻内存，与 Compose 重组脱耦。
    - 窗口尺寸拉伸、隐藏/恢复、横竖屏旋转时，底层的 DOM Storage、WebGL Canvas 与 WebSocket 长连接**绝对不发生二次重载**，保证毫秒级看盘无缝衔接。
+3. **TradingView 登录态跨重装持久化与 PineScript 保护引擎**：
+   - 彻底解决 Android 卸载重装清空应用内部私有沙盒导致掉登录的问题。
+   - 自动在系统公共存储目录 `Documents/TradingMultiView/tv_session.json`（及 Download 镜像）持久化备份登录 Cookie（`sessionid`、`device_t` 等凭据）。
+   - 冷启动与重新安装首次打开时，在创建 WebView 实例前**优先自动从公共目录导入并注入系统的 CookieManager**，完全无需反复输入账号密码，无缝保留个人云端画线与自定义 PineScript 脚本。
+   - 展开式配置抽屉中提供实时状态徽章（已登录/未登录、公共目录备份状态），并支持一键「从公共目录导入凭据」与「备份当前登录凭据」。
 
 ---
 
