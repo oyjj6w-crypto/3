@@ -165,15 +165,19 @@ class TradingViewModel : ViewModel() {
         val targetGroup = updatedGroups.find { it.id == groupId } ?: return
 
         _uiState.update { state ->
+            var reloadStaggerIndex = 0
             val updatedWindows = state.windows.mapIndexed { index, win ->
                 val targetItem = targetGroup.items.getOrNull(index) ?: targetGroup.items.first()
                 val targetUrl = targetItem.url
 
-                // 核心性能优化：如果网页没有改变（如前后两个标签集合对应窗口都是 BTC 或相同网址），
+                // 核心性能优化 1：如果网页没有改变（如前后两个标签集合对应窗口都是 BTC 或相同网址），
                 // 绝不重新加载网页，不需要对网页重新缩放，保持当前视窗图表毫秒级瞬显！
+                // 核心性能优化 2：若必须重新加载，拉开 120ms 错峰间隔，避免 24 图瞬间并发冲击网络和解析线程！
                 val urlChanged = !PersistentWebViewPool.isSameUrl(win.currentUrl, targetUrl)
                 if (urlChanged) {
-                    PersistentWebViewPool.loadCustomUrl(win.id, targetUrl)
+                    val delay = reloadStaggerIndex * 120L
+                    reloadStaggerIndex++
+                    PersistentWebViewPool.loadCustomUrlStaggered(win.id, targetUrl, delayMs = delay)
                 }
 
                 win.copy(

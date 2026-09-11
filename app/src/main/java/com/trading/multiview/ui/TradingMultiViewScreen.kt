@@ -76,6 +76,22 @@ fun TradingMultiViewScreen(
         viewModel.loadSavedGroupsFromPrefs(context)
     }
 
+    // 智能视窗休眠调度（非激活视窗智能休眠）：
+    // 当窗口被隐藏、全屏遮挡或非活动时，自动暂停后台 Canvas 重绘与动画，
+    // 让当前前台活跃的窗口独享 GPU 与 CPU 算力；恢复时瞬间唤醒！
+    val hiddenFlags = remember(uiState.windows) { uiState.windows.map { it.isHidden } }
+    DisposableEffect(uiState.maximizedWindowId, hiddenFlags) {
+        uiState.windows.forEach { win ->
+            val isSleeping = win.isHidden || (uiState.maximizedWindowId != null && uiState.maximizedWindowId != win.id)
+            if (isSleeping) {
+                PersistentWebViewPool.pauseWindow(win.id)
+            } else {
+                PersistentWebViewPool.resumeWindow(win.id)
+            }
+        }
+        onDispose { }
+    }
+
     Column(
         modifier = modifier
             .fillMaxSize()

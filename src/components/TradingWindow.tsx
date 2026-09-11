@@ -31,6 +31,7 @@ interface TradingWindowProps {
   window: WindowConfig;
   isMaximized: boolean;
   canHide: boolean;
+  isSleeping?: boolean;
   onToggleMaximize: (id: number) => void;
   onHideWindow: (id: number) => void;
   onUpdateConfig: (id: number, updates: Partial<WindowConfig>) => void;
@@ -66,6 +67,7 @@ export const TradingWindow: React.FC<TradingWindowProps> = ({
   window: win,
   isMaximized,
   canHide,
+  isSleeping = false,
   onToggleMaximize,
   onHideWindow,
   onUpdateConfig,
@@ -317,6 +319,10 @@ export const TradingWindow: React.FC<TradingWindowProps> = ({
       {/* ================= 底层常驻 WebView 渲染区 (纯净无常驻地址栏遮挡) ================= */}
       <div
         ref={containerRef}
+        style={{
+          visibility: isSleeping ? 'hidden' : 'visible',
+          pointerEvents: isSleeping ? 'none' : 'auto',
+        }}
         className="flex-1 w-full h-full relative bg-[#090d16] overflow-hidden"
       >
         {/* Real Live Chart (TradingView iframe embed or custom live canvas) */}

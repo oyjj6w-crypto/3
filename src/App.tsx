@@ -258,28 +258,39 @@ export default function App() {
     if (!targetGroup) return;
 
     setActiveGroupId(groupId);
-    setWindows((prev) =>
-      prev.map((win, idx) => {
-        const item = targetGroup.items[idx] || targetGroup.items[0];
-        // 核心性能优化：如果该窗口的网址、代码与标题都没有发生改变，直接复用原 window 引用，
-        // 绝不触发 iframe 重新渲染或重新计算缩放，实现零闪烁秒级显示！
-        if (
-          win.url === item.url &&
-          win.symbol === item.symbol &&
-          win.title === item.title &&
-          (item.timeframe ? win.timeframe === item.timeframe : true)
-        ) {
-          return win;
-        }
-        return {
-          ...win,
-          title: item.title,
-          symbol: item.symbol,
-          url: item.url,
-          timeframe: item.timeframe || win.timeframe,
-        };
-      })
-    );
+
+    // 核心性能优化 1：如果未改变，复用原 window 引用，绝不重新加载或重算
+    // 核心性能优化 2：错峰平滑加载，若多个窗口需要更新新页面，拉开 120ms 错峰间隔，避免 24 图瞬间并发打满 I/O
+    let staggerIndex = 0;
+    targetGroup.items.forEach((item, idx) => {
+      const currentWin = windows[idx];
+      const urlChanged = currentWin && currentWin.url !== item.url;
+      const delay = urlChanged ? staggerIndex * 120 : 0;
+      if (urlChanged) staggerIndex++;
+
+      setTimeout(() => {
+        setWindows((prev) =>
+          prev.map((win, i) => {
+            if (i !== idx) return win;
+            if (
+              win.url === item.url &&
+              win.symbol === item.symbol &&
+              win.title === item.title &&
+              (item.timeframe ? win.timeframe === item.timeframe : true)
+            ) {
+              return win;
+            }
+            return {
+              ...win,
+              title: item.title,
+              symbol: item.symbol,
+              url: item.url,
+              timeframe: item.timeframe || win.timeframe,
+            };
+          })
+        );
+      }, delay);
+    });
   };
 
   // 3 个窗口网页同时全局缩放调节 (设置 textZoom 或 initialScale，快捷 +/-)
@@ -828,6 +839,7 @@ export default function App() {
                 const widthPercent = getWindowWidthPercent(win);
                 const isWinMaximized = maximizedWindow?.id === win.id;
                 const canHide = visibleWindows.length > 1;
+                const isSleeping = widthPercent === 0 || win.isHidden;
 
                 return (
                   <div
@@ -846,6 +858,7 @@ export default function App() {
                       window={win}
                       isMaximized={isWinMaximized}
                       canHide={canHide}
+                      isSleeping={isSleeping}
                       onToggleMaximize={handleToggleMaximize}
                       onHideWindow={handleHideWindow}
                       onUpdateConfig={handleUpdateConfig}
