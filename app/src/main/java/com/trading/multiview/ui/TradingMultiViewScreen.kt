@@ -49,7 +49,6 @@ import com.trading.multiview.webview.PersistentWebViewPool
 import android.app.Activity
 import android.content.pm.ActivityInfo
 import android.content.ContextWrapper
-import android.widget.Toast
 
 private fun Context.findActivity(): Activity? {
     var currentContext = this
@@ -72,10 +71,9 @@ fun TradingMultiViewScreen(
     val focusManager = LocalFocusManager.current
     var showSaveDialog by remember { mutableStateOf(false) }
 
-    // 初始化时加载本地存储的自定义分组与探测凭据状态
+    // 初始化时加载本地存储的自定义分组
     LaunchedEffect(Unit) {
         viewModel.loadSavedGroupsFromPrefs(context)
-        viewModel.refreshSessionStatus(context)
     }
 
     Column(
@@ -577,124 +575,6 @@ fun TradingMultiViewScreen(
                             color = Color(0xFF64748B),
                             fontSize = 9.sp
                         )
-                    }
-
-                    // 3. TradingView 登录态持久化与跨重装免登录管理条 (Session & Cookie 持久化)
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(4.dp))
-                            .background(Color(0xFF0A101D))
-                            .border(1.dp, Color(0xFF1E293B), RoundedCornerShape(4.dp))
-                            .padding(horizontal = 8.dp, vertical = 5.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.VpnKey,
-                                    contentDescription = null,
-                                    tint = Color(0xFFF59E0B),
-                                    modifier = Modifier.size(13.dp)
-                                )
-                                Text(
-                                    text = "TV凭据持久化:",
-                                    color = Color(0xFF94A3B8),
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                            }
-
-                            // 登录状态徽章
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(4.dp))
-                                    .background(if (uiState.isTvLoggedIn) Color(0xFF064E3B) else Color(0xFF1E293B))
-                                    .border(1.dp, if (uiState.isTvLoggedIn) Color(0xFF059669) else Color(0xFF334155), RoundedCornerShape(4.dp))
-                                    .padding(horizontal = 6.dp, vertical = 2.dp)
-                            ) {
-                                Text(
-                                    text = if (uiState.isTvLoggedIn) "已登录 (画图/PineScript可用)" else "未检测到登录",
-                                    color = if (uiState.isTvLoggedIn) Color(0xFF34D399) else Color(0xFF94A3B8),
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Medium
-                                )
-                            }
-
-                            // 外部持久存储备份状态徽章
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(4.dp))
-                                    .background(if (uiState.hasPublicSessionBackup) Color(0xFF0C4A6E) else Color(0xFF1E293B))
-                                    .border(1.dp, if (uiState.hasPublicSessionBackup) Color(0xFF0284C7) else Color(0xFF334155), RoundedCornerShape(4.dp))
-                                    .padding(horizontal = 6.dp, vertical = 2.dp)
-                            ) {
-                                Text(
-                                    text = if (uiState.hasPublicSessionBackup) "公共目录已备份 (重装免登录)" else "未备份至公共目录",
-                                    color = if (uiState.hasPublicSessionBackup) Color(0xFF38BDF8) else Color(0xFF64748B),
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Medium
-                                )
-                            }
-                        }
-
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            // 从公共目录手动重新导入凭据
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(4.dp))
-                                    .background(Color(0xFF0284C7))
-                                    .clickable {
-                                        val count = viewModel.restoreSessionFromPublicDir(context)
-                                        if (count > 0) {
-                                            Toast.makeText(context, "成功从公共目录导入 $count 项凭据，页面已刷新！", Toast.LENGTH_SHORT).show()
-                                        } else {
-                                            Toast.makeText(context, "未在公共目录探测到凭据备份，请先登录并备份", Toast.LENGTH_SHORT).show()
-                                        }
-                                    }
-                                    .padding(horizontal = 8.dp, vertical = 3.dp)
-                            ) {
-                                Text(
-                                    text = "从公共目录导入凭据",
-                                    color = Color.White,
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-
-                            // 立即备份当前登录态
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(4.dp))
-                                    .background(Color(0xFF059669))
-                                    .clickable {
-                                        val ok = viewModel.backupCurrentSession(context)
-                                        if (ok) {
-                                            Toast.makeText(context, "登录态已备份至 Documents/TradingMultiView/tv_session.json (重装免登录)", Toast.LENGTH_LONG).show()
-                                        } else {
-                                            Toast.makeText(context, "未检测到有效登录态，请先在任一视窗登录 TradingView", Toast.LENGTH_SHORT).show()
-                                        }
-                                    }
-                                    .padding(horizontal = 8.dp, vertical = 3.dp)
-                            ) {
-                                Text(
-                                    text = "备份当前登录凭据",
-                                    color = Color.White,
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                        }
                     }
                 }
             }

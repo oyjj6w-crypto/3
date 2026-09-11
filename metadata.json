@@ -1,6 +1,6 @@
 {
   "name": "Android 多窗口看盘浏览器",
-  "description": "面向 Android 平板横屏的多视窗原生看盘浏览器，支持 1:1:1 均分 3 窗口、一键全屏最大化、动态等比拉伸、Activity configChanges 防重载 WebSocket 保活，提供完整 Kotlin + Jetpack Compose 编译工程。",
+  "description": "面向 Android 平板与桌面端的多视窗看盘浏览器与 TradingView 油猴增强插件中心，支持标签栏三图标一键向多窗口触发隐藏、磁力与翻转K线图快捷键，内置窗口激活后事件派发调度与在线测试工作台。",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

@@ -3,7 +3,6 @@ package com.trading.multiview.viewmodel
 import android.content.Context
 import androidx.lifecycle.ViewModel
 import com.trading.multiview.webview.PersistentWebViewPool
-import com.trading.multiview.webview.TradingViewSessionManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -99,10 +98,7 @@ data class MultiViewUiState(
     val activeGroupId: String = "preset_1",
     val globalZoomPercent: Int = 100,
     val isGlobalUrlCollapsed: Boolean = true,
-    val fixedPixelWidth: Int = 1280, // 固定像素桌面视口基准 (默认 1280px 标准 PC)
-    val isTvLoggedIn: Boolean = false, // 是否检测到 TradingView 已登录态
-    val hasPublicSessionBackup: Boolean = false, // 是否在公共 Documents 目录检测到持久凭据备份
-    val sessionBackupPath: String? = null // 公共持久备份文件的实际物理路径
+    val fixedPixelWidth: Int = 1280 // 固定像素桌面视口基准 (默认 1280px 标准 PC)
 ) {
     // 获取当前活跃且未隐藏的窗口列表
     val visibleWindows: List<WindowState>
@@ -779,43 +775,5 @@ class TradingViewModel : ViewModel() {
                 }
             )
         }
-    }
-
-    /**
-     * 刷新 TradingView 会话凭证状态与公共存储备份状态
-     */
-    fun refreshSessionStatus(context: Context) {
-        val loggedIn = TradingViewSessionManager.isLoggedIn()
-        val hasBackup = TradingViewSessionManager.hasPublicBackup(context)
-        val path = TradingViewSessionManager.getPublicBackupPath(context)
-        _uiState.update { state ->
-            state.copy(
-                isTvLoggedIn = loggedIn,
-                hasPublicSessionBackup = hasBackup,
-                sessionBackupPath = path
-            )
-        }
-    }
-
-    /**
-     * 手动/自动从公共目录导入鉴权凭据，并重载所有图表使登录态生效
-     * @return 成功注入的凭据数量
-     */
-    fun restoreSessionFromPublicDir(context: Context): Int {
-        val count = TradingViewSessionManager.restoreSession(context)
-        if (count > 0) {
-            reloadAll()
-            refreshSessionStatus(context)
-        }
-        return count
-    }
-
-    /**
-     * 手动将当前登录态备份保存至公共 Documents 目录
-     */
-    fun backupCurrentSession(context: Context): Boolean {
-        val success = TradingViewSessionManager.backupSession(context)
-        refreshSessionStatus(context)
-        return success
     }
 }

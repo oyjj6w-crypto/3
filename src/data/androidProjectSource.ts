@@ -4,7 +4,7 @@ export const ANDROID_PROJECT_FILES: AndroidProjectFile[] = [
   {
     path: "app/src/main/AndroidManifest.xml",
     language: "xml",
-    description: "核心配置：声明存储权限与 configChanges 防止屏幕旋转与尺寸变化导致 Activity 重建与 WebView 重载",
+    description: "核心配置：声明 configChanges 防止屏幕旋转与尺寸变化导致 Activity 重建与 WebView 重载",
     content: `<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
@@ -13,11 +13,6 @@ export const ANDROID_PROJECT_FILES: AndroidProjectFile[] = [
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
-
-    <!-- 存储权限：支持从公共 Documents 目录持久化保存与恢复 TradingView 会话 Cookie 凭据 (跨重装免登录) -->
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" tools:ignore="ScopedStorage" />
-    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" tools:ignore="ScopedStorage" />
 
     <application
         android:allowBackup="true"
@@ -30,7 +25,6 @@ export const ANDROID_PROJECT_FILES: AndroidProjectFile[] = [
         android:theme="@style/Theme.TradingMultiView"
         android:hardwareAccelerated="true"
         android:usesCleartextTraffic="true"
-        android:requestLegacyExternalStorage="true"
         tools:targetApi="34">
 
         <!-- 
@@ -140,340 +134,9 @@ class MainActivity : ComponentActivity() {
 }`
   },
   {
-    path: "app/src/main/java/com/trading/multiview/webview/TradingViewSessionManager.kt",
-    language: "kotlin",
-    description: "TradingView 凭据跨重装自动导入引擎：多目录探测 Documents/Download、双重持久化与静默注水 CookieManager",
-    content: `package com.trading.multiview.webview
-
-import android.content.Context
-import android.os.Environment
-import android.util.Log
-import android.webkit.CookieManager
-import org.json.JSONObject
-import java.io.File
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
-
-/**
- * TradingView 会话凭证管理与跨重装持久化引擎
- * 
- * 核心设计目标：
- * 1. 解决 Android 卸载重装后应用内部私有沙盒 (/data/data/包名/) 被全量抹除导致 TradingView 登录态丢失的问题
- * 2. 自动在外部公共文档存储目录 (Documents/TradingMultiView/tv_session.json 以及 Download 镜像备份) 持久化登录凭证 (sessionid, sessionid_sign, device_t 等)
- * 3. 在 App 冷启动或重新安装首次打开时，优先且自动静默探测公共目录，将凭据自动注入系统的 CookieManager 并持久化刷盘 (Zero-Touch 自动恢复)
- * 4. 彻底解决用户需要画图与运行个人自定义 PineScript 脚本时的登录态持续保持问题
- */
-object TradingViewSessionManager {
-
-    private const val TAG = "TVSessionManager"
-    private const val TRADINGVIEW_DOMAIN = "https://www.tradingview.com"
-    private const val TRADINGVIEW_COOKIE_DOMAIN = ".tradingview.com"
-    private const val TRADINGVIEW_WIDGET_DOMAIN = "https://s.tradingview.com"
-    private const val PREFS_NAME = "trading_session_prefs"
-    private const val KEY_CACHED_COOKIE = "cached_tv_cookies"
-    private const val BACKUP_DIR_NAME = "TradingMultiView"
-    private const val BACKUP_FILE_NAME = "tv_session.json"
-
-    /**
-     * 获取所有候选的持久化外部存储文件路径 (按探测优先级排序)
-     * 这些目录在应用被卸载或升级时均不会被系统删除
-     */
-    private fun getCandidateBackupFiles(context: Context): List<File> {
-        val files = mutableListOf<File>()
-
-        try {
-            // 1. 标准公共 Documents 目录
-            val docDir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS), BACKUP_DIR_NAME)
-            files.add(File(docDir, BACKUP_FILE_NAME))
-        } catch (e: Exception) {
-            Log.w(TAG, "Error resolving Documents candidate: \${e.message}")
-        }
-
-        try {
-            // 2. 标准公共 Download 目录镜像
-            val dlDir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), BACKUP_DIR_NAME)
-            files.add(File(dlDir, BACKUP_FILE_NAME))
-        } catch (e: Exception) {
-            Log.w(TAG, "Error resolving Download candidate: \${e.message}")
-        }
-
-        // 3. 常见绝对物理挂载路径 (/storage/emulated/0/Documents)
-        files.add(File("/storage/emulated/0/Documents/$BACKUP_DIR_NAME", BACKUP_FILE_NAME))
-        files.add(File("/sdcard/Documents/$BACKUP_DIR_NAME", BACKUP_FILE_NAME))
-        files.add(File("/sdcard/Download/$BACKUP_DIR_NAME", BACKUP_FILE_NAME))
-
-        // 4. 应用外部专属持久目录 (卸载会保留或随系统备份)
-        try {
-            val appExtDoc = context.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS)
-            if (appExtDoc != null) {
-                files.add(File(appExtDoc, BACKUP_FILE_NAME))
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Error resolving app external candidate: \${e.message}")
-        }
-
-        return files
-    }
-
-    /**
-     * 检查外部公共持久目录中是否存在有效的备份凭据文件
-     */
-    fun hasPublicBackup(context: Context): Boolean {
-        return getCandidateBackupFiles(context).any { it.exists() && it.canRead() && it.length() > 0 }
-    }
-
-    /**
-     * 获取已存在的外部持久备份文件的绝对路径
-     */
-    fun getPublicBackupPath(context: Context): String? {
-        val found = getCandidateBackupFiles(context).firstOrNull { it.exists() && it.canRead() && it.length() > 0 }
-        return found?.absolutePath
-    }
-
-    /**
-     * 获取当前系统 CookieManager 中 TradingView 的全部 Cookie 字符串
-     */
-    fun getCurrentCookies(): String? {
-        return try {
-            val cookieManager = CookieManager.getInstance()
-            cookieManager.getCookie(TRADINGVIEW_DOMAIN)
-        } catch (e: Exception) {
-            Log.e(TAG, "Error getting current cookies", e)
-            null
-        }
-    }
-
-    /**
-     * 检查当前是否具备有效的 TradingView 登录态 (通过探测核心 sessionid 令牌)
-     */
-    fun isLoggedIn(): Boolean {
-        val cookies = getCurrentCookies() ?: return false
-        return cookies.contains("sessionid=") && !cookies.contains("sessionid=\\"\\"")
-    }
-
-    /**
-     * 自动/手动备份当前 TradingView 登录凭证：
-     * 1. 结构化封装并写入公共 Documents 目录 (Documents/TradingMultiView/tv_session.json)
-     * 2. 同步镜像写入 Download 目录，双重保障防止个别系统清理工具误删
-     * 3. 写入 SharedPreferences 供 Android 系统级 Auto Backup 云端迁移
-     */
-    fun backupSession(context: Context): Boolean {
-        val cookies = getCurrentCookies()
-        if (cookies.isNullOrBlank() || !cookies.contains("sessionid=")) {
-            Log.d(TAG, "No valid TradingView session to backup")
-            return false
-        }
-
-        try {
-            val nowStr = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
-
-            // 构造结构化 JSON
-            val json = JSONObject().apply {
-                put("app", "TradingMultiView")
-                put("updated_at", nowStr)
-                put("domain", TRADINGVIEW_COOKIE_DOMAIN)
-                put("raw_cookies", cookies)
-                put("has_sessionid", true)
-            }
-            val jsonString = json.toString(2)
-
-            // 1. 保存到内部 SharedPreferences (供系统备份机制同步)
-            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            prefs.edit().putString(KEY_CACHED_COOKIE, cookies).apply()
-
-            var writeCount = 0
-
-            // 2. 写入公共 Documents 目录 (卸载重装依然完好保留)
-            try {
-                val docDir = File(
-                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS),
-                    BACKUP_DIR_NAME
-                )
-                if (!docDir.exists()) {
-                    docDir.mkdirs()
-                }
-                val docFile = File(docDir, BACKUP_FILE_NAME)
-                docFile.writeText(jsonString, Charsets.UTF_8)
-                writeCount++
-                Log.i(TAG, "Successfully backed up session to Documents: \${docFile.absolutePath}")
-            } catch (e: Exception) {
-                Log.w(TAG, "Writing to Documents failed, will try fallback dirs: \${e.message}")
-            }
-
-            // 3. 镜像写入公共 Download 目录 (作为双备份)
-            try {
-                val dlDir = File(
-                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
-                    BACKUP_DIR_NAME
-                )
-                if (!dlDir.exists()) {
-                    dlDir.mkdirs()
-                }
-                val dlFile = File(dlDir, BACKUP_FILE_NAME)
-                dlFile.writeText(jsonString, Charsets.UTF_8)
-                writeCount++
-            } catch (e: Exception) {
-                Log.w(TAG, "Writing to Download failed: \${e.message}")
-            }
-
-            // 4. 写入 App 外部专属文档目录
-            try {
-                val appExtDir = context.getExternalFilesDir(Environment.DIRECTORY_DOCUMENTS)
-                if (appExtDir != null) {
-                    val appExtFile = File(appExtDir, BACKUP_FILE_NAME)
-                    appExtFile.writeText(jsonString, Charsets.UTF_8)
-                    writeCount++
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "Writing to app external files failed: \${e.message}")
-            }
-
-            return writeCount > 0
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to backup session", e)
-            return false
-        }
-    }
-
-    /**
-     * 核心跨重装恢复方法：
-     * 自动从公共外部存储或备份中导入鉴权凭据，并注入系统的 CookieManager
-     * 
-     * @return 成功注入的 Cookie 数量 (大于 0 代表成功恢复)
-     */
-    fun restoreSession(context: Context): Int {
-        var cookiesToRestore: String? = null
-        var sourceDescription: String = "none"
-
-        // 1. 优先遍历所有公共外部候选文件 (解决卸载重装问题)
-        val candidates = getCandidateBackupFiles(context)
-        for (file in candidates) {
-            try {
-                if (file.exists() && file.canRead() && file.length() > 0) {
-                    val content = file.readText(Charsets.UTF_8).trim()
-                    val parsedCookies = parseCookiesFromContent(content)
-                    if (!parsedCookies.isNullOrBlank() && parsedCookies.contains("sessionid=")) {
-                        cookiesToRestore = parsedCookies
-                        sourceDescription = file.absolutePath
-                        Log.i(TAG, "Found valid backup in external file: \${file.absolutePath}")
-                        break
-                    }
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "Could not read candidate file \${file.absolutePath}: \${e.message}")
-            }
-        }
-
-        // 2. 如果公共文件未探测到，尝试从 SharedPreferences 中读取 (覆盖系统还原场景)
-        if (cookiesToRestore.isNullOrBlank()) {
-            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            val prefCookie = prefs.getString(KEY_CACHED_COOKIE, null)
-            if (!prefCookie.isNullOrBlank() && prefCookie.contains("sessionid=")) {
-                cookiesToRestore = prefCookie
-                sourceDescription = "SharedPreferences"
-            }
-        }
-
-        // 3. 执行系统 Cookie 引擎注入
-        if (!cookiesToRestore.isNullOrBlank()) {
-            val injectedCount = injectCookies(cookiesToRestore)
-            Log.i(TAG, "Successfully restored session from [$sourceDescription], injected $injectedCount cookies")
-            return injectedCount
-        }
-
-        Log.d(TAG, "No valid TradingView session found to restore")
-        return 0
-    }
-
-    /**
-     * 解析文本内容：兼容结构化 JSON 格式与纯原始 Cookie 格式
-     */
-    private fun parseCookiesFromContent(content: String): String? {
-        return try {
-            if (content.startsWith("{") && content.endsWith("}")) {
-                val json = JSONObject(content)
-                if (json.has("raw_cookies")) {
-                    json.getString("raw_cookies")
-                } else if (json.has("cookies")) {
-                    json.getString("cookies")
-                } else {
-                    null
-                }
-            } else {
-                content
-            }
-        } catch (e: Exception) {
-            content
-        }
-    }
-
-    /**
-     * 将格式化的 Cookie 字符串灌入 CookieManager 并同步至全部 TradingView 关联域名
-     */
-    fun injectCookies(cookieString: String): Int {
-        return try {
-            val cookieManager = CookieManager.getInstance()
-            cookieManager.setAcceptCookie(true)
-
-            // 拆分单项 cookie 并分别注入
-            val items = cookieString.split(";")
-            var successCount = 0
-
-            for (item in items) {
-                val trimmed = item.trim()
-                if (trimmed.isNotEmpty()) {
-                    cookieManager.setCookie(TRADINGVIEW_DOMAIN, trimmed)
-                    cookieManager.setCookie(TRADINGVIEW_COOKIE_DOMAIN, trimmed)
-                    cookieManager.setCookie(TRADINGVIEW_WIDGET_DOMAIN, trimmed)
-                    successCount++
-                }
-            }
-
-            cookieManager.flush()
-            Log.i(TAG, "Injected $successCount cookies into CookieManager successfully")
-            successCount
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to inject cookies", e)
-            0
-        }
-    }
-
-    /**
-     * 手动清除登录会话 (退出登录)
-     */
-    fun clearSession(context: Context) {
-        try {
-            // 清理外部候选目录下的备份文件
-            val candidates = getCandidateBackupFiles(context)
-            for (file in candidates) {
-                if (file.exists()) {
-                    file.delete()
-                }
-            }
-
-            // 清理 SharedPreferences
-            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                .edit()
-                .clear()
-                .apply()
-
-            // 清除 Cookie
-            val cookieManager = CookieManager.getInstance()
-            cookieManager.removeSessionCookies(null)
-            cookieManager.flush()
-            Log.i(TAG, "Cleared TradingView session successfully")
-        } catch (e: Exception) {
-            Log.e(TAG, "Error clearing session", e)
-        }
-    }
-}
-`
-  },
-  {
     path: "app/src/main/java/com/trading/multiview/webview/PersistentWebViewPool.kt",
     language: "kotlin",
-    description: "持久化 WebView 单例池：深度优化 WebSettings、固定像素视口注入 (960px~1920px)、实时 URL 与自动登录备份",
+    description: "持久化 WebView 单例池：深度优化 WebSettings、固定像素视口注入 (960px~1920px)、实时 URL 持久化",
     content: `package com.trading.multiview.webview
 
 import android.annotation.SuppressLint
@@ -757,13 +420,6 @@ object PersistentWebViewPool {
         this.appContext = appCtx
         if (isInitialized) return
         
-        // 核心增强：在构建 WebView 前，先执行跨重装静默恢复 TradingView 登录态
-        try {
-            TradingViewSessionManager.restoreSession(appCtx)
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-
         // 为 3 个视窗分别创建专属 WebView 实例
         listOf(1, 2, 3).forEach { windowId ->
             val webView = createConfiguredWebView(appCtx, windowId)
@@ -819,16 +475,6 @@ object PersistentWebViewPool {
             // 默认设置 initialScale 为 0，启用 Android WebView 默认 Overview 自适应缩放
             setInitialScale(0)
 
-            // 开启并放行跨域 Third-Party Cookie (TradingView 嵌入与跨域认证必备)
-            try {
-                CookieManager.getInstance().apply {
-                    setAcceptCookie(true)
-                    setAcceptThirdPartyCookies(this@apply, true)
-                }
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-
             var lastReportedUrl = ""
             webViewClient = object : WebViewClient() {
                 override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
@@ -850,17 +496,6 @@ object PersistentWebViewPool {
                         lastReportedUrl = url
                         saveWindowUrl(windowId, url, view?.title ?: "")
                         onUrlChanged?.invoke(windowId, url, view?.title ?: "")
-                    }
-                    // 核心增强：当检测到 TradingView 页面加载完毕且已处于登录状态，自动异步备份鉴权凭证
-                    if (url != null && url.contains("tradingview.com")) {
-                        try {
-                            val ctx = view?.context
-                            if (ctx != null && TradingViewSessionManager.isLoggedIn()) {
-                                TradingViewSessionManager.backupSession(ctx)
-                            }
-                        } catch (e: Exception) {
-                            e.printStackTrace()
-                        }
                     }
                 }
 
@@ -1018,131 +653,6 @@ object PersistentWebViewPool {
         return true
     }
 
-    // =========================================================================
-    // TradingView Session 登录状态跨重装持久化与导入/导出引擎
-    // =========================================================================
-
-    private const val SESSION_BACKUP_FILE_NAME = "tv_session_backup.json"
-
-    /**
-     * 提取当前 TradingView 的所有 Cookie（包含 sessionid, device_t 等登录核心 Token）
-     */
-    fun getTradingViewCookies(): String {
-        val cookieManager = CookieManager.getInstance()
-        return cookieManager.getCookie("https://www.tradingview.com") ?: ""
-    }
-
-    /**
-     * 判断当前是否已处于 TradingView 登录状态
-     */
-    fun isTradingViewLoggedIn(): Boolean {
-        val cookies = getTradingViewCookies()
-        return cookies.contains("sessionid=") && !cookies.contains("sessionid=\\"\\"")
-    }
-
-    /**
-     * 自动备份 TradingView 登录 Cookie 至应用私有目录及公共备份目录（跨重装不丢失）
-     */
-    fun backupTradingViewSession(context: Context? = null): Boolean {
-        val ctx = context ?: appContext ?: return false
-        val cookies = getTradingViewCookies()
-        if (cookies.isBlank() || !cookies.contains("sessionid=")) {
-            return false // 未登录或无有效 sessionid，不覆盖有效备份
-        }
-        return try {
-            // 1. 保存在 SharedPreferences (支持 Android 系统云备份)
-            ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                .edit()
-                .putString("tradingview_session_cookie", cookies)
-                .putLong("tradingview_session_backup_time", System.currentTimeMillis())
-                .apply()
-
-            // 2. 保存在外部公共持久化目录 (卸载重装不会被 Android 系统自动清除)
-            val externalDirs = listOfNotNull(
-                android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOCUMENTS)?.let {
-                    java.io.File(it, "TradingMultiView")
-                },
-                android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)?.let {
-                    java.io.File(it, "TradingMultiView")
-                }
-            )
-
-            for (dir in externalDirs) {
-                try {
-                    if (!dir.exists()) dir.mkdirs()
-                    val file = java.io.File(dir, SESSION_BACKUP_FILE_NAME)
-                    file.writeText(cookies, Charsets.UTF_8)
-                } catch (_: Exception) {}
-            }
-            true
-        } catch (e: Exception) {
-            e.printStackTrace()
-            false
-        }
-    }
-
-    /**
-     * 恢复 TradingView 登录 Session 到系统的 CookieManager
-     */
-    fun restoreTradingViewSession(context: Context? = null, customCookies: String? = null): Boolean {
-        val ctx = context ?: appContext ?: return false
-        try {
-            var targetCookies = customCookies?.trim()
-
-            // 1. 如果未指定自定义凭据，优先从外部公共文件读取（重装后主要恢复源）
-            if (targetCookies.isNullOrBlank()) {
-                val candidateFiles = listOfNotNull(
-                    android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOCUMENTS)?.let {
-                        java.io.File(it, "TradingMultiView/$SESSION_BACKUP_FILE_NAME")
-                    },
-                    android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)?.let {
-                        java.io.File(it, "TradingMultiView/$SESSION_BACKUP_FILE_NAME")
-                    }
-                )
-                for (file in candidateFiles) {
-                    if (file.exists() && file.canRead()) {
-                        val content = file.readText(Charsets.UTF_8).trim()
-                        if (content.contains("sessionid=")) {
-                            targetCookies = content
-                            break
-                        }
-                    }
-                }
-            }
-
-            // 2. 若外部文件无记录，尝试从 SharedPreferences 中恢复
-            if (targetCookies.isNullOrBlank()) {
-                val prefs = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                val saved = prefs.getString("tradingview_session_cookie", null)
-                if (!saved.isNullOrBlank() && saved.contains("sessionid=")) {
-                    targetCookies = saved
-                }
-            }
-
-            if (targetCookies.isNullOrBlank() || !targetCookies.contains("sessionid=")) {
-                return false
-            }
-
-            // 3. 将 Cookie 注入系统的 CookieManager
-            val cookieManager = CookieManager.getInstance()
-            cookieManager.setAcceptCookie(true)
-            val cookiePairs = targetCookies.split(";")
-            for (pair in cookiePairs) {
-                val trimmed = pair.trim()
-                if (trimmed.isNotEmpty()) {
-                    cookieManager.setCookie("https://www.tradingview.com", trimmed)
-                    cookieManager.setCookie(".tradingview.com", trimmed)
-                    cookieManager.setCookie("https://s.tradingview.com", trimmed)
-                }
-            }
-            cookieManager.flush()
-            return true
-        } catch (e: Exception) {
-            e.printStackTrace()
-            return false
-        }
-    }
-
     fun destroyAll() {
         webViewMap.forEach { (_, webView) ->
             (webView.parent as? ViewGroup)?.removeView(webView)
@@ -1158,13 +668,12 @@ object PersistentWebViewPool {
   {
     path: "app/src/main/java/com/trading/multiview/viewmodel/TradingViewModel.kt",
     language: "kotlin",
-    description: "ViewModel 状态引擎：支持窗口平分(1:1:1/50%/100%)、全量分组持久化、视窗真实网址持久化、会话状态观测",
+    description: "ViewModel 状态引擎：支持窗口平分(1:1:1/50%/100%)、全量分组持久化、视窗真实网址持久化",
     content: `package com.trading.multiview.viewmodel
 
 import android.content.Context
 import androidx.lifecycle.ViewModel
 import com.trading.multiview.webview.PersistentWebViewPool
-import com.trading.multiview.webview.TradingViewSessionManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -1260,10 +769,7 @@ data class MultiViewUiState(
     val activeGroupId: String = "preset_1",
     val globalZoomPercent: Int = 100,
     val isGlobalUrlCollapsed: Boolean = true,
-    val fixedPixelWidth: Int = 1280, // 固定像素桌面视口基准 (默认 1280px 标准 PC)
-    val isTvLoggedIn: Boolean = false, // 是否检测到 TradingView 已登录态
-    val hasPublicSessionBackup: Boolean = false, // 是否在公共 Documents 目录检测到持久凭据备份
-    val sessionBackupPath: String? = null // 公共持久备份文件的实际物理路径
+    val fixedPixelWidth: Int = 1280 // 固定像素桌面视口基准 (默认 1280px 标准 PC)
 ) {
     // 获取当前活跃且未隐藏的窗口列表
     val visibleWindows: List<WindowState>
@@ -1941,50 +1447,12 @@ class TradingViewModel : ViewModel() {
             )
         }
     }
-
-    /**
-     * 刷新 TradingView 会话凭证状态与公共存储备份状态
-     */
-    fun refreshSessionStatus(context: Context) {
-        val loggedIn = TradingViewSessionManager.isLoggedIn()
-        val hasBackup = TradingViewSessionManager.hasPublicBackup(context)
-        val path = TradingViewSessionManager.getPublicBackupPath(context)
-        _uiState.update { state ->
-            state.copy(
-                isTvLoggedIn = loggedIn,
-                hasPublicSessionBackup = hasBackup,
-                sessionBackupPath = path
-            )
-        }
-    }
-
-    /**
-     * 手动/自动从公共目录导入鉴权凭据，并重载所有图表使登录态生效
-     * @return 成功注入的凭据数量
-     */
-    fun restoreSessionFromPublicDir(context: Context): Int {
-        val count = TradingViewSessionManager.restoreSession(context)
-        if (count > 0) {
-            reloadAll()
-            refreshSessionStatus(context)
-        }
-        return count
-    }
-
-    /**
-     * 手动将当前登录态备份保存至公共 Documents 目录
-     */
-    fun backupCurrentSession(context: Context): Boolean {
-        val success = TradingViewSessionManager.backupSession(context)
-        refreshSessionStatus(context)
-        return success
-    }
 }`
   },
   {
     path: "app/src/main/java/com/trading/multiview/ui/TradingMultiViewScreen.kt",
     language: "kotlin",
-    description: "Compose 响应式主界面：支持视窗均分/最大化、快捷顶栏、分辨率循环切换、自定义分组与凭据管理条",
+    description: "Compose 响应式主界面：支持视窗均分/最大化、快捷顶栏、分辨率循环切换、自定义分组管理",
     content: `package com.trading.multiview.ui
 
 import android.content.Context
@@ -2036,7 +1504,6 @@ import com.trading.multiview.webview.PersistentWebViewPool
 import android.app.Activity
 import android.content.pm.ActivityInfo
 import android.content.ContextWrapper
-import android.widget.Toast
 
 private fun Context.findActivity(): Activity? {
     var currentContext = this
@@ -2059,10 +1526,9 @@ fun TradingMultiViewScreen(
     val focusManager = LocalFocusManager.current
     var showSaveDialog by remember { mutableStateOf(false) }
 
-    // 初始化时加载本地存储的自定义分组与探测凭据状态
+    // 初始化时加载本地存储的自定义分组
     LaunchedEffect(Unit) {
         viewModel.loadSavedGroupsFromPrefs(context)
-        viewModel.refreshSessionStatus(context)
     }
 
     Column(
@@ -2564,124 +2030,6 @@ fun TradingMultiViewScreen(
                             color = Color(0xFF64748B),
                             fontSize = 9.sp
                         )
-                    }
-
-                    // 3. TradingView 登录态持久化与跨重装免登录管理条 (Session & Cookie 持久化)
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(4.dp))
-                            .background(Color(0xFF0A101D))
-                            .border(1.dp, Color(0xFF1E293B), RoundedCornerShape(4.dp))
-                            .padding(horizontal = 8.dp, vertical = 5.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.VpnKey,
-                                    contentDescription = null,
-                                    tint = Color(0xFFF59E0B),
-                                    modifier = Modifier.size(13.dp)
-                                )
-                                Text(
-                                    text = "TV凭据持久化:",
-                                    color = Color(0xFF94A3B8),
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                            }
-
-                            // 登录状态徽章
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(4.dp))
-                                    .background(if (uiState.isTvLoggedIn) Color(0xFF064E3B) else Color(0xFF1E293B))
-                                    .border(1.dp, if (uiState.isTvLoggedIn) Color(0xFF059669) else Color(0xFF334155), RoundedCornerShape(4.dp))
-                                    .padding(horizontal = 6.dp, vertical = 2.dp)
-                            ) {
-                                Text(
-                                    text = if (uiState.isTvLoggedIn) "已登录 (画图/PineScript可用)" else "未检测到登录",
-                                    color = if (uiState.isTvLoggedIn) Color(0xFF34D399) else Color(0xFF94A3B8),
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Medium
-                                )
-                            }
-
-                            // 外部持久存储备份状态徽章
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(4.dp))
-                                    .background(if (uiState.hasPublicSessionBackup) Color(0xFF0C4A6E) else Color(0xFF1E293B))
-                                    .border(1.dp, if (uiState.hasPublicSessionBackup) Color(0xFF0284C7) else Color(0xFF334155), RoundedCornerShape(4.dp))
-                                    .padding(horizontal = 6.dp, vertical = 2.dp)
-                            ) {
-                                Text(
-                                    text = if (uiState.hasPublicSessionBackup) "公共目录已备份 (重装免登录)" else "未备份至公共目录",
-                                    color = if (uiState.hasPublicSessionBackup) Color(0xFF38BDF8) else Color(0xFF64748B),
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Medium
-                                )
-                            }
-                        }
-
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            // 从公共目录手动重新导入凭据
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(4.dp))
-                                    .background(Color(0xFF0284C7))
-                                    .clickable {
-                                        val count = viewModel.restoreSessionFromPublicDir(context)
-                                        if (count > 0) {
-                                            Toast.makeText(context, "成功从公共目录导入 $count 项凭据，页面已刷新！", Toast.LENGTH_SHORT).show()
-                                        } else {
-                                            Toast.makeText(context, "未在公共目录探测到凭据备份，请先登录并备份", Toast.LENGTH_SHORT).show()
-                                        }
-                                    }
-                                    .padding(horizontal = 8.dp, vertical = 3.dp)
-                            ) {
-                                Text(
-                                    text = "从公共目录导入凭据",
-                                    color = Color.White,
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-
-                            // 立即备份当前登录态
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(4.dp))
-                                    .background(Color(0xFF059669))
-                                    .clickable {
-                                        val ok = viewModel.backupCurrentSession(context)
-                                        if (ok) {
-                                            Toast.makeText(context, "登录态已备份至 Documents/TradingMultiView/tv_session.json (重装免登录)", Toast.LENGTH_LONG).show()
-                                        } else {
-                                            Toast.makeText(context, "未检测到有效登录态，请先在任一视窗登录 TradingView", Toast.LENGTH_SHORT).show()
-                                        }
-                                    }
-                                    .padding(horizontal = 8.dp, vertical = 3.dp)
-                            ) {
-                                Text(
-                                    text = "备份当前登录凭据",
-                                    color = Color.White,
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                        }
                     }
                 }
             }
@@ -3450,20 +2798,14 @@ exec "$JAVACMD" "$@"
   {
     path: "app/src/main/res/xml/data_extraction_rules.xml",
     language: "xml",
-    description: "Android 12+ 数据备份与提取安全策略配置（包含 Cookie 与数据库持久备份）",
+    description: "Android 12+ 数据备份与提取安全策略配置",
     content: `<?xml version="1.0" encoding="utf-8"?>
 <data-extraction-rules>
     <cloud-backup>
         <include domain="sharedpref" path="."/>
-        <include domain="database" path="."/>
-        <include domain="root" path="app_webview/Cookies"/>
-        <include domain="root" path="app_webview/Default/Cookies"/>
     </cloud-backup>
     <device-transfer>
         <include domain="sharedpref" path="."/>
-        <include domain="database" path="."/>
-        <include domain="root" path="app_webview/Cookies"/>
-        <include domain="root" path="app_webview/Default/Cookies"/>
     </device-transfer>
 </data-extraction-rules>
 `
@@ -3471,13 +2813,10 @@ exec "$JAVACMD" "$@"
   {
     path: "app/src/main/res/xml/backup_rules.xml",
     language: "xml",
-    description: "系统应用备份过滤规则配置（包含 Cookie 与数据库持久备份）",
+    description: "系统应用备份过滤规则配置",
     content: `<?xml version="1.0" encoding="utf-8"?>
 <full-backup-content>
     <include domain="sharedpref" path="."/>
-    <include domain="database" path="."/>
-    <include domain="root" path="app_webview/Cookies"/>
-    <include domain="root" path="app_webview/Default/Cookies"/>
 </full-backup-content>
 `
   },
@@ -3623,11 +2962,6 @@ git push origin v1.0.0
      \`\`\`
    - 配合 \`PersistentWebViewPool\` 单例池机制，将 \`WebView\` 实例常驻内存，与 Compose 重组脱耦。
    - 窗口尺寸拉伸、隐藏/恢复、横竖屏旋转时，底层的 DOM Storage、WebGL Canvas 与 WebSocket 长连接**绝对不发生二次重载**，保证毫秒级看盘无缝衔接。
-3. **TradingView 登录态跨重装持久化与 PineScript 保护引擎**：
-   - 彻底解决 Android 卸载重装清空应用内部私有沙盒导致掉登录的问题。
-   - 自动在系统公共存储目录 \`Documents/TradingMultiView/tv_session.json\`（及 Download 镜像）持久化备份登录 Cookie（\`sessionid\`、\`device_t\` 等凭据）。
-   - 冷启动与重新安装首次打开时，在创建 WebView 实例前**优先自动从公共目录导入并注入系统的 CookieManager**，完全无需反复输入账号密码，无缝保留个人云端画线与自定义 PineScript 脚本。
-   - 展开式配置抽屉中提供实时状态徽章（已登录/未登录、公共目录备份状态），并支持一键「从公共目录导入凭据」与「备份当前登录凭据」。
 
 ---
 

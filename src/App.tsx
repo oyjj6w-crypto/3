@@ -36,6 +36,9 @@ import { WindowConfig, OrientationMode, WindowGroup } from './types';
 import { TradingWindow } from './components/TradingWindow';
 import { HiddenWindowsDock } from './components/HiddenWindowsDock';
 import { CodeExplorerModal } from './components/CodeExplorerModal';
+import { TradingViewSimulator } from './components/TradingViewSimulator';
+import { UserScriptModal } from './components/UserScriptModal';
+import { DEFAULT_SCRIPT_OPTIONS, ScriptOptions } from './utils/scriptGenerator';
 import { generateAndroidProjectZip, triggerDownload } from './utils/zipGenerator';
 import { PRESET_GROUPS, loadSavedGroups, saveCustomGroups } from './data/windowGroups';
 
@@ -107,6 +110,10 @@ function getInitialWindows(): WindowConfig[] {
 }
 
 export default function App() {
+  const [activeAppMode, setActiveAppMode] = useState<'tampermonkey' | 'browser'>('tampermonkey');
+  const [scriptOptions, setScriptOptions] = useState<ScriptOptions>(DEFAULT_SCRIPT_OPTIONS);
+  const [isScriptModalOpen, setIsScriptModalOpen] = useState<boolean>(false);
+
   const [windows, setWindows] = useState<WindowConfig[]>(getInitialWindows);
   const [orientation, setOrientation] = useState<OrientationMode>('landscape');
   const [showFrame, setShowFrame] = useState<boolean>(true);
@@ -433,128 +440,190 @@ export default function App() {
     <div className="flex flex-col h-screen w-screen bg-[#070b12] text-slate-100 select-none overflow-hidden font-sans">
       {/* ================= 顶层全局工具栏 (AI Studio Interactive Control Bar) ================= */}
       <header className="h-12 bg-[#0e1524] border-b border-slate-800 px-3 sm:px-5 flex items-center justify-between z-30 shrink-0">
-        {/* Left Brand & Spec Label */}
+        {/* Left Brand & Spec Label + Mode Switcher */}
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2">
-            <div className="w-7 h-7 rounded-md bg-sky-500/10 border border-sky-500/30 flex items-center justify-center text-sky-400">
-              <Tablet className="w-4 h-4" />
+            <div className="w-7 h-7 rounded-md bg-[#2962ff]/15 border border-[#2962ff]/40 flex items-center justify-center text-[#2962ff]">
+              <Sparkles className="w-4 h-4" />
             </div>
             <div>
               <div className="flex items-center gap-2">
                 <span className="font-bold text-xs sm:text-sm text-slate-100">
-                  Android 平板多视窗看盘浏览器
-                </span>
-                <span className="hidden md:inline px-2 py-0.5 rounded text-[10px] font-mono bg-sky-950 text-sky-400 border border-sky-800/60 font-semibold">
-                  Kotlin + Jetpack Compose
+                  TradingView 油猴增强 & 多视窗看盘
                 </span>
               </div>
             </div>
           </div>
-        </div>
 
-        {/* Center Live Ratio / Rebalancing Badge */}
-        <div className="hidden lg:flex items-center gap-2 px-3 py-1 rounded-full bg-slate-900 border border-slate-700/70 text-xs font-mono">
-          <Layers className="w-3.5 h-3.5 text-sky-400" />
-          <span className="text-slate-400">当前排布比例:</span>
-          <span className="text-emerald-400 font-bold">
-            {maximizedWindow
-              ? `视窗 ${maximizedWindow.id} 全屏 (100%)`
-              : visibleWindows.length === 3
-              ? '1 : 1 : 1 均分 (各 33.3%)'
-              : visibleWindows.length === 2
-              ? '50% : 50% 等比平分'
-              : '100% 独占满屏'}
-          </span>
-          <span className="text-slate-600">|</span>
-          <div className="flex items-center gap-1 text-slate-300">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-            <span>configChanges 零重载保活 ({sessionUptime}s)</span>
+          {/* Mode Switcher Tabs */}
+          <div className="flex items-center p-0.5 bg-slate-900 border border-slate-700/80 rounded-lg ml-2">
+            <button
+              type="button"
+              onClick={() => setActiveAppMode('tampermonkey')}
+              className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition-all ${
+                activeAppMode === 'tampermonkey'
+                  ? 'bg-[#2962ff] text-white shadow'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+              <span>油猴增强调试台</span>
+              <span className="text-[10px] bg-blue-900/60 text-blue-200 px-1.5 py-0.2 rounded font-mono hidden md:inline">
+                标签栏3图标·窗口物理激活
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveAppMode('browser')}
+              className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition-all ${
+                activeAppMode === 'browser'
+                  ? 'bg-slate-700 text-white shadow'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Tablet className="w-3.5 h-3.5" />
+              <span>多视窗看盘浏览器</span>
+            </button>
           </div>
         </div>
 
+        {/* Center Live Ratio / Status Badge */}
+        {activeAppMode === 'browser' ? (
+          <div className="hidden lg:flex items-center gap-2 px-3 py-1 rounded-full bg-slate-900 border border-slate-700/70 text-xs font-mono">
+            <Layers className="w-3.5 h-3.5 text-sky-400" />
+            <span className="text-slate-400">当前排布比例:</span>
+            <span className="text-emerald-400 font-bold">
+              {maximizedWindow
+                ? `视窗 ${maximizedWindow.id} 全屏 (100%)`
+                : visibleWindows.length === 3
+                ? '1 : 1 : 1 均分 (各 33.3%)'
+                : visibleWindows.length === 2
+                ? '50% : 50% 等比平分'
+                : '100% 独占满屏'}
+            </span>
+            <span className="text-slate-600">|</span>
+            <div className="flex items-center gap-1 text-slate-300">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+              <span>零重载保活 ({sessionUptime}s)</span>
+            </div>
+          </div>
+        ) : (
+          <div className="hidden xl:flex items-center gap-2 px-3 py-1 rounded-full bg-[#181d2a] border border-[#2a3449] text-xs font-mono">
+            <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+            <span className="text-gray-300">
+              分发时序: 模拟点击激活 ➔ 等待 {scriptOptions.activationDelay}ms ➔ 派发快捷键 ➔ 步进 {scriptOptions.stepDelay}ms
+            </span>
+          </div>
+        )}
+
         {/* Right Action Buttons */}
         <div className="flex items-center gap-2">
-          {/* Quick 1:1:1 Reset */}
-          <button
-            onClick={handleRestoreAll}
-            className="hidden sm:flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-slate-300 transition-colors"
-            title="一键恢复 1:1:1 默认均分 3 视窗"
-          >
-            <LayoutGrid className="w-3.5 h-3.5 text-emerald-400" />
-            <span>重置 1:1:1</span>
-          </button>
+          {activeAppMode === 'tampermonkey' ? (
+            <>
+              <button
+                type="button"
+                onClick={() => setIsScriptModalOpen(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#2962ff] hover:bg-[#1e53e5] text-white text-xs font-semibold shadow transition-all"
+              >
+                <Code2 className="w-4 h-4" />
+                <span>获取/复制代码 (.user.js)</span>
+              </button>
+            </>
+          ) : (
+            <>
+              {/* Quick 1:1:1 Reset */}
+              <button
+                onClick={handleRestoreAll}
+                className="hidden sm:flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-slate-300 transition-colors"
+                title="一键恢复 1:1:1 默认均分 3 视窗"
+              >
+                <LayoutGrid className="w-3.5 h-3.5 text-emerald-400" />
+                <span>重置 1:1:1</span>
+              </button>
 
-          {/* Orientation Rotate Toggle (To test configChanges resilience) */}
-          <button
-            onClick={() =>
-              setOrientation((prev) => (prev === 'landscape' ? 'portrait' : 'landscape'))
-            }
-            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-slate-300 transition-colors"
-            title="旋转平板屏幕（测试横屏与竖屏 configChanges 零重载）"
-          >
-            <RotateCw className="w-3.5 h-3.5 text-sky-400" />
-            <span className="hidden sm:inline">
-              {orientation === 'landscape' ? '横屏 (16:10)' : '竖屏'}
-            </span>
-          </button>
+              {/* Orientation Rotate Toggle */}
+              <button
+                onClick={() =>
+                  setOrientation((prev) => (prev === 'landscape' ? 'portrait' : 'landscape'))
+                }
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-slate-300 transition-colors"
+                title="旋转平板屏幕"
+              >
+                <RotateCw className="w-3.5 h-3.5 text-sky-400" />
+                <span className="hidden sm:inline">
+                  {orientation === 'landscape' ? '横屏 (16:10)' : '竖屏'}
+                </span>
+              </button>
 
-          {/* Toggle Tablet Chassis Frame */}
-          <button
-            onClick={() => setShowFrame((prev) => !prev)}
-            className={`hidden md:flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs transition-colors border ${
-              showFrame
-                ? 'bg-slate-800 border-slate-700 text-slate-200'
-                : 'bg-sky-950/60 border-sky-500/50 text-sky-300'
-            }`}
-            title="切换平板外壳机身与纯净满屏模式"
-          >
-            <Tablet className="w-3.5 h-3.5" />
-            <span>{showFrame ? '平板外壳' : '纯净全屏'}</span>
-          </button>
+              {/* Toggle Tablet Chassis Frame */}
+              <button
+                onClick={() => setShowFrame((prev) => !prev)}
+                className={`hidden md:flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs transition-colors border ${
+                  showFrame
+                    ? 'bg-slate-800 border-slate-700 text-slate-200'
+                    : 'bg-sky-950/60 border-sky-500/50 text-sky-300'
+                }`}
+                title="切换平板外壳机身与纯净满屏模式"
+              >
+                <Tablet className="w-3.5 h-3.5" />
+                <span>{showFrame ? '平板外壳' : '纯净全屏'}</span>
+              </button>
 
-          {/* GitHub Auto-Build CI/CD Button */}
-          <button
-            onClick={() => {
-              setModalInitialTab('github');
-              setIsCodeModalOpen(true);
-            }}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-semibold shadow-md shadow-emerald-950/60 transition-all cursor-pointer"
-            title="查看 Push 到 GitHub 自动编译工作流与 APK 下载指引"
-          >
-            <Github className="w-3.5 h-3.5" />
-            <span>GitHub 自动编译</span>
-            <span className="hidden lg:inline px-1 py-0.2 rounded bg-emerald-900/80 text-[9px] text-emerald-300 font-mono">
-              CI/CD
-            </span>
-          </button>
+              {/* GitHub Auto-Build CI/CD Button */}
+              <button
+                onClick={() => {
+                  setModalInitialTab('github');
+                  setIsCodeModalOpen(true);
+                }}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-semibold shadow-md shadow-emerald-950/60 transition-all cursor-pointer"
+                title="查看 Push 到 GitHub 自动编译工作流与 APK 下载指引"
+              >
+                <Github className="w-3.5 h-3.5" />
+                <span>GitHub 自动编译</span>
+                <span className="hidden lg:inline px-1 py-0.2 rounded bg-emerald-900/80 text-[9px] text-emerald-300 font-mono">
+                  CI/CD
+                </span>
+              </button>
 
-          {/* View Android Source Code Button */}
-          <button
-            onClick={() => {
-              setModalInitialTab('source');
-              setIsCodeModalOpen(true);
-            }}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold shadow-md shadow-sky-950/60 transition-all cursor-pointer"
-            title="查看完整 Kotlin + Compose Android 工程源码"
-          >
-            <Code2 className="w-4 h-4" />
-            <span>Android 原生工程源码</span>
-          </button>
+              {/* View Android Source Code Button */}
+              <button
+                onClick={() => {
+                  setModalInitialTab('source');
+                  setIsCodeModalOpen(true);
+                }}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold shadow-md shadow-sky-950/60 transition-all cursor-pointer"
+                title="查看完整 Kotlin + Compose Android 工程源码"
+              >
+                <Code2 className="w-4 h-4" />
+                <span>Android 原生工程源码</span>
+              </button>
 
-          {/* Quick ZIP Download */}
-          <button
-            onClick={handleQuickDownload}
-            disabled={isDownloading}
-            className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-white text-xs transition-colors cursor-pointer"
-            title="一键下载完整 Android Studio 工程 ZIP"
-          >
-            <Download className="w-4 h-4 text-emerald-400" />
-          </button>
+              {/* Quick ZIP Download */}
+              <button
+                onClick={handleQuickDownload}
+                disabled={isDownloading}
+                className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-white text-xs transition-colors cursor-pointer"
+                title="一键下载完整 Android Studio 工程 ZIP"
+              >
+                <Download className="w-4 h-4 text-emerald-400" />
+              </button>
+            </>
+          )}
         </div>
       </header>
 
-      {/* ================= 主看盘运行区 (Tablet Display Stage) ================= */}
-      <main className="flex-1 flex items-center justify-center p-2 sm:p-4 bg-[#070a10] overflow-hidden relative">
+      {/* ================= 主运行视窗区 ================= */}
+      {activeAppMode === 'tampermonkey' ? (
+        <div className="flex-1 min-h-0 overflow-hidden">
+          <TradingViewSimulator
+            scriptOptions={scriptOptions}
+            onOpenScriptModal={() => setIsScriptModalOpen(true)}
+          />
+        </div>
+      ) : (
+        <>
+          <main className="flex-1 flex items-center justify-center p-2 sm:p-4 bg-[#070a10] overflow-hidden relative">
         {/* Tablet Bezel Container */}
         <div
           id="android-tablet-chassis"
@@ -937,6 +1006,16 @@ export default function App() {
           </button>
         </div>
       </footer>
+      </>
+      )}
+
+      {/* UserScript Modal (Tampermonkey TradingView Script Generator) */}
+      <UserScriptModal
+        isOpen={isScriptModalOpen}
+        onClose={() => setIsScriptModalOpen(false)}
+        scriptOptions={scriptOptions}
+        onUpdateOptions={(newOpts) => setScriptOptions((prev) => ({ ...prev, ...newOpts }))}
+      />
 
       {/* Android Source Code & Project Inspector Modal */}
       <CodeExplorerModal

@@ -281,13 +281,6 @@ object PersistentWebViewPool {
         this.appContext = appCtx
         if (isInitialized) return
         
-        // 核心增强：在构建 WebView 前，先执行跨重装静默恢复 TradingView 登录态
-        try {
-            TradingViewSessionManager.restoreSession(appCtx)
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-
         // 为 3 个视窗分别创建专属 WebView 实例
         listOf(1, 2, 3).forEach { windowId ->
             val webView = createConfiguredWebView(appCtx, windowId)
@@ -343,16 +336,6 @@ object PersistentWebViewPool {
             // 默认设置 initialScale 为 0，启用 Android WebView 默认 Overview 自适应缩放
             setInitialScale(0)
 
-            // 开启并放行跨域 Third-Party Cookie (TradingView 嵌入与跨域认证必备)
-            try {
-                CookieManager.getInstance().apply {
-                    setAcceptCookie(true)
-                    setAcceptThirdPartyCookies(this@apply, true)
-                }
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-
             var lastReportedUrl = ""
             webViewClient = object : WebViewClient() {
                 override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
@@ -374,17 +357,6 @@ object PersistentWebViewPool {
                         lastReportedUrl = url
                         saveWindowUrl(windowId, url, view?.title ?: "")
                         onUrlChanged?.invoke(windowId, url, view?.title ?: "")
-                    }
-                    // 核心增强：当检测到 TradingView 页面加载完毕且已处于登录状态，自动异步备份鉴权凭证
-                    if (url != null && url.contains("tradingview.com")) {
-                        try {
-                            val ctx = view?.context
-                            if (ctx != null && TradingViewSessionManager.isLoggedIn()) {
-                                TradingViewSessionManager.backupSession(ctx)
-                            }
-                        } catch (e: Exception) {
-                            e.printStackTrace()
-                        }
                     }
                 }
 
@@ -540,131 +512,6 @@ object PersistentWebViewPool {
         appliedScaleMap.remove(windowId)
         webView.loadUrl(formatted)
         return true
-    }
-
-    // =========================================================================
-    // TradingView Session 登录状态跨重装持久化与导入/导出引擎
-    // =========================================================================
-
-    private const val SESSION_BACKUP_FILE_NAME = "tv_session_backup.json"
-
-    /**
-     * 提取当前 TradingView 的所有 Cookie（包含 sessionid, device_t 等登录核心 Token）
-     */
-    fun getTradingViewCookies(): String {
-        val cookieManager = CookieManager.getInstance()
-        return cookieManager.getCookie("https://www.tradingview.com") ?: ""
-    }
-
-    /**
-     * 判断当前是否已处于 TradingView 登录状态
-     */
-    fun isTradingViewLoggedIn(): Boolean {
-        val cookies = getTradingViewCookies()
-        return cookies.contains("sessionid=") && !cookies.contains("sessionid=\"\"")
-    }
-
-    /**
-     * 自动备份 TradingView 登录 Cookie 至应用私有目录及公共备份目录（跨重装不丢失）
-     */
-    fun backupTradingViewSession(context: Context? = null): Boolean {
-        val ctx = context ?: appContext ?: return false
-        val cookies = getTradingViewCookies()
-        if (cookies.isBlank() || !cookies.contains("sessionid=")) {
-            return false // 未登录或无有效 sessionid，不覆盖有效备份
-        }
-        return try {
-            // 1. 保存在 SharedPreferences (支持 Android 系统云备份)
-            ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                .edit()
-                .putString("tradingview_session_cookie", cookies)
-                .putLong("tradingview_session_backup_time", System.currentTimeMillis())
-                .apply()
-
-            // 2. 保存在外部公共持久化目录 (卸载重装不会被 Android 系统自动清除)
-            val externalDirs = listOfNotNull(
-                android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOCUMENTS)?.let {
-                    java.io.File(it, "TradingMultiView")
-                },
-                android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)?.let {
-                    java.io.File(it, "TradingMultiView")
-                }
-            )
-
-            for (dir in externalDirs) {
-                try {
-                    if (!dir.exists()) dir.mkdirs()
-                    val file = java.io.File(dir, SESSION_BACKUP_FILE_NAME)
-                    file.writeText(cookies, Charsets.UTF_8)
-                } catch (_: Exception) {}
-            }
-            true
-        } catch (e: Exception) {
-            e.printStackTrace()
-            false
-        }
-    }
-
-    /**
-     * 恢复 TradingView 登录 Session 到系统的 CookieManager
-     */
-    fun restoreTradingViewSession(context: Context? = null, customCookies: String? = null): Boolean {
-        val ctx = context ?: appContext ?: return false
-        try {
-            var targetCookies = customCookies?.trim()
-
-            // 1. 如果未指定自定义凭据，优先从外部公共文件读取（重装后主要恢复源）
-            if (targetCookies.isNullOrBlank()) {
-                val candidateFiles = listOfNotNull(
-                    android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOCUMENTS)?.let {
-                        java.io.File(it, "TradingMultiView/$SESSION_BACKUP_FILE_NAME")
-                    },
-                    android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)?.let {
-                        java.io.File(it, "TradingMultiView/$SESSION_BACKUP_FILE_NAME")
-                    }
-                )
-                for (file in candidateFiles) {
-                    if (file.exists() && file.canRead()) {
-                        val content = file.readText(Charsets.UTF_8).trim()
-                        if (content.contains("sessionid=")) {
-                            targetCookies = content
-                            break
-                        }
-                    }
-                }
-            }
-
-            // 2. 若外部文件无记录，尝试从 SharedPreferences 中恢复
-            if (targetCookies.isNullOrBlank()) {
-                val prefs = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                val saved = prefs.getString("tradingview_session_cookie", null)
-                if (!saved.isNullOrBlank() && saved.contains("sessionid=")) {
-                    targetCookies = saved
-                }
-            }
-
-            if (targetCookies.isNullOrBlank() || !targetCookies.contains("sessionid=")) {
-                return false
-            }
-
-            // 3. 将 Cookie 注入系统的 CookieManager
-            val cookieManager = CookieManager.getInstance()
-            cookieManager.setAcceptCookie(true)
-            val cookiePairs = targetCookies.split(";")
-            for (pair in cookiePairs) {
-                val trimmed = pair.trim()
-                if (trimmed.isNotEmpty()) {
-                    cookieManager.setCookie("https://www.tradingview.com", trimmed)
-                    cookieManager.setCookie(".tradingview.com", trimmed)
-                    cookieManager.setCookie("https://s.tradingview.com", trimmed)
-                }
-            }
-            cookieManager.flush()
-            return true
-        } catch (e: Exception) {
-            e.printStackTrace()
-            return false
-        }
     }
 
     fun destroyAll() {

@@ -2,14 +2,8 @@
 <data-extraction-rules>
     <cloud-backup>
         <include domain="sharedpref" path="."/>
-        <include domain="database" path="."/>
-        <include domain="root" path="app_webview/Cookies"/>
-        <include domain="root" path="app_webview/Default/Cookies"/>
     </cloud-backup>
     <device-transfer>
         <include domain="sharedpref" path="."/>
-        <include domain="database" path="."/>
-        <include domain="root" path="app_webview/Cookies"/>
-        <include domain="root" path="app_webview/Default/Cookies"/>
     </device-transfer>
 </data-extraction-rules>

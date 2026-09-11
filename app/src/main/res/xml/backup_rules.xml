@@ -1,7 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
 <full-backup-content>
     <include domain="sharedpref" path="."/>
-    <include domain="database" path="."/>
-    <include domain="root" path="app_webview/Cookies"/>
-    <include domain="root" path="app_webview/Default/Cookies"/>
 </full-backup-content>
