@@ -98,7 +98,8 @@ data class MultiViewUiState(
     val activeGroupId: String = "preset_1",
     val globalZoomPercent: Int = 100,
     val isGlobalUrlCollapsed: Boolean = true,
-    val fixedPixelWidth: Int = 1280 // 固定像素桌面视口基准 (默认 1280px 标准 PC)
+    val fixedPixelWidth: Int = 1280, // 固定像素桌面视口基准 (默认 1280px 标准 PC)
+    val isMagnetActive: Boolean = false // 磁力吸附切换状态
 ) {
     // 获取当前活跃且未隐藏的窗口列表
     val visibleWindows: List<WindowState>
@@ -774,6 +775,40 @@ class TradingViewModel : ViewModel() {
                     if (win.id == windowId) win.copy(title = title) else win
                 }
             )
+        }
+    }
+
+    /**
+     * 全部视窗同步：隐藏/显示画线 (Alt+H)
+     * 先模拟物理点击依次激活每个视窗，再派发快捷键
+     */
+    fun triggerHideDrawings(context: Context? = null) {
+        PersistentWebViewPool.dispatchTradingViewAction("hide")
+        context?.let {
+            android.widget.Toast.makeText(it, "已同步向全部窗口触发: 隐藏/显示画线 (Alt+H)", android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /**
+     * 全部视窗同步：磁力吸附切换 (Magnet / Ctrl)
+     */
+    fun triggerToggleMagnet(context: Context? = null) {
+        val nextActive = !_uiState.value.isMagnetActive
+        _uiState.update { it.copy(isMagnetActive = nextActive) }
+        PersistentWebViewPool.dispatchTradingViewAction("magnet")
+        context?.let {
+            val text = if (nextActive) "已向全部窗口开启磁力吸附" else "已向全部窗口关闭磁力吸附"
+            android.widget.Toast.makeText(it, text, android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /**
+     * 全部视窗同步：翻转K线图 (Alt+I)
+     */
+    fun triggerInvertChart(context: Context? = null) {
+        PersistentWebViewPool.dispatchTradingViewAction("invert")
+        context?.let {
+            android.widget.Toast.makeText(it, "已同步向全部窗口触发: 翻转K线图 (Alt+I)", android.widget.Toast.LENGTH_SHORT).show()
         }
     }
 }

@@ -234,7 +234,81 @@ fun TradingMultiViewScreen(
                     }
                 }
 
-                Spacer(modifier = Modifier.width(8.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+
+                // ================= 油猴快捷 3 视窗动作组 (隐藏画线 · 磁力吸附 · 翻转K线) =================
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .height(30.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(Color(0xFF101827))
+                        .border(1.dp, Color(0xFF2563EB).copy(alpha = 0.5f), RoundedCornerShape(6.dp))
+                        .padding(horizontal = 3.dp),
+                    horizontalArrangement = Arrangement.spacedBy(3.dp)
+                ) {
+                    // 1. 隐藏/恢复画线 (Alt+H)
+                    Box(
+                        modifier = Modifier
+                            .size(24.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(Color(0xFF1E293B).copy(alpha = 0.7f))
+                            .clickable { viewModel.triggerHideDrawings(context) },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.VisibilityOff,
+                            contentDescription = "同步向全部窗口触发: 隐藏/恢复画线 (Alt+H)",
+                            tint = Color(0xFF38BDF8),
+                            modifier = Modifier.size(15.dp)
+                        )
+                    }
+
+                    // 2. 磁力吸附切换 (Magnet / Ctrl)
+                    val isMagnetActive = uiState.isMagnetActive
+                    Box(
+                        modifier = Modifier
+                            .size(24.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(
+                                if (isMagnetActive) Color(0xFFE11D48).copy(alpha = 0.35f)
+                                else Color(0xFF1E293B).copy(alpha = 0.7f)
+                            )
+                            .border(
+                                width = if (isMagnetActive) 1.dp else 0.dp,
+                                color = if (isMagnetActive) Color(0xFFFB7185) else Color.Transparent,
+                                shape = RoundedCornerShape(4.dp)
+                            )
+                            .clickable { viewModel.triggerToggleMagnet(context) },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.CenterFocusStrong,
+                            contentDescription = "同步向全部窗口触发: 磁力吸附切换 (Magnet)",
+                            tint = if (isMagnetActive) Color(0xFFFB7185) else Color(0xFFCBD5E1),
+                            modifier = Modifier.size(15.dp)
+                        )
+                    }
+
+                    // 3. 翻转K线图 (Alt+I)
+                    Box(
+                        modifier = Modifier
+                            .size(24.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(Color(0xFF1E293B).copy(alpha = 0.7f))
+                            .clickable { viewModel.triggerInvertChart(context) },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.SwapVert,
+                            contentDescription = "同步向全部窗口触发: 翻转K线 (Alt+I)",
+                            tint = Color(0xFF34D399),
+                            modifier = Modifier.size(15.dp)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.width(6.dp))
 
                 // 右侧：全局控制区 (全局刷新仅留图标 + 统一缩放去掉文字 + 网址配置仅留图标，全部统一 30dp 高度)
                 Row(

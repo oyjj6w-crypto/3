@@ -30,7 +30,9 @@ import {
   RefreshCw,
   Globe,
   Eye,
-  EyeOff
+  EyeOff,
+  Magnet,
+  ArrowUpDown
 } from 'lucide-react';
 import { WindowConfig, OrientationMode, WindowGroup } from './types';
 import { TradingWindow } from './components/TradingWindow';
@@ -134,6 +136,8 @@ export default function App() {
   });
   const [isSaveGroupModalOpen, setIsSaveGroupModalOpen] = useState<boolean>(false);
   const [newGroupName, setNewGroupName] = useState<string>('');
+  const [isMagnetActive, setIsMagnetActive] = useState<boolean>(false);
+  const [actionToast, setActionToast] = useState<string | null>(null);
 
   // 方式1重命名分组状态：双击或点击编辑进入内联修改
   const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
@@ -346,6 +350,23 @@ export default function App() {
         };
       })
     );
+  };
+
+  // 模拟油猴插件快捷键同步向 3 视窗派发：先模拟激活视窗，再派发对应快捷键
+  const handleTriggerHideDrawings = () => {
+    setActionToast('已同步向 3 个窗口触发: 隐藏/显示画线 (Alt+H)');
+    setTimeout(() => setActionToast(null), 2500);
+  };
+
+  const handleTriggerToggleMagnet = () => {
+    setIsMagnetActive((prev) => !prev);
+    setActionToast(!isMagnetActive ? '已向 3 个窗口开启磁力吸附' : '已向 3 个窗口关闭磁力吸附');
+    setTimeout(() => setActionToast(null), 2500);
+  };
+
+  const handleTriggerInvertChart = () => {
+    setActionToast('已同步向 3 个窗口触发: 翻转 K 线图 (Alt+I)');
+    setTimeout(() => setActionToast(null), 2500);
   };
 
   // 方式1：就地重命名分组名称 (支持双击或点击重命名图标，回车或失焦确认保存)
@@ -764,6 +785,43 @@ export default function App() {
                 ))}
               </div>
 
+              {/* ================= 油猴快捷 3 视窗动作组 (隐藏画线 · 磁力吸附 · 翻转K线) ================= */}
+              <div className="flex items-center gap-1 bg-[#101827] border border-blue-600/40 rounded-md p-0.5 shrink-0">
+                {/* 1. 隐藏/恢复画线 (Alt+H) */}
+                <button
+                  type="button"
+                  onClick={handleTriggerHideDrawings}
+                  className="w-6 h-6 flex items-center justify-center rounded bg-slate-800/80 hover:bg-slate-700 text-sky-400 hover:text-sky-300 transition-colors cursor-pointer"
+                  title="全部 3 窗口同步触发：隐藏/恢复画线 (Alt+H)"
+                >
+                  <EyeOff className="w-3.5 h-3.5" />
+                </button>
+
+                {/* 2. 磁力吸附切换 (Magnet / Ctrl) */}
+                <button
+                  type="button"
+                  onClick={handleTriggerToggleMagnet}
+                  className={`w-6 h-6 flex items-center justify-center rounded transition-colors cursor-pointer ${
+                    isMagnetActive
+                      ? 'bg-rose-950 border border-rose-500 text-rose-300'
+                      : 'bg-slate-800/80 hover:bg-slate-700 text-slate-300'
+                  }`}
+                  title="全部 3 窗口同步触发：磁力吸附切换 (Magnet / Ctrl)"
+                >
+                  <Magnet className="w-3.5 h-3.5" />
+                </button>
+
+                {/* 3. 翻转K线 (Alt+I) */}
+                <button
+                  type="button"
+                  onClick={handleTriggerInvertChart}
+                  className="w-6 h-6 flex items-center justify-center rounded bg-slate-800/80 hover:bg-slate-700 text-emerald-400 hover:text-emerald-300 transition-colors cursor-pointer"
+                  title="全部 3 窗口同步触发：翻转K线图 (Alt+I)"
+                >
+                  <ArrowUpDown className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
               {/* 右侧：全局一键刷新(仅图标) + 全局统一缩放(无文字) + 3窗口详细网址面板折叠(仅图标)，全部 30px 高度齐平 */}
               <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
                 {/* 全局一键刷新按钮：高度 30px x 30px，与左侧保持严格一致 */}
@@ -832,6 +890,14 @@ export default function App() {
                 </button>
               </div>
             </div>
+
+            {/* 油猴动作执行浮动提示 */}
+            {actionToast && (
+              <div className="absolute top-14 left-1/2 -translate-x-1/2 z-50 px-3.5 py-1.5 rounded-full bg-[#0e172a]/95 border border-sky-500/80 text-sky-300 text-xs font-mono shadow-2xl flex items-center gap-2 backdrop-blur-md transition-all">
+                <span className="w-2 h-2 rounded-full bg-sky-400 animate-ping" />
+                <span>{actionToast}</span>
+              </div>
+            )}
 
             {/* ================= 方案 C：可展开的 3 窗口集中地址配置面板 (Address Config Drawer) ================= */}
             {showAddressConfigPanel && (

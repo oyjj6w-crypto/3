@@ -352,7 +352,10 @@ object PersistentWebViewPool {
                 override fun onPageFinished(view: WebView?, url: String?) {
                     super.onPageFinished(view, url)
                     // 页面渲染完成后再次加固注入，确保 TradingView 异步初始化后依然保持桌面宽屏自适应
-                    view?.let { injectDesktopViewport(it) }
+                    view?.let {
+                        injectDesktopViewport(it)
+                        injectTradingViewEnhancer(it, url)
+                    }
                     if (url != null && url != lastReportedUrl) {
                         lastReportedUrl = url
                         saveWindowUrl(windowId, url, view?.title ?: "")
@@ -512,6 +515,204 @@ object PersistentWebViewPool {
         appliedScaleMap.remove(windowId)
         webView.loadUrl(formatted)
         return true
+    }
+
+    /**
+     * 向所有 3 个视窗按序派发 TradingView 快捷功能
+     * 关键流程：
+     * 1. 遍历当前 3 个视窗，依次派发
+     * 2. 必须先通过模拟物理点击 (pointerdown / mousedown / click / focus) 激活聚焦该视窗
+     * 3. 延时等待 75ms 让 TradingView 内部完成焦点切换
+     * 4. 派发对应快捷键 (Alt+H 隐藏, Alt+I 翻转, 或切换磁吸)
+     * 5. 步进延时 150ms 依次执行下一个视窗，避免多视窗事件撞车
+     * @param action "hide" (隐藏画线), "invert" (翻转K线), "magnet" (磁力吸附)
+     */
+    fun dispatchTradingViewAction(action: String, onProgress: ((Int, Int) -> Unit)? = null) {
+        val handler = android.os.Handler(android.os.Looper.getMainLooper())
+        val windowIds = listOf(1, 2, 3)
+        windowIds.forEachIndexed { index, windowId ->
+            handler.postDelayed({
+                val webView = webViewMap[windowId]
+                if (webView != null) {
+                    val script = buildActionExecutionScript(action)
+                    webView.evaluateJavascript(script, null)
+                    onProgress?.invoke(windowId, windowIds.size)
+                }
+            }, (index * 160L))
+        }
+    }
+
+    private fun buildActionExecutionScript(action: String): String {
+        return """
+            (function() {
+                try {
+                    var action = '$action';
+                    var widget = document.querySelector('.chart-widget') || 
+                                 document.querySelector('[data-role="chart"]') || 
+                                 document.querySelector('.chart-gui-wrapper') || 
+                                 document.querySelector('.tv-chart-view') || 
+                                 document.querySelector('.layout__area--center') ||
+                                 document.body;
+                    var canvas = widget.querySelector('canvas') || document.querySelector('canvas') || widget;
+                    var rect = canvas.getBoundingClientRect();
+                    var cx = rect.left + rect.width / 2;
+                    var cy = rect.top + rect.height / 2;
+
+                    // 1. 模拟鼠标物理激活，使 TradingView 内部聚焦当前视窗
+                    var evtOpts = {
+                        clientX: cx,
+                        clientY: cy,
+                        screenX: cx,
+                        screenY: cy,
+                        bubbles: true,
+                        cancelable: true,
+                        view: window,
+                        buttons: 1,
+                        composed: true
+                    };
+                    try {
+                        canvas.dispatchEvent(new PointerEvent('pointerdown', evtOpts));
+                        canvas.dispatchEvent(new MouseEvent('mousedown', evtOpts));
+                        canvas.dispatchEvent(new PointerEvent('pointerup', evtOpts));
+                        canvas.dispatchEvent(new MouseEvent('mouseup', evtOpts));
+                        canvas.dispatchEvent(new MouseEvent('click', evtOpts));
+                    } catch(e) {
+                        canvas.dispatchEvent(new MouseEvent('mousedown', evtOpts));
+                        canvas.dispatchEvent(new MouseEvent('click', evtOpts));
+                    }
+                    if (typeof canvas.focus === 'function') {
+                        canvas.focus();
+                    }
+
+                    // 2. 延时等待 TradingView 焦点切换完成后派发对应快捷键
+                    setTimeout(function() {
+                        if (action === 'hide') {
+                            var opts = { key: 'h', code: 'KeyH', keyCode: 72, which: 72, altKey: true, bubbles: true, cancelable: true, composed: true };
+                            var kd = new KeyboardEvent('keydown', opts);
+                            canvas.dispatchEvent(kd);
+                            document.dispatchEvent(kd);
+                            window.dispatchEvent(kd);
+                            setTimeout(function() {
+                                var ku = new KeyboardEvent('keyup', opts);
+                                canvas.dispatchEvent(ku);
+                                document.dispatchEvent(ku);
+                                window.dispatchEvent(ku);
+                            }, 30);
+                        } else if (action === 'invert') {
+                            var opts = { key: 'i', code: 'KeyI', keyCode: 73, which: 73, altKey: true, bubbles: true, cancelable: true, composed: true };
+                            var kd = new KeyboardEvent('keydown', opts);
+                            canvas.dispatchEvent(kd);
+                            document.dispatchEvent(kd);
+                            window.dispatchEvent(kd);
+                            setTimeout(function() {
+                                var ku = new KeyboardEvent('keyup', opts);
+                                canvas.dispatchEvent(ku);
+                                document.dispatchEvent(ku);
+                                window.dispatchEvent(ku);
+                            }, 30);
+                        } else if (action === 'magnet') {
+                            var magnetBtn = document.querySelector('[data-name="magnet"]') || 
+                                            document.querySelector('[data-name="magnet-mode"]');
+                            if (magnetBtn) {
+                                magnetBtn.click();
+                            } else {
+                                var isHeld = window.__tv_magnet_active = !window.__tv_magnet_active;
+                                var ctrlOpts = { key: 'Control', code: 'ControlLeft', keyCode: 17, which: 17, ctrlKey: isHeld, bubbles: true, composed: true };
+                                canvas.dispatchEvent(new KeyboardEvent(isHeld ? 'keydown' : 'keyup', ctrlOpts));
+                                document.dispatchEvent(new KeyboardEvent(isHeld ? 'keydown' : 'keyup', ctrlOpts));
+                            }
+                        }
+                    }, 75);
+                } catch(err) {
+                    console.error('TradingView action error:', err);
+                }
+            })();
+        """.trimIndent()
+    }
+
+    /**
+     * 自动向 TradingView 网页内注入顶部工具栏 3 图标 (隐藏·磁力·翻转)
+     */
+    fun injectTradingViewEnhancer(webView: WebView, url: String?) {
+        val targetUrl = url ?: webView.url ?: ""
+        if (!targetUrl.contains("tradingview.com", ignoreCase = true)) return
+
+        val script = """
+            (function() {
+                if (document.getElementById('tv-app-enhancer-tabs')) return;
+                function addButtons() {
+                    if (document.getElementById('tv-app-enhancer-tabs')) return;
+                    var tb = document.querySelector('#header-toolbar') || 
+                             document.querySelector('[data-role="header-toolbar"]') ||
+                             document.querySelector('.tv-header') ||
+                             document.querySelector('.layout__area--top');
+                    
+                    var wrap = document.createElement('div');
+                    wrap.id = 'tv-app-enhancer-tabs';
+                    wrap.style.cssText = 'display:inline-flex;align-items:center;gap:4px;padding:2px 6px;margin:0 4px;background:rgba(20,27,45,0.85);border-radius:6px;border:1px solid rgba(56,189,248,0.3);z-index:9999;';
+
+                    function makeBtn(svg, title, onClick) {
+                        var b = document.createElement('button');
+                        b.type = 'button';
+                        b.title = title;
+                        b.innerHTML = svg;
+                        b.style.cssText = 'display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;background:transparent;border:1px solid rgba(255,255,255,0.15);border-radius:4px;color:#cbd5e1;cursor:pointer;padding:0;';
+                        b.onclick = function(e) {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            onClick(b);
+                        };
+                        return b;
+                    }
+
+                    // 1. 隐藏
+                    var bHide = makeBtn('<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>', '隐藏/显示画线 (Alt+H)', function() {
+                        var kd = new KeyboardEvent('keydown', { key: 'h', code: 'KeyH', keyCode: 72, which: 72, altKey: true, bubbles: true, composed: true });
+                        document.dispatchEvent(kd);
+                    });
+
+                    // 2. 磁力
+                    var bMag = makeBtn('<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#f43f5e" stroke-width="2"><path d="m6 15-4-4 6.75-6.77a7.79 7.79 0 0 1 11 11L13 22l-4-4 6.35-6.35a2.85 2.85 0 0 0-4-4.03L6 15Z"/></svg>', '磁力吸附切换 (Ctrl)', function(btn) {
+                        var mBtn = document.querySelector('[data-name="magnet"]');
+                        if (mBtn) mBtn.click();
+                        else {
+                            var held = window.__tv_m = !window.__tv_m;
+                            btn.style.background = held ? 'rgba(244,63,94,0.3)' : 'transparent';
+                            var ce = { key: 'Control', code: 'ControlLeft', keyCode: 17, which: 17, ctrlKey: held, bubbles: true, composed: true };
+                            document.dispatchEvent(new KeyboardEvent(held ? 'keydown' : 'keyup', ce));
+                        }
+                    });
+
+                    // 3. 翻转
+                    var bInv = makeBtn('<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#34d399" stroke-width="2"><path d="m3 16 4 4 4-4"/><path d="M7 20V4"/><path d="m21 8-4-4-4 4"/><path d="M17 4v16"/></svg>', '翻转K线 (Alt+I)', function() {
+                        var kd = new KeyboardEvent('keydown', { key: 'i', code: 'KeyI', keyCode: 73, which: 73, altKey: true, bubbles: true, composed: true });
+                        document.dispatchEvent(kd);
+                    });
+
+                    wrap.appendChild(bHide);
+                    wrap.appendChild(bMag);
+                    wrap.appendChild(bInv);
+
+                    if (tb) {
+                        tb.appendChild(wrap);
+                    } else {
+                        wrap.style.position = 'fixed';
+                        wrap.style.top = '8px';
+                        wrap.style.right = '60px';
+                        document.body.appendChild(wrap);
+                    }
+                }
+
+                if (document.readyState === 'loading') {
+                    document.addEventListener('DOMContentLoaded', addButtons, { once: true });
+                } else {
+                    addButtons();
+                }
+                setTimeout(addButtons, 1500);
+            })();
+        """.trimIndent()
+
+        webView.evaluateJavascript(script, null)
     }
 
     fun destroyAll() {
