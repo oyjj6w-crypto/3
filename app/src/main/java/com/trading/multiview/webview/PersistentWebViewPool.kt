@@ -65,7 +65,9 @@ object PersistentWebViewPool {
     )
 
     // 默认 1280px 标准桌面基准
-    var fixedPixelWidth: Int = 1280
+    private var _fixedPixelWidth: Int = 1280
+    val fixedPixelWidth: Int
+        get() = _fixedPixelWidth
 
     // 默认保存当前用户设定的全局缩放比例 (默认 100%)
     var currentZoomPercent: Int = 100
@@ -205,7 +207,7 @@ object PersistentWebViewPool {
      * 通过 evaluateJavascript 实时更新 DOM 视口，无需刷新页面，不中断 WebSocket 行情流
      */
     fun setFixedPixelWidth(newWidth: Int) {
-        fixedPixelWidth = newWidth
+        _fixedPixelWidth = newWidth
         appliedScaleMap.clear()
         webViewMap.forEach { (_, webView) ->
             injectDesktopViewport(webView, targetPixelWidth = newWidth, force = true)
