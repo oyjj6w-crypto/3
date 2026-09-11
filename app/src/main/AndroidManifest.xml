@@ -21,19 +21,16 @@
         tools:targetApi="34">
 
         <!-- 
-          关键点：配置 configChanges 包含：
-          - orientation: 旋转屏幕（横屏/竖屏）时不销毁 Activity
-          - screenSize: 屏幕物理尺寸改变（如折叠屏展开或多窗口分屏）时不重建
-          - screenLayout: 屏幕布局模式变更时不重建
-          - smallestScreenSize: 最小屏幕尺寸变更
-          - keyboardHidden|keyboard: 键盘弹出/收起时不重建
-          配合 hardwareAccelerated="true" 保证 TradingView Canvas/WebGL 60FPS 流畅渲染
+          关键点：
+          1. screenOrientation="sensorLandscape" 强制横屏（支持 180° 重力感应顺反倒转，绝不误切竖屏）
+          2. 配置 configChanges 防止旋转与多窗口分屏重载 Activity 与断开 WebSocket
         -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
             android:label="@string/app_name"
             android:theme="@style/Theme.TradingMultiView"
+            android:screenOrientation="sensorLandscape"
             android:windowSoftInputMode="adjustNothing"
             android:hardwareAccelerated="true"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|uiMode|keyboardHidden|keyboard">

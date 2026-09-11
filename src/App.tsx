@@ -37,7 +37,7 @@ import { TradingWindow } from './components/TradingWindow';
 import { HiddenWindowsDock } from './components/HiddenWindowsDock';
 import { CodeExplorerModal } from './components/CodeExplorerModal';
 import { generateAndroidProjectZip, triggerDownload } from './utils/zipGenerator';
-import { PRESET_GROUPS, loadSavedGroups, saveCustomGroups, loadSavedState, saveFullState } from './data/windowGroups';
+import { PRESET_GROUPS, loadSavedGroups, saveCustomGroups } from './data/windowGroups';
 
 const INITIAL_WINDOWS: WindowConfig[] = [
   {
@@ -91,13 +91,7 @@ const INITIAL_WINDOWS: WindowConfig[] = [
 ];
 
 export default function App() {
-  const [windows, setWindows] = useState<WindowConfig[]>(() => {
-    const saved = loadSavedState();
-    if (saved.windows && saved.windows.length === 3) {
-      return saved.windows;
-    }
-    return INITIAL_WINDOWS;
-  });
+  const [windows, setWindows] = useState<WindowConfig[]>(INITIAL_WINDOWS);
   const [orientation, setOrientation] = useState<OrientationMode>('landscape');
   const [showFrame, setShowFrame] = useState<boolean>(true);
   const [isCodeModalOpen, setIsCodeModalOpen] = useState<boolean>(false);
@@ -106,26 +100,17 @@ export default function App() {
   const [isDownloading, setIsDownloading] = useState<boolean>(false);
   const [modalInitialTab, setModalInitialTab] = useState<'source' | 'architecture' | 'guide' | 'github'>('source');
 
-  // 地址栏分组标签集合状态 (优先从本地持久化加载用户修改过的分组与网址)
+  // 地址栏分组标签集合状态 (预设 3 个分组 + 本地持久化保存的分组)
   const [groups, setGroups] = useState<WindowGroup[]>(() => {
-    const saved = loadSavedState();
-    if (saved.groups && saved.groups.length > 0) return saved.groups;
-    const oldSaved = loadSavedGroups();
-    return oldSaved.length > 0 ? oldSaved : PRESET_GROUPS;
+    const saved = loadSavedGroups();
+    return saved.length > 0 ? saved : PRESET_GROUPS;
   });
   const [activeGroupId, setActiveGroupId] = useState<string>(() => {
-    const saved = loadSavedState();
-    if (saved.activeGroupId) return saved.activeGroupId;
-    const oldSaved = loadSavedGroups();
-    return (oldSaved.length > 0 ? oldSaved[0].id : PRESET_GROUPS[0].id);
+    const saved = loadSavedGroups();
+    return (saved.length > 0 ? saved[0].id : PRESET_GROUPS[0].id);
   });
   const [isSaveGroupModalOpen, setIsSaveGroupModalOpen] = useState<boolean>(false);
   const [newGroupName, setNewGroupName] = useState<string>('');
-
-  // 核心自动持久化：用户输入的任何网址、分组切换、自定义分组修改，自动同步至 localStorage
-  useEffect(() => {
-    saveFullState(windows, groups, activeGroupId);
-  }, [windows, groups, activeGroupId]);
 
   // 方式1重命名分组状态：双击或点击编辑进入内联修改
   const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
@@ -273,39 +258,28 @@ export default function App() {
     if (!targetGroup) return;
 
     setActiveGroupId(groupId);
-
-    // 核心性能优化 1：如果未改变，复用原 window 引用，绝不重新加载或重算
-    // 核心性能优化 2：错峰平滑加载，若多个窗口需要更新新页面，拉开 120ms 错峰间隔，避免 24 图瞬间并发打满 I/O
-    let staggerIndex = 0;
-    targetGroup.items.forEach((item, idx) => {
-      const currentWin = windows[idx];
-      const urlChanged = currentWin && currentWin.url !== item.url;
-      const delay = urlChanged ? staggerIndex * 120 : 0;
-      if (urlChanged) staggerIndex++;
-
-      setTimeout(() => {
-        setWindows((prev) =>
-          prev.map((win, i) => {
-            if (i !== idx) return win;
-            if (
-              win.url === item.url &&
-              win.symbol === item.symbol &&
-              win.title === item.title &&
-              (item.timeframe ? win.timeframe === item.timeframe : true)
-            ) {
-              return win;
-            }
-            return {
-              ...win,
-              title: item.title,
-              symbol: item.symbol,
-              url: item.url,
-              timeframe: item.timeframe || win.timeframe,
-            };
-          })
-        );
-      }, delay);
-    });
+    setWindows((prev) =>
+      prev.map((win, idx) => {
+        const item = targetGroup.items[idx] || targetGroup.items[0];
+        // 核心性能优化：如果该窗口的网址、代码与标题都没有发生改变，直接复用原 window 引用，
+        // 绝不触发 iframe 重新渲染或重新计算缩放，实现零闪烁秒级显示！
+        if (
+          win.url === item.url &&
+          win.symbol === item.symbol &&
+          win.title === item.title &&
+          (item.timeframe ? win.timeframe === item.timeframe : true)
+        ) {
+          return win;
+        }
+        return {
+          ...win,
+          title: item.title,
+          symbol: item.symbol,
+          url: item.url,
+          timeframe: item.timeframe || win.timeframe,
+        };
+      })
+    );
   };
 
   // 3 个窗口网页同时全局缩放调节 (设置 textZoom 或 initialScale，快捷 +/-)
@@ -854,7 +828,6 @@ export default function App() {
                 const widthPercent = getWindowWidthPercent(win);
                 const isWinMaximized = maximizedWindow?.id === win.id;
                 const canHide = visibleWindows.length > 1;
-                const isSleeping = widthPercent === 0 || win.isHidden;
 
                 return (
                   <div
@@ -873,7 +846,6 @@ export default function App() {
                       window={win}
                       isMaximized={isWinMaximized}
                       canHide={canHide}
-                      isSleeping={isSleeping}
                       onToggleMaximize={handleToggleMaximize}
                       onHideWindow={handleHideWindow}
                       onUpdateConfig={handleUpdateConfig}

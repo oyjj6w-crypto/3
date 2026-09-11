@@ -76,22 +76,6 @@ fun TradingMultiViewScreen(
         viewModel.loadSavedGroupsFromPrefs(context)
     }
 
-    // 智能视窗休眠调度（非激活视窗智能休眠）：
-    // 当窗口被隐藏、全屏遮挡或非活动时，自动暂停后台 Canvas 重绘与动画，
-    // 让当前前台活跃的窗口独享 GPU 与 CPU 算力；恢复时瞬间唤醒！
-    val hiddenFlags = remember(uiState.windows) { uiState.windows.map { it.isHidden } }
-    DisposableEffect(uiState.maximizedWindowId, hiddenFlags) {
-        uiState.windows.forEach { win ->
-            val isSleeping = win.isHidden || (uiState.maximizedWindowId != null && uiState.maximizedWindowId != win.id)
-            if (isSleeping) {
-                PersistentWebViewPool.pauseWindow(win.id)
-            } else {
-                PersistentWebViewPool.resumeWindow(win.id)
-            }
-        }
-        onDispose { }
-    }
-
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -257,6 +241,33 @@ fun TradingMultiViewScreen(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
+                    // 顶部栏固定像素快捷胶囊：电脑图标 + 1280px，点击在 960 / 1280 / 1440 / 1920 循环切换
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .height(30.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(Color(0xFF0F2338))
+                            .border(1.dp, Color(0xFF0284C7), RoundedCornerShape(6.dp))
+                            .clickable { viewModel.cycleFixedPixelWidth(context) }
+                            .padding(horizontal = 6.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Computer,
+                            contentDescription = "切换桌面基准像素",
+                            tint = Color(0xFF38BDF8),
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = "${uiState.fixedPixelWidth}px",
+                            color = Color(0xFF38BDF8),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
+
                     // 全局一键刷新按钮：标准 30dp x 30dp 方形，圆角 6dp，与左侧保持严格一致
                     Box(
                         modifier = Modifier
@@ -387,112 +398,183 @@ fun TradingMultiViewScreen(
                 color = Color(0xFF0F172A),
                 border = BorderStroke(width = 0.5.dp, color = Color(0xFF334155))
             ) {
-                Row(
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 8.dp, vertical = 6.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    uiState.windows.forEach { win ->
-                        var inputUrl by remember(win.currentUrl) { mutableStateOf(win.currentUrl) }
-                        Column(
-                            modifier = Modifier
-                                .weight(1f)
-                                .clip(RoundedCornerShape(4.dp))
-                                .background(Color(0xFF090D16))
-                                .border(1.dp, Color(0xFF1E293B), RoundedCornerShape(4.dp))
-                                .padding(6.dp),
-                            verticalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
+                    // 1. 各窗口详细网址配置行
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        uiState.windows.forEach { win ->
+                            var inputUrl by remember(win.currentUrl) { mutableStateOf(win.currentUrl) }
+                            Column(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .background(Color(0xFF090D16))
+                                    .border(1.dp, Color(0xFF1E293B), RoundedCornerShape(4.dp))
+                                    .padding(6.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
                                 Row(
+                                    modifier = Modifier.fillMaxWidth(),
                                     verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(6.dp)
-                                            .clip(CircleShape)
-                                            .background(Color(0xFF10B981))
-                                    )
-                                    Text(
-                                        text = "窗口 ${win.id}",
-                                        color = Color(0xFF38BDF8),
-                                        fontSize = 10.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(6.dp)
+                                                .clip(CircleShape)
+                                                .background(Color(0xFF10B981))
+                                        )
+                                        Text(
+                                            text = "窗口 ${win.id}",
+                                            color = Color(0xFF38BDF8),
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        // 窗口单独刷新
+                                        Icon(
+                                            imageVector = Icons.Default.Refresh,
+                                            contentDescription = "刷新",
+                                            tint = Color(0xFF94A3B8),
+                                            modifier = Modifier
+                                                .size(13.dp)
+                                                .clickable { viewModel.reload(win.id) }
+                                        )
+
+                                        // 快捷前往
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(3.dp))
+                                                .background(Color(0xFF0284C7))
+                                                .clickable {
+                                                    if (inputUrl.isNotBlank()) {
+                                                        viewModel.navigateToUrl(win.id, inputUrl)
+                                                    }
+                                                    focusManager.clearFocus()
+                                                }
+                                                .padding(horizontal = 5.dp, vertical = 1.dp)
+                                        ) {
+                                            Text(text = "前往", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                    }
                                 }
 
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                // 极简 URL 输入栏 (删除了后面的常用书签按钮)
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(24.dp)
+                                        .clip(RoundedCornerShape(3.dp))
+                                        .background(Color(0xFF161E2E))
+                                        .border(1.dp, Color(0xFF334155), RoundedCornerShape(3.dp))
+                                        .padding(horizontal = 4.dp),
+                                    contentAlignment = Alignment.CenterStart
                                 ) {
-                                    // 窗口单独刷新
-                                    Icon(
-                                        imageVector = Icons.Default.Refresh,
-                                        contentDescription = "刷新",
-                                        tint = Color(0xFF94A3B8),
-                                        modifier = Modifier
-                                            .size(13.dp)
-                                            .clickable { viewModel.reload(win.id) }
-                                    )
-
-                                    // 快捷前往
-                                    Box(
-                                        modifier = Modifier
-                                            .clip(RoundedCornerShape(3.dp))
-                                            .background(Color(0xFF0284C7))
-                                            .clickable {
+                                    BasicTextField(
+                                        value = inputUrl,
+                                        onValueChange = { inputUrl = it },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        singleLine = true,
+                                        textStyle = TextStyle(
+                                            color = Color(0xFFF1F5F9),
+                                            fontSize = 10.sp,
+                                            fontFamily = FontFamily.Monospace
+                                        ),
+                                        cursorBrush = SolidColor(Color(0xFF38BDF8)),
+                                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go, keyboardType = KeyboardType.Uri),
+                                        keyboardActions = KeyboardActions(
+                                            onGo = {
                                                 if (inputUrl.isNotBlank()) {
                                                     viewModel.navigateToUrl(win.id, inputUrl)
                                                 }
                                                 focusManager.clearFocus()
                                             }
-                                            .padding(horizontal = 5.dp, vertical = 1.dp)
-                                    ) {
-                                        Text(text = "前往", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold)
-                                    }
+                                        )
+                                    )
                                 }
                             }
+                        }
+                    }
 
-                            // 极简 URL 输入栏 (删除了后面的常用书签按钮)
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(24.dp)
-                                    .clip(RoundedCornerShape(3.dp))
-                                    .background(Color(0xFF161E2E))
-                                    .border(1.dp, Color(0xFF334155), RoundedCornerShape(3.dp))
-                                    .padding(horizontal = 4.dp),
-                                contentAlignment = Alignment.CenterStart
+                    // 2. 固定像素桌面视口基准点选标签条与即时说明
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(Color(0xFF0A101D))
+                            .border(1.dp, Color(0xFF1E293B), RoundedCornerShape(4.dp))
+                            .padding(horizontal = 8.dp, vertical = 5.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
-                                BasicTextField(
-                                    value = inputUrl,
-                                    onValueChange = { inputUrl = it },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    singleLine = true,
-                                    textStyle = TextStyle(
-                                        color = Color(0xFFF1F5F9),
-                                        fontSize = 10.sp,
-                                        fontFamily = FontFamily.Monospace
-                                    ),
-                                    cursorBrush = SolidColor(Color(0xFF38BDF8)),
-                                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go, keyboardType = KeyboardType.Uri),
-                                    keyboardActions = KeyboardActions(
-                                        onGo = {
-                                            if (inputUrl.isNotBlank()) {
-                                                viewModel.navigateToUrl(win.id, inputUrl)
-                                            }
-                                            focusManager.clearFocus()
-                                        }
-                                    )
+                                Icon(
+                                    imageVector = Icons.Default.Computer,
+                                    contentDescription = null,
+                                    tint = Color(0xFF38BDF8),
+                                    modifier = Modifier.size(13.dp)
+                                )
+                                Text(
+                                    text = "桌面视口基准:",
+                                    color = Color(0xFF94A3B8),
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold
                                 )
                             }
+
+                            PersistentWebViewPool.PRESET_FIXED_PIXEL_WIDTHS.forEach { preset ->
+                                val isSelected = uiState.fixedPixelWidth == preset.width
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(4.dp))
+                                        .background(if (isSelected) Color(0xFF0284C7) else Color(0xFF1E293B))
+                                        .border(
+                                            1.dp,
+                                            if (isSelected) Color(0xFF38BDF8) else Color(0xFF334155),
+                                            RoundedCornerShape(4.dp)
+                                        )
+                                        .clickable { viewModel.setFixedPixelWidth(preset.width, context) }
+                                        .padding(horizontal = 8.dp, vertical = 3.dp)
+                                ) {
+                                    Text(
+                                        text = "${preset.width}px (${preset.badge})",
+                                        color = if (isSelected) Color.White else Color(0xFFCBD5E1),
+                                        fontSize = 10.sp,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                        fontFamily = FontFamily.Monospace
+                                    )
+                                }
+                            }
                         }
+
+                        Text(
+                            text = "动态注入 <meta viewport> 击穿 TradingView 移动端折叠，免刷新热生效",
+                            color = Color(0xFF64748B),
+                            fontSize = 9.sp
+                        )
                     }
                 }
             }

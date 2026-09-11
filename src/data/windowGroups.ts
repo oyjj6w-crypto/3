@@ -82,43 +82,6 @@ export const PRESET_GROUPS: WindowGroup[] = [
 ];
 
 const STORAGE_KEY = 'trading_multiview_custom_groups';
-const STORAGE_KEY_WINDOWS = 'trading_multiview_windows_state_v3';
-const STORAGE_KEY_ACTIVE_GROUP = 'trading_multiview_active_group_v3';
-const STORAGE_KEY_ALL_GROUPS = 'trading_multiview_all_groups_v3';
-
-export function loadSavedState(): {
-  windows?: import('../types').WindowConfig[];
-  groups?: WindowGroup[];
-  activeGroupId?: string;
-} {
-  try {
-    const rawWindows = localStorage.getItem(STORAGE_KEY_WINDOWS);
-    const rawGroups = localStorage.getItem(STORAGE_KEY_ALL_GROUPS);
-    const rawActive = localStorage.getItem(STORAGE_KEY_ACTIVE_GROUP);
-    return {
-      windows: rawWindows ? JSON.parse(rawWindows) : undefined,
-      groups: rawGroups ? JSON.parse(rawGroups) : undefined,
-      activeGroupId: rawActive || undefined,
-    };
-  } catch (e) {
-    console.error('Failed to load saved state from localStorage', e);
-    return {};
-  }
-}
-
-export function saveFullState(
-  windows: import('../types').WindowConfig[],
-  groups: WindowGroup[],
-  activeGroupId: string
-) {
-  try {
-    localStorage.setItem(STORAGE_KEY_WINDOWS, JSON.stringify(windows));
-    localStorage.setItem(STORAGE_KEY_ALL_GROUPS, JSON.stringify(groups));
-    localStorage.setItem(STORAGE_KEY_ACTIVE_GROUP, activeGroupId);
-  } catch (e) {
-    console.error('Failed to save full state to localStorage', e);
-  }
-}
 
 export function loadSavedGroups(): WindowGroup[] {
   try {

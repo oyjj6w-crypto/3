@@ -83,7 +83,8 @@ data class MultiViewUiState(
     val groups: List<TabGroup> = DEFAULT_TAB_GROUPS,
     val activeGroupId: String = "preset_1",
     val globalZoomPercent: Int = 100,
-    val isGlobalUrlCollapsed: Boolean = true
+    val isGlobalUrlCollapsed: Boolean = true,
+    val fixedPixelWidth: Int = 1280 // 固定像素桌面视口基准 (默认 1280px 标准 PC)
 ) {
     // 获取当前活跃且未隐藏的窗口列表
     val visibleWindows: List<WindowState>
@@ -117,16 +118,10 @@ class TradingViewModel : ViewModel() {
     private val _uiState = MutableStateFlow(MultiViewUiState())
     val uiState: StateFlow<MultiViewUiState> = _uiState.asStateFlow()
 
-    private var appContext: Context? = null
-
     companion object {
-        const val PREFS_NAME = "trading_multiview_prefs"
-        const val KEY_CUSTOM_GROUPS = "custom_tab_groups"
-        const val KEY_ALL_GROUPS = "all_tab_groups_v2"
-        const val KEY_ACTIVE_GROUP_ID = "active_group_id_v2"
-        const val KEY_WINDOW_URL_PREFIX = "window_url_"
-        const val KEY_WINDOW_TITLE_PREFIX = "window_title_"
-        const val KEY_WINDOW_SYMBOL_PREFIX = "window_symbol_"
+        private const val PREFS_NAME = "trading_multiview_prefs"
+        private const val KEY_CUSTOM_GROUPS = "custom_tab_groups"
+        private const val KEY_FIXED_PIXEL_WIDTH = "fixed_pixel_width"
     }
 
     init {
@@ -172,19 +167,15 @@ class TradingViewModel : ViewModel() {
         val targetGroup = updatedGroups.find { it.id == groupId } ?: return
 
         _uiState.update { state ->
-            var reloadStaggerIndex = 0
             val updatedWindows = state.windows.mapIndexed { index, win ->
                 val targetItem = targetGroup.items.getOrNull(index) ?: targetGroup.items.first()
                 val targetUrl = targetItem.url
 
-                // 核心性能优化 1：如果网页没有改变（如前后两个标签集合对应窗口都是 BTC 或相同网址），
+                // 核心性能优化：如果网页没有改变（如前后两个标签集合对应窗口都是 BTC 或相同网址），
                 // 绝不重新加载网页，不需要对网页重新缩放，保持当前视窗图表毫秒级瞬显！
-                // 核心性能优化 2：若必须重新加载，拉开 120ms 错峰间隔，避免 24 图瞬间并发冲击网络和解析线程！
                 val urlChanged = !PersistentWebViewPool.isSameUrl(win.currentUrl, targetUrl)
                 if (urlChanged) {
-                    val delay = reloadStaggerIndex * 120L
-                    reloadStaggerIndex++
-                    PersistentWebViewPool.loadCustomUrlStaggered(win.id, targetUrl, delayMs = delay)
+                    PersistentWebViewPool.loadCustomUrl(win.id, targetUrl)
                 }
 
                 win.copy(
@@ -199,8 +190,6 @@ class TradingViewModel : ViewModel() {
                 activeGroupId = groupId
             )
         }
-        // 关键持久化：切换分组后立即保存最新状态
-        saveStateToPrefs()
     }
 
     /**
@@ -284,69 +273,57 @@ class TradingViewModel : ViewModel() {
         _uiState.update { it.copy(groups = updatedGroups, activeGroupId = newGroup.id) }
 
         // 持久化保存至 SharedPreferences
-        saveStateToPrefs(context)
+        persistCustomGroupsToPrefs(updatedGroups.filter { !it.isPreset }, context)
     }
 
     /**
-     * 从 SharedPreferences 恢复用户保存的所有配置（视窗网址、标题、激活分组以及分组列表）
+     * 从 SharedPreferences 加载已保存的用户自定义分组
      */
-    fun loadSavedStateFromPrefs(context: Context) {
-        val appCtx = context.applicationContext
-        this.appContext = appCtx
+    fun loadSavedGroupsFromPrefs(context: Context) {
         try {
-            val prefs = appCtx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val jsonString = prefs.getString(KEY_CUSTOM_GROUPS, null) ?: return
+            val jsonArray = JSONArray(jsonString)
+            val customGroups = mutableListOf<TabGroup>()
 
-            // 1. 加载所有分组数据（包含用户对预设分组 1/2/3 网址的修改以及自定义新增分组）
-            val savedAllGroupsJson = prefs.getString(KEY_ALL_GROUPS, null)
-            val loadedGroups = if (!savedAllGroupsJson.isNullOrBlank()) {
-                deserializeGroupsFromJson(savedAllGroupsJson)
-            } else {
-                // 兼容旧版 custom_tab_groups
-                val oldCustomJson = prefs.getString(KEY_CUSTOM_GROUPS, null)
-                if (!oldCustomJson.isNullOrBlank()) {
-                    DEFAULT_TAB_GROUPS + deserializeGroupsFromJson(oldCustomJson)
-                } else {
-                    DEFAULT_TAB_GROUPS
+            for (i in 0 until jsonArray.length()) {
+                val obj = jsonArray.getJSONObject(i)
+                val id = obj.getString("id")
+                val name = obj.getString("name")
+                val desc = obj.optString("description", "")
+                val itemsArray = obj.getJSONArray("items")
+                val items = mutableListOf<TabGroupItem>()
+
+                for (j in 0 until itemsArray.length()) {
+                    val itemObj = itemsArray.getJSONObject(j)
+                    items.add(
+                        TabGroupItem(
+                            title = itemObj.getString("title"),
+                            symbol = itemObj.getString("symbol"),
+                            url = itemObj.getString("url"),
+                            timeframe = itemObj.optString("timeframe", "15m")
+                        )
+                    )
                 }
-            }
 
-            // 2. 加载之前激活的分组 ID
-            val savedActiveId = prefs.getString(KEY_ACTIVE_GROUP_ID, null)
-            val finalActiveId = if (savedActiveId != null && loadedGroups.any { it.id == savedActiveId }) {
-                savedActiveId
-            } else {
-                loadedGroups.firstOrNull()?.id ?: "preset_1"
-            }
-
-            val currentActiveGroup = loadedGroups.find { it.id == finalActiveId } ?: loadedGroups.firstOrNull()
-
-            // 3. 恢复每个视窗的用户自定义 URL、标题与代码
-            val restoredWindows = _uiState.value.windows.map { win ->
-                val savedUrl = prefs.getString("window_url_${win.id}", null)
-                val savedTitle = prefs.getString("window_title_${win.id}", null)
-                val savedSymbol = prefs.getString("window_symbol_${win.id}", null)
-                val groupItem = currentActiveGroup?.items?.getOrNull(win.id - 1)
-
-                val finalUrl = when {
-                    !savedUrl.isNullOrBlank() -> savedUrl
-                    groupItem != null && groupItem.url.isNotBlank() -> groupItem.url
-                    else -> PersistentWebViewPool.DEFAULT_URLS[win.id] ?: "https://www.tradingview.com"
-                }
-                val finalTitle = savedTitle ?: groupItem?.title ?: win.title
-                val finalSymbol = savedSymbol ?: groupItem?.symbol ?: win.symbol
-
-                win.copy(
-                    currentUrl = finalUrl,
-                    title = finalTitle,
-                    symbol = finalSymbol
+                customGroups.add(
+                    TabGroup(
+                        id = id,
+                        name = name,
+                        isPreset = false,
+                        description = desc,
+                        items = items
+                    )
                 )
             }
 
+            val savedPixelWidth = prefs.getInt(KEY_FIXED_PIXEL_WIDTH, 1280)
+            PersistentWebViewPool.setFixedPixelWidth(savedPixelWidth)
+
             _uiState.update { state ->
                 state.copy(
-                    groups = loadedGroups,
-                    activeGroupId = finalActiveId,
-                    windows = restoredWindows
+                    groups = DEFAULT_TAB_GROUPS + customGroups,
+                    fixedPixelWidth = savedPixelWidth
                 )
             }
         } catch (e: Exception) {
@@ -355,39 +332,39 @@ class TradingViewModel : ViewModel() {
     }
 
     /**
-     * 保持向后兼容性方法
+     * 动态热切换固定像素基准 (960px / 1280px / 1440px / 1920px) 并持久化
+     * 通过 evaluateJavascript 实时注入与热更新 DOM 视口，无需刷新页面，不中断 WebSocket 行情流！
      */
-    fun loadSavedGroupsFromPrefs(context: Context) {
-        loadSavedStateFromPrefs(context)
+    fun setFixedPixelWidth(width: Int, context: Context? = null) {
+        PersistentWebViewPool.setFixedPixelWidth(width)
+        _uiState.update { it.copy(fixedPixelWidth = width) }
+        if (context != null) {
+            try {
+                context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                    .edit()
+                    .putInt(KEY_FIXED_PIXEL_WIDTH, width)
+                    .apply()
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
     }
 
     /**
-     * 将当前全部状态（当前 3 视窗输入的最新网址、标题、激活分组 ID 与全部标签组）异步持久化至本地 SharedPreferences
+     * 顶部栏快捷胶囊循环切换分辨率基准并持久化
      */
-    fun saveStateToPrefs(context: Context? = null) {
-        val targetContext = context?.applicationContext ?: appContext ?: return
-        try {
-            val currentState = _uiState.value
-            val prefs = targetContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            val editor = prefs.edit()
-
-            // 保存 3 个视窗当前最新的 URL、标题和代币代码
-            currentState.windows.forEach { win ->
-                editor.putString("window_url_${win.id}", win.currentUrl)
-                editor.putString("window_title_${win.id}", win.title)
-                editor.putString("window_symbol_${win.id}", win.symbol)
+    fun cycleFixedPixelWidth(context: Context? = null) {
+        val nextWidth = PersistentWebViewPool.cycleFixedPixelWidth()
+        _uiState.update { it.copy(fixedPixelWidth = nextWidth) }
+        if (context != null) {
+            try {
+                context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                    .edit()
+                    .putInt(KEY_FIXED_PIXEL_WIDTH, nextWidth)
+                    .apply()
+            } catch (e: Exception) {
+                e.printStackTrace()
             }
-
-            // 保存当前激活的标签分组 ID
-            editor.putString(KEY_ACTIVE_GROUP_ID, currentState.activeGroupId)
-
-            // 保存全部分组（包含用户对每个标签输入的网址修改与自定义分组）
-            val jsonString = serializeGroupsToJson(currentState.groups)
-            editor.putString(KEY_ALL_GROUPS, jsonString)
-
-            editor.apply()
-        } catch (e: Exception) {
-            e.printStackTrace()
         }
     }
 
@@ -397,70 +374,41 @@ class TradingViewModel : ViewModel() {
     fun deleteCustomGroup(groupId: String, context: Context) {
         _uiState.update { state ->
             val updated = state.groups.filter { it.id != groupId }
-            val nextActiveId = if (state.activeGroupId == groupId) "preset_1" else state.activeGroupId
+            val nextActiveId = if (state.activeGroupId == groupId) "preset_major" else state.activeGroupId
+            persistCustomGroupsToPrefs(updated.filter { !it.isPreset }, context)
             state.copy(groups = updated, activeGroupId = nextActiveId)
         }
-        saveStateToPrefs(context)
     }
 
-    private fun serializeGroupsToJson(groups: List<TabGroup>): String {
-        val jsonArray = JSONArray()
-        groups.forEach { group ->
-            val obj = JSONObject().apply {
-                put("id", group.id)
-                put("name", group.name)
-                put("isPreset", group.isPreset)
-                put("description", group.description)
-                val itemsArr = JSONArray()
-                group.items.forEach { item ->
-                    val itemObj = JSONObject().apply {
-                        put("title", item.title)
-                        put("symbol", item.symbol)
-                        put("url", item.url)
-                        put("timeframe", item.timeframe)
+    private fun persistCustomGroupsToPrefs(customGroups: List<TabGroup>, context: Context) {
+        try {
+            val jsonArray = JSONArray()
+            customGroups.forEach { group ->
+                val obj = JSONObject().apply {
+                    put("id", group.id)
+                    put("name", group.name)
+                    put("description", group.description)
+                    val itemsArr = JSONArray()
+                    group.items.forEach { item ->
+                        val itemObj = JSONObject().apply {
+                            put("title", item.title)
+                            put("symbol", item.symbol)
+                            put("url", item.url)
+                            put("timeframe", item.timeframe)
+                        }
+                        itemsArr.put(itemObj)
                     }
-                    itemsArr.put(itemObj)
+                    put("items", itemsArr)
                 }
-                put("items", itemsArr)
+                jsonArray.put(obj)
             }
-            jsonArray.put(obj)
+            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putString(KEY_CUSTOM_GROUPS, jsonArray.toString())
+                .apply()
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
-        return jsonArray.toString()
-    }
-
-    private fun deserializeGroupsFromJson(jsonString: String): List<TabGroup> {
-        val jsonArray = JSONArray(jsonString)
-        val groups = mutableListOf<TabGroup>()
-        for (i in 0 until jsonArray.length()) {
-            val obj = jsonArray.getJSONObject(i)
-            val id = obj.getString("id")
-            val name = obj.getString("name")
-            val isPreset = obj.optBoolean("isPreset", false)
-            val desc = obj.optString("description", "")
-            val itemsArray = obj.getJSONArray("items")
-            val items = mutableListOf<TabGroupItem>()
-            for (j in 0 until itemsArray.length()) {
-                val itemObj = itemsArray.getJSONObject(j)
-                items.add(
-                    TabGroupItem(
-                        title = itemObj.getString("title"),
-                        symbol = itemObj.getString("symbol"),
-                        url = itemObj.getString("url"),
-                        timeframe = itemObj.optString("timeframe", "15m")
-                    )
-                )
-            }
-            groups.add(
-                TabGroup(
-                    id = id,
-                    name = name,
-                    isPreset = isPreset,
-                    description = desc,
-                    items = items
-                )
-            )
-        }
-        return groups
     }
 
     /**
@@ -676,8 +624,6 @@ class TradingViewModel : ViewModel() {
                 groups = updatedGroups
             )
         }
-        // 用户修改网址或网页跳转时立即持久化保存，保证退出重进不丢失
-        saveStateToPrefs()
     }
 
     /**

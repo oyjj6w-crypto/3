@@ -1,5 +1,6 @@
 package com.trading.multiview
 
+import android.content.pm.ActivityInfo
 import android.content.res.Configuration
 import android.os.Bundle
 import android.view.WindowManager
@@ -25,6 +26,9 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // 强制传感器横屏锁定 (Sensor Landscape，支持 180° 正反横屏倒转，禁止误切竖屏，保证 3 窗口最宽可视区)
+        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+
         // 保持屏幕常亮（看盘专用）
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
@@ -35,10 +39,8 @@ class MainActivity : ComponentActivity() {
         controller.systemBarsBehavior =
             WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
 
-        // 初始化常驻单例 WebView 池（与 Activity 实例解耦，优先恢复用户输入的网址）
+        // 初始化常驻单例 WebView 池（与 Activity 实例解耦，绝不反复销毁）
         PersistentWebViewPool.init(applicationContext)
-        // 预载本地持久化配置（视窗网址、分组状态）
-        viewModel.loadSavedStateFromPrefs(applicationContext)
 
         setContent {
             TradingMultiViewTheme {
@@ -60,12 +62,6 @@ class MainActivity : ComponentActivity() {
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         // 此处可做额外横竖屏 UI 逻辑自适应，WebView 零重载
-    }
-
-    override fun onPause() {
-        super.onPause()
-        // 用户切换或退出应用时，将当前全部视窗网址与状态持久化保存
-        viewModel.saveStateToPrefs(applicationContext)
     }
 
     override fun onDestroy() {

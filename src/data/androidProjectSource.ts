@@ -95,10 +95,8 @@ class MainActivity : ComponentActivity() {
         controller.systemBarsBehavior =
             WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
 
-        // 初始化常驻单例 WebView 池（与 Activity 实例解耦，优先恢复用户输入的网址）
+        // 初始化常驻单例 WebView 池（与 Activity 实例解耦，绝不反复销毁）
         PersistentWebViewPool.init(applicationContext)
-        // 预载本地持久化配置（视窗网址、分组状态）
-        viewModel.loadSavedStateFromPrefs(applicationContext)
 
         setContent {
             TradingMultiViewTheme {
@@ -122,12 +120,6 @@ class MainActivity : ComponentActivity() {
         // 此处可做额外横竖屏 UI 逻辑自适应，WebView 零重载
     }
 
-    override fun onPause() {
-        super.onPause()
-        // 用户切换或退出应用时，将当前全部视窗网址与状态持久化保存
-        viewModel.saveStateToPrefs(applicationContext)
-    }
-
     override fun onDestroy() {
         super.onDestroy()
         // 只有应用进程真正销毁退出时才清理 WebView 池
@@ -146,8 +138,6 @@ class MainActivity : ComponentActivity() {
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Bitmap
-import android.os.Handler
-import android.os.Looper
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.*
@@ -328,48 +318,16 @@ object PersistentWebViewPool {
             })();
         """.trimIndent()
 
-    private val mainHandler = Handler(Looper.getMainLooper())
-    // 缓存每个视窗的休眠状态
-    private val pausedMap = java.util.concurrent.ConcurrentHashMap<Int, Boolean>()
-    private var appContext: Context? = null
-
-    /**
-     * 智能初始化：分屏并发平滑（错峰加载）+ 本地记忆持久化
-     * 启动时优先读取用户之前在视窗中输入的自定义网址（存放在 SharedPreferences），
-     * 只有初次安装或未自定义时才回退至 DEFAULT_URLS 官方行情！
-     */
     fun init(context: Context) {
         if (isInitialized) return
-        val appCtx = context.applicationContext
-        this.appContext = appCtx
+        val appContext = context.applicationContext
         
-        val prefs = try {
-            appCtx.getSharedPreferences("trading_multiview_prefs", Context.MODE_PRIVATE)
-        } catch (e: Exception) {
-            null
-        }
-
-        // 为 3 个视窗分别创建专属 WebView 实例并错峰启动
-        listOf(1, 2, 3).forEachIndexed { index, windowId ->
-            val webView = createConfiguredWebView(appCtx, windowId)
+        // 为 3 个视窗分别创建专属 WebView 实例
+        listOf(1, 2, 3).forEach { windowId ->
+            val webView = createConfiguredWebView(appContext, windowId)
+            val initialUrl = DEFAULT_URLS[windowId] ?: "https://www.tradingview.com"
+            webView.loadUrl(initialUrl)
             webViewMap[windowId] = webView
-
-            // 优先读取用户在上次会话中为该窗口输入的最新网址
-            val savedUrl = prefs?.getString("window_url_$windowId", null)
-            val initialUrl = if (!savedUrl.isNullOrBlank()) {
-                savedUrl
-            } else {
-                DEFAULT_URLS[windowId] ?: "https://www.tradingview.com"
-            }
-
-            val delayMs = index * 120L
-            if (delayMs == 0L) {
-                webView.loadUrl(initialUrl)
-            } else {
-                mainHandler.postDelayed({
-                    webView.loadUrl(initialUrl)
-                }, delayMs)
-            }
         }
         isInitialized = true
     }
@@ -436,12 +394,6 @@ object PersistentWebViewPool {
                     view?.let { injectDesktopViewport(it) }
                     if (url != null && url != lastReportedUrl) {
                         lastReportedUrl = url
-                        try {
-                            appContext?.getSharedPreferences("trading_multiview_prefs", Context.MODE_PRIVATE)
-                                ?.edit()
-                                ?.putString("window_url_$windowId", url)
-                                ?.apply()
-                        } catch (e: Exception) {}
                         onUrlChanged?.invoke(windowId, url, view?.title ?: "")
                     }
                 }
@@ -579,46 +531,6 @@ object PersistentWebViewPool {
     }
 
     /**
-     * 智能休眠视窗 (Intelligent Window Throttling)
-     * 当窗口被隐藏、全屏遮挡或非活动状态时调用：
-     * 1. 调用 webView.onPause() 通知 Chromium 将 document.visibilityState 设为 'hidden'；
-     * 2. Chromium 会主动暂停 requestAnimationFrame、停止 WebGL 画布重绘与复杂 CSS 动画；
-     * 3. 释放 GPU 算力与 CPU 占用（降至接近 0%），但维持 WebSocket 连接不中断，行情持续保活！
-     */
-    fun pauseWindow(windowId: Int) {
-        val webView = webViewMap[windowId] ?: return
-        if (pausedMap[windowId] == true) return
-        pausedMap[windowId] = true
-        try {
-            webView.onPause()
-            webView.evaluateJavascript("""
-                if (window.dispatchEvent) {
-                    try { document.dispatchEvent(new Event('visibilitychange')); } catch(e){}
-                }
-            """.trimIndent(), null)
-        } catch (e: Exception) {}
-    }
-
-    /**
-     * 智能唤醒视窗 (Resume Window)
-     * 当窗口恢复显示、退出最大化或切换回前台时调用：
-     * 立即恢复 full 60fps 渲染与 WebGL 画面更新！
-     */
-    fun resumeWindow(windowId: Int) {
-        val webView = webViewMap[windowId] ?: return
-        if (pausedMap[windowId] == false) return
-        pausedMap[windowId] = false
-        try {
-            webView.onResume()
-            webView.evaluateJavascript("""
-                if (window.dispatchEvent) {
-                    try { document.dispatchEvent(new Event('visibilitychange')); } catch(e){}
-                }
-            """.trimIndent(), null)
-        } catch (e: Exception) {}
-    }
-
-    /**
      * 智能加载 URL
      * 核心性能突破：
      * 如果目标网址与当前 WebView 正在显示的网址一致（忽略斜杠与格式），则坚决跳过重新加载！
@@ -626,14 +538,6 @@ object PersistentWebViewPool {
      * @return true 表示确实加载了新页面；false 表示页面相同已跳过
      */
     fun loadCustomUrl(windowId: Int, url: String, forceReload: Boolean = false): Boolean {
-        return loadCustomUrlStaggered(windowId, url, delayMs = 0L, forceReload = forceReload)
-    }
-
-    /**
-     * 错峰智能加载 URL
-     * 在标签集合切换时，让不同视窗拉开 120ms 的极微小错峰，彻底消除 24 个图表瞬间并发导致的 I/O 拥塞
-     */
-    fun loadCustomUrlStaggered(windowId: Int, url: String, delayMs: Long = 0L, forceReload: Boolean = false): Boolean {
         val formatted = formatUrl(url)
         val webView = webViewMap[windowId] ?: return false
         val current = webView.url ?: ""
@@ -641,25 +545,11 @@ object PersistentWebViewPool {
             return false
         }
         appliedScaleMap.remove(windowId)
-        try {
-            appContext?.getSharedPreferences("trading_multiview_prefs", Context.MODE_PRIVATE)
-                ?.edit()
-                ?.putString("window_url_$windowId", formatted)
-                ?.apply()
-        } catch (e: Exception) {}
-
-        if (delayMs <= 0L) {
-            webView.loadUrl(formatted)
-        } else {
-            mainHandler.postDelayed({
-                webView.loadUrl(formatted)
-            }, delayMs)
-        }
+        webView.loadUrl(formatted)
         return true
     }
 
     fun destroyAll() {
-        mainHandler.removeCallbacksAndMessages(null)
         webViewMap.forEach { (_, webView) ->
             (webView.parent as? ViewGroup)?.removeView(webView)
             webView.stopLoading()
@@ -667,7 +557,6 @@ object PersistentWebViewPool {
             webView.destroy()
         }
         webViewMap.clear()
-        pausedMap.clear()
         isInitialized = false
     }
 }`
@@ -806,16 +695,9 @@ class TradingViewModel : ViewModel() {
     private val _uiState = MutableStateFlow(MultiViewUiState())
     val uiState: StateFlow<MultiViewUiState> = _uiState.asStateFlow()
 
-    private var appContext: Context? = null
-
     companion object {
-        const val PREFS_NAME = "trading_multiview_prefs"
-        const val KEY_CUSTOM_GROUPS = "custom_tab_groups"
-        const val KEY_ALL_GROUPS = "all_tab_groups_v2"
-        const val KEY_ACTIVE_GROUP_ID = "active_group_id_v2"
-        const val KEY_WINDOW_URL_PREFIX = "window_url_"
-        const val KEY_WINDOW_TITLE_PREFIX = "window_title_"
-        const val KEY_WINDOW_SYMBOL_PREFIX = "window_symbol_"
+        private const val PREFS_NAME = "trading_multiview_prefs"
+        private const val KEY_CUSTOM_GROUPS = "custom_tab_groups"
     }
 
     init {
@@ -861,19 +743,15 @@ class TradingViewModel : ViewModel() {
         val targetGroup = updatedGroups.find { it.id == groupId } ?: return
 
         _uiState.update { state ->
-            var reloadStaggerIndex = 0
             val updatedWindows = state.windows.mapIndexed { index, win ->
                 val targetItem = targetGroup.items.getOrNull(index) ?: targetGroup.items.first()
                 val targetUrl = targetItem.url
 
-                // 核心性能优化 1：如果网页没有改变（如前后两个标签集合对应窗口都是 BTC 或相同网址），
+                // 核心性能优化：如果网页没有改变（如前后两个标签集合对应窗口都是 BTC 或相同网址），
                 // 绝不重新加载网页，不需要对网页重新缩放，保持当前视窗图表毫秒级瞬显！
-                // 核心性能优化 2：若必须重新加载，拉开 120ms 错峰间隔，避免 24 图瞬间并发冲击网络和解析线程！
                 val urlChanged = !PersistentWebViewPool.isSameUrl(win.currentUrl, targetUrl)
                 if (urlChanged) {
-                    val delay = reloadStaggerIndex * 120L
-                    reloadStaggerIndex++
-                    PersistentWebViewPool.loadCustomUrlStaggered(win.id, targetUrl, delayMs = delay)
+                    PersistentWebViewPool.loadCustomUrl(win.id, targetUrl)
                 }
 
                 win.copy(
@@ -888,8 +766,6 @@ class TradingViewModel : ViewModel() {
                 activeGroupId = groupId
             )
         }
-        // 关键持久化：切换分组后立即保存最新状态
-        saveStateToPrefs()
     }
 
     /**
@@ -973,108 +849,53 @@ class TradingViewModel : ViewModel() {
         _uiState.update { it.copy(groups = updatedGroups, activeGroupId = newGroup.id) }
 
         // 持久化保存至 SharedPreferences
-        saveStateToPrefs(context)
+        persistCustomGroupsToPrefs(updatedGroups.filter { !it.isPreset }, context)
     }
 
     /**
-     * 从 SharedPreferences 恢复用户保存的所有配置（视窗网址、标题、激活分组以及分组列表）
+     * 从 SharedPreferences 加载已保存的用户自定义分组
      */
-    fun loadSavedStateFromPrefs(context: Context) {
-        val appCtx = context.applicationContext
-        this.appContext = appCtx
+    fun loadSavedGroupsFromPrefs(context: Context) {
         try {
-            val prefs = appCtx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val jsonString = prefs.getString(KEY_CUSTOM_GROUPS, null) ?: return
+            val jsonArray = JSONArray(jsonString)
+            val customGroups = mutableListOf<TabGroup>()
 
-            // 1. 加载所有分组数据（包含用户对预设分组 1/2/3 网址的修改以及自定义新增分组）
-            val savedAllGroupsJson = prefs.getString(KEY_ALL_GROUPS, null)
-            val loadedGroups = if (!savedAllGroupsJson.isNullOrBlank()) {
-                deserializeGroupsFromJson(savedAllGroupsJson)
-            } else {
-                // 兼容旧版 custom_tab_groups
-                val oldCustomJson = prefs.getString(KEY_CUSTOM_GROUPS, null)
-                if (!oldCustomJson.isNullOrBlank()) {
-                    DEFAULT_TAB_GROUPS + deserializeGroupsFromJson(oldCustomJson)
-                } else {
-                    DEFAULT_TAB_GROUPS
+            for (i in 0 until jsonArray.length()) {
+                val obj = jsonArray.getJSONObject(i)
+                val id = obj.getString("id")
+                val name = obj.getString("name")
+                val desc = obj.optString("description", "")
+                val itemsArray = obj.getJSONArray("items")
+                val items = mutableListOf<TabGroupItem>()
+
+                for (j in 0 until itemsArray.length()) {
+                    val itemObj = itemsArray.getJSONObject(j)
+                    items.add(
+                        TabGroupItem(
+                            title = itemObj.getString("title"),
+                            symbol = itemObj.getString("symbol"),
+                            url = itemObj.getString("url"),
+                            timeframe = itemObj.optString("timeframe", "15m")
+                        )
+                    )
                 }
-            }
 
-            // 2. 加载之前激活的分组 ID
-            val savedActiveId = prefs.getString(KEY_ACTIVE_GROUP_ID, null)
-            val finalActiveId = if (savedActiveId != null && loadedGroups.any { it.id == savedActiveId }) {
-                savedActiveId
-            } else {
-                loadedGroups.firstOrNull()?.id ?: "preset_1"
-            }
-
-            val currentActiveGroup = loadedGroups.find { it.id == finalActiveId } ?: loadedGroups.firstOrNull()
-
-            // 3. 恢复每个视窗的用户自定义 URL、标题与代码
-            val restoredWindows = _uiState.value.windows.map { win ->
-                val savedUrl = prefs.getString("window_url_\${win.id}", null)
-                val savedTitle = prefs.getString("window_title_\${win.id}", null)
-                val savedSymbol = prefs.getString("window_symbol_\${win.id}", null)
-                val groupItem = currentActiveGroup?.items?.getOrNull(win.id - 1)
-
-                val finalUrl = when {
-                    !savedUrl.isNullOrBlank() -> savedUrl
-                    groupItem != null && groupItem.url.isNotBlank() -> groupItem.url
-                    else -> PersistentWebViewPool.DEFAULT_URLS[win.id] ?: "https://www.tradingview.com"
-                }
-                val finalTitle = savedTitle ?: groupItem?.title ?: win.title
-                val finalSymbol = savedSymbol ?: groupItem?.symbol ?: win.symbol
-
-                win.copy(
-                    currentUrl = finalUrl,
-                    title = finalTitle,
-                    symbol = finalSymbol
+                customGroups.add(
+                    TabGroup(
+                        id = id,
+                        name = name,
+                        isPreset = false,
+                        description = desc,
+                        items = items
+                    )
                 )
             }
 
             _uiState.update { state ->
-                state.copy(
-                    groups = loadedGroups,
-                    activeGroupId = finalActiveId,
-                    windows = restoredWindows
-                )
+                state.copy(groups = DEFAULT_TAB_GROUPS + customGroups)
             }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-    }
-
-    /**
-     * 保持向后兼容性方法
-     */
-    fun loadSavedGroupsFromPrefs(context: Context) {
-        loadSavedStateFromPrefs(context)
-    }
-
-    /**
-     * 将当前全部状态（当前 3 视窗输入的最新网址、标题、激活分组 ID 与全部标签组）异步持久化至本地 SharedPreferences
-     */
-    fun saveStateToPrefs(context: Context? = null) {
-        val targetContext = context?.applicationContext ?: appContext ?: return
-        try {
-            val currentState = _uiState.value
-            val prefs = targetContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            val editor = prefs.edit()
-
-            // 保存 3 个视窗当前最新的 URL、标题和代币代码
-            currentState.windows.forEach { win ->
-                editor.putString("window_url_\${win.id}", win.currentUrl)
-                editor.putString("window_title_\${win.id}", win.title)
-                editor.putString("window_symbol_\${win.id}", win.symbol)
-            }
-
-            // 保存当前激活的标签分组 ID
-            editor.putString(KEY_ACTIVE_GROUP_ID, currentState.activeGroupId)
-
-            // 保存全部分组（包含用户对每个标签输入的网址修改与自定义分组）
-            val jsonString = serializeGroupsToJson(currentState.groups)
-            editor.putString(KEY_ALL_GROUPS, jsonString)
-
-            editor.apply()
         } catch (e: Exception) {
             e.printStackTrace()
         }
@@ -1086,70 +907,41 @@ class TradingViewModel : ViewModel() {
     fun deleteCustomGroup(groupId: String, context: Context) {
         _uiState.update { state ->
             val updated = state.groups.filter { it.id != groupId }
-            val nextActiveId = if (state.activeGroupId == groupId) "preset_1" else state.activeGroupId
+            val nextActiveId = if (state.activeGroupId == groupId) "preset_major" else state.activeGroupId
+            persistCustomGroupsToPrefs(updated.filter { !it.isPreset }, context)
             state.copy(groups = updated, activeGroupId = nextActiveId)
         }
-        saveStateToPrefs(context)
     }
 
-    private fun serializeGroupsToJson(groups: List<TabGroup>): String {
-        val jsonArray = JSONArray()
-        groups.forEach { group ->
-            val obj = JSONObject().apply {
-                put("id", group.id)
-                put("name", group.name)
-                put("isPreset", group.isPreset)
-                put("description", group.description)
-                val itemsArr = JSONArray()
-                group.items.forEach { item ->
-                    val itemObj = JSONObject().apply {
-                        put("title", item.title)
-                        put("symbol", item.symbol)
-                        put("url", item.url)
-                        put("timeframe", item.timeframe)
+    private fun persistCustomGroupsToPrefs(customGroups: List<TabGroup>, context: Context) {
+        try {
+            val jsonArray = JSONArray()
+            customGroups.forEach { group ->
+                val obj = JSONObject().apply {
+                    put("id", group.id)
+                    put("name", group.name)
+                    put("description", group.description)
+                    val itemsArr = JSONArray()
+                    group.items.forEach { item ->
+                        val itemObj = JSONObject().apply {
+                            put("title", item.title)
+                            put("symbol", item.symbol)
+                            put("url", item.url)
+                            put("timeframe", item.timeframe)
+                        }
+                        itemsArr.put(itemObj)
                     }
-                    itemsArr.put(itemObj)
+                    put("items", itemsArr)
                 }
-                put("items", itemsArr)
+                jsonArray.put(obj)
             }
-            jsonArray.put(obj)
+            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putString(KEY_CUSTOM_GROUPS, jsonArray.toString())
+                .apply()
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
-        return jsonArray.toString()
-    }
-
-    private fun deserializeGroupsFromJson(jsonString: String): List<TabGroup> {
-        val jsonArray = JSONArray(jsonString)
-        val groups = mutableListOf<TabGroup>()
-        for (i in 0 until jsonArray.length()) {
-            val obj = jsonArray.getJSONObject(i)
-            val id = obj.getString("id")
-            val name = obj.getString("name")
-            val isPreset = obj.optBoolean("isPreset", false)
-            val desc = obj.optString("description", "")
-            val itemsArray = obj.getJSONArray("items")
-            val items = mutableListOf<TabGroupItem>()
-            for (j in 0 until itemsArray.length()) {
-                val itemObj = itemsArray.getJSONObject(j)
-                items.add(
-                    TabGroupItem(
-                        title = itemObj.getString("title"),
-                        symbol = itemObj.getString("symbol"),
-                        url = itemObj.getString("url"),
-                        timeframe = itemObj.optString("timeframe", "15m")
-                    )
-                )
-            }
-            groups.add(
-                TabGroup(
-                    id = id,
-                    name = name,
-                    isPreset = isPreset,
-                    description = desc,
-                    items = items
-                )
-            )
-        }
-        return groups
     }
 
     /**
@@ -1342,8 +1134,6 @@ class TradingViewModel : ViewModel() {
                 groups = updatedGroups
             )
         }
-        // 关键持久化：用户修改视窗网址后立即自动保存到本地偏好中
-        saveStateToPrefs()
     }
 
     /**
@@ -1442,22 +1232,6 @@ fun TradingMultiViewScreen(
     // 初始化时加载本地存储的自定义分组
     LaunchedEffect(Unit) {
         viewModel.loadSavedGroupsFromPrefs(context)
-    }
-
-    // 智能视窗休眠调度（非激活视窗智能休眠）：
-    // 当窗口被隐藏、全屏遮挡或非活动时，自动暂停后台 Canvas 重绘与动画，
-    // 让当前前台活跃的窗口独享 GPU 与 CPU 算力；恢复时瞬间唤醒！
-    val hiddenFlags = remember(uiState.windows) { uiState.windows.map { it.isHidden } }
-    DisposableEffect(uiState.maximizedWindowId, hiddenFlags) {
-        uiState.windows.forEach { win ->
-            val isSleeping = win.isHidden || (uiState.maximizedWindowId != null && uiState.maximizedWindowId != win.id)
-            if (isSleeping) {
-                PersistentWebViewPool.pauseWindow(win.id)
-            } else {
-                PersistentWebViewPool.resumeWindow(win.id)
-            }
-        }
-        onDispose { }
     }
 
     Column(

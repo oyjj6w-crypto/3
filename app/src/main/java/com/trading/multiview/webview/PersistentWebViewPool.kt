@@ -3,8 +3,6 @@ package com.trading.multiview.webview
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Bitmap
-import android.os.Handler
-import android.os.Looper
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.*
@@ -51,6 +49,24 @@ object PersistentWebViewPool {
     // 强制各大交易所与行情站（Binance, TradingView, OKX, Bybit 等）加载完整版 PC 桌面交易终端
     const val PC_DESKTOP_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
 
+    // 固定像素桌面视口基准预设 (默认 1280px 标准桌面基准)
+    data class FixedPixelPreset(
+        val width: Int,
+        val label: String,
+        val badge: String,
+        val description: String
+    )
+
+    val PRESET_FIXED_PIXEL_WIDTHS = listOf(
+        FixedPixelPreset(960, "960px", "紧凑", "960px 紧凑视口 (适合小屏平板或分屏)"),
+        FixedPixelPreset(1280, "1280px", "标准 PC", "1280px 标准 PC 基准 (推荐，完整展现桌面工具栏与指标)"),
+        FixedPixelPreset(1440, "1440px", "2K 宽屏", "1440px 2K 宽屏视口 (呈现更宽阔图表视野)"),
+        FixedPixelPreset(1920, "1920px", "1080P 全高清", "1920px 全高清视口 (超宽视界，高精细度)")
+    )
+
+    // 默认 1280px 标准桌面基准
+    var fixedPixelWidth: Int = 1280
+
     // 默认保存当前用户设定的全局缩放比例 (默认 100%)
     var currentZoomPercent: Int = 100
 
@@ -69,16 +85,21 @@ object PersistentWebViewPool {
     }
 
     /**
-     * 动态桌面视口与全景自适应缩放引擎 (Auto-Fit Desktop Viewport Engine)
+     * 固定像素桌面视口与全景自适应缩放引擎 (Fixed-Pixel Desktop Viewport Engine)
      * 核心设计：
-     * 1. 强制设定 width=1280 桌面宽屏标准，击穿 TradingView @media 手机端断点，确保展示全部 8 分屏与桌面工具栏；
-     * 2. 根据当前视窗在平板上的精确物理/显示宽度（以 dp 为单位，如 3 分屏下单窗 ~380-426dp），
-     *    动态计算最优缩放系数 autoScale = (widthDp / 1280.0) * (currentZoomPercent / 100.0)；
-     *    例如：单窗宽度 384dp -> autoScale = 0.3000；1280 * 0.3000 = 384dp，刚好 100% 贴合屏幕宽度！
-     * 3. 彻底告别刷新后右侧被截断、需手动两指捏合缩放的痛点；
-     * 4. 智能缓存判断：如果当前网页缩放比例未发生改变，自动拦截并跳过 DOM 修改与重排，大幅加快网页展示！
+     * 1. 引入 fixedPixelWidth (默认 1280px 标准桌面基准，支持 960px/1280px/1440px/1920px)；
+     * 2. 彻底击穿 TradingView @media 移动端响应式折叠断点，确保完整展现顶部时间周期工具条、
+     *    左侧画线指标栏、右侧精确价格刻度与完整蜡烛图；
+     * 3. 根据当前视窗在平板上的精确物理宽度 (dp)，动态计算最优缩放比：
+     *    autoScale = (widthDp / targetPixelWidth) * (zoomPercent / 100.0)；
+     * 4. 通过 evaluateJavascript 实时注入与热更新 DOM 视口，无需刷新页面，不中断 WebSocket 行情流！
      */
-    fun injectDesktopViewport(webView: WebView, zoomPercent: Int = currentZoomPercent, force: Boolean = false) {
+    fun injectDesktopViewport(
+        webView: WebView,
+        targetPixelWidth: Int = fixedPixelWidth,
+        zoomPercent: Int = currentZoomPercent,
+        force: Boolean = false
+    ) {
         val windowId = (webView.tag as? Int) ?: webViewMap.entries.find { it.value == webView }?.key
         val metrics = webView.context.resources.displayMetrics
         val density = metrics.density
@@ -88,28 +109,31 @@ object PersistentWebViewPool {
         } else {
             (metrics.widthPixels / density) / 3f
         }
-        val desktopWidth = 1280f
+        val desktopWidth = targetPixelWidth.toFloat()
         val zoomFactor = (zoomPercent.coerceIn(50, 250)) / 100f
-        val calculatedScale = ((widthDp / desktopWidth) * zoomFactor).coerceIn(0.15f, 2.0f)
+        val calculatedScale = ((widthDp / desktopWidth) * zoomFactor).coerceIn(0.10f, 3.0f)
         val scaleStr = String.format(java.util.Locale.US, "%.4f", calculatedScale)
 
-        // 核心优化：如果未强制重置，且该视窗已经成功注入过相同的缩放比例，
-        // 则坚决跳过 JS 注入与 Chromium 布局重排，杜绝标签集合切换时重复缩放！
-        if (!force && windowId != null && appliedScaleMap[windowId] == scaleStr) {
+        val cacheKey = "${targetPixelWidth}_${scaleStr}"
+        // 核心优化：如果未强制重置，且该视窗已经成功注入过相同的目标宽度和缩放比例，
+        // 则跳过 JS 注入与 Chromium 布局重排，杜绝重复计算
+        if (!force && windowId != null && appliedScaleMap[windowId] == cacheKey) {
             return
         }
         if (windowId != null) {
-            appliedScaleMap[windowId] = scaleStr
+            appliedScaleMap[windowId] = cacheKey
         }
 
         val script = """
             (function() {
+                var targetWidth = $targetPixelWidth;
                 var targetScale = '$scaleStr';
-                if (window.__current_applied_desktop_scale === targetScale) {
+                if (window.__current_applied_fixed_width === targetWidth && window.__current_applied_desktop_scale === targetScale) {
                     return; // 网页内部视口已生效相同比例，立即返回，防止二次重绘
                 }
+                window.__current_applied_fixed_width = targetWidth;
                 window.__current_applied_desktop_scale = targetScale;
-                var targetContent = 'width=1280, initial-scale=' + targetScale + ', minimum-scale=0.1, maximum-scale=5.0, user-scalable=yes';
+                var targetContent = 'width=' + targetWidth + ', initial-scale=' + targetScale + ', minimum-scale=0.1, maximum-scale=5.0, user-scalable=yes';
                 function applyDesktop() {
                     try {
                         var metas = document.getElementsByTagName('meta');
@@ -131,7 +155,6 @@ object PersistentWebViewPool {
                         }
 
                         // 仅注入纯深色背景底色防护，防止图表重绘和异步加载时的瞬时白闪
-                        // 坚决不覆盖 canvas 的 transform / translate3d，彻底避免 GPU 复合图层爆炸与 WebGL 显存崩溃！
                         var styleId = '__tv_bg_antiflicker__';
                         if (!document.getElementById(styleId)) {
                             var style = document.createElement('style');
@@ -140,7 +163,7 @@ object PersistentWebViewPool {
                             if (document.head) document.head.appendChild(style);
                         }
 
-                        // 模拟 PC 平台标头，但保留真实触屏支持（不覆写 maxTouchPoints），确保周期切换按钮与下拉菜单可流畅点击
+                        // 模拟 PC 平台标头，但保留真实触屏支持，确保周期切换按钮与下拉菜单流畅交互
                         if (window.navigator) {
                             try {
                                 Object.defineProperty(navigator, 'userAgentData', {
@@ -177,6 +200,30 @@ object PersistentWebViewPool {
         webView.evaluateJavascript(script, null)
     }
 
+    /**
+     * 动态热切换固定像素桌面视口基准 (960px / 1280px / 1440px / 1920px)
+     * 通过 evaluateJavascript 实时更新 DOM 视口，无需刷新页面，不中断 WebSocket 行情流
+     */
+    fun setFixedPixelWidth(newWidth: Int) {
+        fixedPixelWidth = newWidth
+        appliedScaleMap.clear()
+        webViewMap.forEach { (_, webView) ->
+            injectDesktopViewport(webView, targetPixelWidth = newWidth, force = true)
+        }
+    }
+
+    /**
+     * 循环切换下一个预设固定像素基准
+     */
+    fun cycleFixedPixelWidth(): Int {
+        val widths = PRESET_FIXED_PIXEL_WIDTHS.map { it.width }
+        val currentIndex = widths.indexOf(fixedPixelWidth)
+        val nextIndex = if (currentIndex in widths.indices) (currentIndex + 1) % widths.size else 1
+        val nextWidth = widths[nextIndex]
+        setFixedPixelWidth(nextWidth)
+        return nextWidth
+    }
+
     val DESKTOP_VIEWPORT_JS: String
         get() = """
             (function() {
@@ -185,43 +232,16 @@ object PersistentWebViewPool {
             })();
         """.trimIndent()
 
-    private val mainHandler = Handler(Looper.getMainLooper())
-    // 缓存每个视窗的休眠状态
-    private val pausedMap = java.util.concurrent.ConcurrentHashMap<Int, Boolean>()
-    private var appContext: Context? = null
-
-    /**
-     * 智能初始化：分屏并发平滑（错峰加载）+ 本地记忆持久化
-     * 启动时优先读取用户之前在视窗中输入的自定义网址（存放在 SharedPreferences），
-     * 只有初次安装或未自定义时才回退至 DEFAULT_URLS 官方行情！
-     */
     fun init(context: Context) {
         if (isInitialized) return
-        val appCtx = context.applicationContext
-        this.appContext = appCtx
-        val prefs = appCtx.getSharedPreferences("trading_multiview_prefs", Context.MODE_PRIVATE)
+        val appContext = context.applicationContext
         
-        // 为 3 个视窗分别创建专属 WebView 实例并错峰启动
-        listOf(1, 2, 3).forEachIndexed { index, windowId ->
-            val webView = createConfiguredWebView(appCtx, windowId)
+        // 为 3 个视窗分别创建专属 WebView 实例
+        listOf(1, 2, 3).forEach { windowId ->
+            val webView = createConfiguredWebView(appContext, windowId)
+            val initialUrl = DEFAULT_URLS[windowId] ?: "https://www.tradingview.com"
+            webView.loadUrl(initialUrl)
             webViewMap[windowId] = webView
-            
-            // 优先使用用户历史输入的网址
-            val savedUrl = prefs.getString("window_url_$windowId", null)
-            val initialUrl = if (!savedUrl.isNullOrBlank()) {
-                savedUrl
-            } else {
-                DEFAULT_URLS[windowId] ?: "https://www.tradingview.com"
-            }
-
-            val delayMs = index * 120L
-            if (delayMs == 0L) {
-                webView.loadUrl(initialUrl)
-            } else {
-                mainHandler.postDelayed({
-                    webView.loadUrl(initialUrl)
-                }, delayMs)
-            }
         }
         isInitialized = true
     }
@@ -288,12 +308,6 @@ object PersistentWebViewPool {
                     view?.let { injectDesktopViewport(it) }
                     if (url != null && url != lastReportedUrl) {
                         lastReportedUrl = url
-                        try {
-                            appContext?.getSharedPreferences("trading_multiview_prefs", Context.MODE_PRIVATE)
-                                ?.edit()
-                                ?.putString("window_url_$windowId", url)
-                                ?.apply()
-                        } catch (e: Exception) {}
                         onUrlChanged?.invoke(windowId, url, view?.title ?: "")
                     }
                 }
@@ -431,46 +445,6 @@ object PersistentWebViewPool {
     }
 
     /**
-     * 智能休眠视窗 (Intelligent Window Throttling)
-     * 当窗口被隐藏、全屏遮挡或非活动状态时调用：
-     * 1. 调用 webView.onPause() 通知 Chromium 将 document.visibilityState 设为 'hidden'；
-     * 2. Chromium 会主动暂停 requestAnimationFrame、停止 WebGL 画布重绘与复杂 CSS 动画；
-     * 3. 释放 GPU 算力与 CPU 占用（降至接近 0%），但维持 WebSocket 连接不中断，行情持续保活！
-     */
-    fun pauseWindow(windowId: Int) {
-        val webView = webViewMap[windowId] ?: return
-        if (pausedMap[windowId] == true) return
-        pausedMap[windowId] = true
-        try {
-            webView.onPause()
-            webView.evaluateJavascript("""
-                if (window.dispatchEvent) {
-                    try { document.dispatchEvent(new Event('visibilitychange')); } catch(e){}
-                }
-            """.trimIndent(), null)
-        } catch (e: Exception) {}
-    }
-
-    /**
-     * 智能唤醒视窗 (Resume Window)
-     * 当窗口恢复显示、退出最大化或切换回前台时调用：
-     * 立即恢复 full 60fps 渲染与 WebGL 画面更新！
-     */
-    fun resumeWindow(windowId: Int) {
-        val webView = webViewMap[windowId] ?: return
-        if (pausedMap[windowId] == false) return
-        pausedMap[windowId] = false
-        try {
-            webView.onResume()
-            webView.evaluateJavascript("""
-                if (window.dispatchEvent) {
-                    try { document.dispatchEvent(new Event('visibilitychange')); } catch(e){}
-                }
-            """.trimIndent(), null)
-        } catch (e: Exception) {}
-    }
-
-    /**
      * 智能加载 URL
      * 核心性能突破：
      * 如果目标网址与当前 WebView 正在显示的网址一致（忽略斜杠与格式），则坚决跳过重新加载！
@@ -478,14 +452,6 @@ object PersistentWebViewPool {
      * @return true 表示确实加载了新页面；false 表示页面相同已跳过
      */
     fun loadCustomUrl(windowId: Int, url: String, forceReload: Boolean = false): Boolean {
-        return loadCustomUrlStaggered(windowId, url, delayMs = 0L, forceReload = forceReload)
-    }
-
-    /**
-     * 错峰智能加载 URL
-     * 在标签集合切换时，让不同视窗拉开 120ms 的极微小错峰，彻底消除 24 个图表瞬间并发导致的 I/O 拥塞
-     */
-    fun loadCustomUrlStaggered(windowId: Int, url: String, delayMs: Long = 0L, forceReload: Boolean = false): Boolean {
         val formatted = formatUrl(url)
         val webView = webViewMap[windowId] ?: return false
         val current = webView.url ?: ""
@@ -493,25 +459,11 @@ object PersistentWebViewPool {
             return false
         }
         appliedScaleMap.remove(windowId)
-        try {
-            appContext?.getSharedPreferences("trading_multiview_prefs", Context.MODE_PRIVATE)
-                ?.edit()
-                ?.putString("window_url_$windowId", formatted)
-                ?.apply()
-        } catch (e: Exception) {}
-
-        if (delayMs <= 0L) {
-            webView.loadUrl(formatted)
-        } else {
-            mainHandler.postDelayed({
-                webView.loadUrl(formatted)
-            }, delayMs)
-        }
+        webView.loadUrl(formatted)
         return true
     }
 
     fun destroyAll() {
-        mainHandler.removeCallbacksAndMessages(null)
         webViewMap.forEach { (_, webView) ->
             (webView.parent as? ViewGroup)?.removeView(webView)
             webView.stopLoading()
@@ -519,7 +471,6 @@ object PersistentWebViewPool {
             webView.destroy()
         }
         webViewMap.clear()
-        pausedMap.clear()
         isInitialized = false
     }
 }
