@@ -261,6 +261,16 @@ export default function App() {
     setWindows((prev) =>
       prev.map((win, idx) => {
         const item = targetGroup.items[idx] || targetGroup.items[0];
+        // 核心性能优化：如果该窗口的网址、代码与标题都没有发生改变，直接复用原 window 引用，
+        // 绝不触发 iframe 重新渲染或重新计算缩放，实现零闪烁秒级显示！
+        if (
+          win.url === item.url &&
+          win.symbol === item.symbol &&
+          win.title === item.title &&
+          (item.timeframe ? win.timeframe === item.timeframe : true)
+        ) {
+          return win;
+        }
         return {
           ...win,
           title: item.title,

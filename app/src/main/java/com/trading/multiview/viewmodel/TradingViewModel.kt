@@ -167,11 +167,19 @@ class TradingViewModel : ViewModel() {
         _uiState.update { state ->
             val updatedWindows = state.windows.mapIndexed { index, win ->
                 val targetItem = targetGroup.items.getOrNull(index) ?: targetGroup.items.first()
-                PersistentWebViewPool.loadCustomUrl(win.id, targetItem.url)
+                val targetUrl = targetItem.url
+
+                // 核心性能优化：如果网页没有改变（如前后两个标签集合对应窗口都是 BTC 或相同网址），
+                // 绝不重新加载网页，不需要对网页重新缩放，保持当前视窗图表毫秒级瞬显！
+                val urlChanged = !PersistentWebViewPool.isSameUrl(win.currentUrl, targetUrl)
+                if (urlChanged) {
+                    PersistentWebViewPool.loadCustomUrl(win.id, targetUrl)
+                }
+
                 win.copy(
                     title = targetItem.title,
                     symbol = targetItem.symbol,
-                    currentUrl = targetItem.url
+                    currentUrl = targetUrl
                 )
             }
             state.copy(

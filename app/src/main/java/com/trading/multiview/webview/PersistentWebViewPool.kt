@@ -52,6 +52,20 @@ object PersistentWebViewPool {
     // 默认保存当前用户设定的全局缩放比例 (默认 100%)
     var currentZoomPercent: Int = 100
 
+    // 缓存每个视窗最近一次生效的缩放系数，避免重复注入导致 WebView 重复计算布局与重新缩放
+    private val appliedScaleMap = java.util.concurrent.ConcurrentHashMap<Int, String>()
+
+    /**
+     * 判断两个 URL 是否实质相同（智能忽略末尾斜杠、前后空格及协议大小写）
+     */
+    fun isSameUrl(url1: String?, url2: String?): Boolean {
+        if (url1.isNullOrBlank() && url2.isNullOrBlank()) return true
+        if (url1.isNullOrBlank() || url2.isNullOrBlank()) return false
+        val clean1 = url1.trim().trimEnd('/')
+        val clean2 = url2.trim().trimEnd('/')
+        return clean1.equals(clean2, ignoreCase = true)
+    }
+
     /**
      * 动态桌面视口与全景自适应缩放引擎 (Auto-Fit Desktop Viewport Engine)
      * 核心设计：
@@ -60,9 +74,10 @@ object PersistentWebViewPool {
      *    动态计算最优缩放系数 autoScale = (widthDp / 1280.0) * (currentZoomPercent / 100.0)；
      *    例如：单窗宽度 384dp -> autoScale = 0.3000；1280 * 0.3000 = 384dp，刚好 100% 贴合屏幕宽度！
      * 3. 彻底告别刷新后右侧被截断、需手动两指捏合缩放的痛点；
-     * 4. 不挂载 window.resize 监听，不修改 DOM 尺寸，杜绝 WebGL 上下文重建死循环与 GPU 闪退！
+     * 4. 智能缓存判断：如果当前网页缩放比例未发生改变，自动拦截并跳过 DOM 修改与重排，大幅加快网页展示！
      */
-    fun injectDesktopViewport(webView: WebView, zoomPercent: Int = currentZoomPercent) {
+    fun injectDesktopViewport(webView: WebView, zoomPercent: Int = currentZoomPercent, force: Boolean = false) {
+        val windowId = (webView.tag as? Int) ?: webViewMap.entries.find { it.value == webView }?.key
         val metrics = webView.context.resources.displayMetrics
         val density = metrics.density
         // 获取当前视窗在当前屏幕密度下的精确 CSS 像素宽度 (dp)
@@ -76,9 +91,23 @@ object PersistentWebViewPool {
         val calculatedScale = ((widthDp / desktopWidth) * zoomFactor).coerceIn(0.15f, 2.0f)
         val scaleStr = String.format(java.util.Locale.US, "%.4f", calculatedScale)
 
+        // 核心优化：如果未强制重置，且该视窗已经成功注入过相同的缩放比例，
+        // 则坚决跳过 JS 注入与 Chromium 布局重排，杜绝标签集合切换时重复缩放！
+        if (!force && windowId != null && appliedScaleMap[windowId] == scaleStr) {
+            return
+        }
+        if (windowId != null) {
+            appliedScaleMap[windowId] = scaleStr
+        }
+
         val script = """
             (function() {
-                var targetContent = 'width=1280, initial-scale=$scaleStr, minimum-scale=0.1, maximum-scale=5.0, user-scalable=yes';
+                var targetScale = '$scaleStr';
+                if (window.__current_applied_desktop_scale === targetScale) {
+                    return; // 网页内部视口已生效相同比例，立即返回，防止二次重绘
+                }
+                window.__current_applied_desktop_scale = targetScale;
+                var targetContent = 'width=1280, initial-scale=' + targetScale + ', minimum-scale=0.1, maximum-scale=5.0, user-scalable=yes';
                 function applyDesktop() {
                     try {
                         var metas = document.getElementsByTagName('meta');
@@ -89,6 +118,7 @@ object PersistentWebViewPool {
                                     metas[i].setAttribute('content', targetContent);
                                 }
                                 found = true;
+                                break;
                             }
                         }
                         if (!found) {
@@ -171,6 +201,7 @@ object PersistentWebViewPool {
     private fun createConfiguredWebView(context: Context, windowId: Int): WebView {
         return WebView(context).apply {
             id = View.generateViewId()
+            tag = windowId
             layoutParams = ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
@@ -272,6 +303,7 @@ object PersistentWebViewPool {
     }
 
     fun reloadWindow(windowId: Int) {
+        appliedScaleMap.remove(windowId)
         webViewMap[windowId]?.reload()
     }
 
@@ -285,7 +317,7 @@ object PersistentWebViewPool {
         val clampedZoom = zoomPercent.coerceIn(50, 250)
         currentZoomPercent = clampedZoom
         webView.settings.textZoom = clampedZoom
-        injectDesktopViewport(webView, clampedZoom)
+        injectDesktopViewport(webView, clampedZoom, force = true)
     }
 
     /**
@@ -295,7 +327,7 @@ object PersistentWebViewPool {
         val webView = webViewMap[windowId] ?: return
         currentZoomPercent = 100
         webView.settings.textZoom = 100
-        injectDesktopViewport(webView, 100)
+        injectDesktopViewport(webView, 100, force = true)
     }
 
     /**
@@ -315,8 +347,9 @@ object PersistentWebViewPool {
                 loadWithOverviewMode = false
             }
         }
+        appliedScaleMap.remove(windowId)
         if (enableDesktop) {
-            injectDesktopViewport(webView)
+            injectDesktopViewport(webView, currentZoomPercent, force = true)
         }
         webView.reload()
     }
@@ -362,9 +395,23 @@ object PersistentWebViewPool {
         }
     }
 
-    fun loadCustomUrl(windowId: Int, url: String) {
+    /**
+     * 智能加载 URL
+     * 核心性能突破：
+     * 如果目标网址与当前 WebView 正在显示的网址一致（忽略斜杠与格式），则坚决跳过重新加载！
+     * 避免网页重新加载、重绘与二次缩放，保持当前页面状态、K 线图表与 WebSocket 实时行情零延迟秒开！
+     * @return true 表示确实加载了新页面；false 表示页面相同已跳过
+     */
+    fun loadCustomUrl(windowId: Int, url: String, forceReload: Boolean = false): Boolean {
         val formatted = formatUrl(url)
-        webViewMap[windowId]?.loadUrl(formatted)
+        val webView = webViewMap[windowId] ?: return false
+        val current = webView.url ?: ""
+        if (!forceReload && isSameUrl(current, formatted)) {
+            return false
+        }
+        appliedScaleMap.remove(windowId)
+        webView.loadUrl(formatted)
+        return true
     }
 
     fun destroyAll() {

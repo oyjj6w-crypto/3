@@ -332,7 +332,7 @@ export const TradingWindow: React.FC<TradingWindowProps> = ({
                 : (zoomLevel !== 100 ? `scale(${zoomLevel / 100})` : undefined),
               transformOrigin: 'top left',
             }}
-            className={isDesktopMode ? "absolute top-0 left-0 transition-transform duration-75" : "w-full h-full overflow-hidden"}
+            className={isDesktopMode ? "absolute top-0 left-0" : "w-full h-full overflow-hidden"}
           >
             <iframe
               ref={iframeRef}
