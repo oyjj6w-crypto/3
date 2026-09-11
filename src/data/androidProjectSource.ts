@@ -156,6 +156,8 @@ object PersistentWebViewPool {
 
     // URL 变化监听回调 (windowId, newUrl, pageTitle)
     var onUrlChanged: ((Int, String, String) -> Unit)? = null
+    // 网页标题更新回调 (windowId, newTitle) - 独立解耦，避免价格频繁跳动触发 URL 变更重绘
+    var onTitleChanged: ((Int, String) -> Unit)? = null
 
     // 默认看盘标的预设 (默认加载 TradingView 官网 www.tradingview.com)
     val DEFAULT_URLS = mapOf(
@@ -218,7 +220,9 @@ object PersistentWebViewPool {
                         var found = false;
                         for (var i = 0; i < metas.length; i++) {
                             if (metas[i].getAttribute('name') === 'viewport') {
-                                metas[i].setAttribute('content', targetContent);
+                                if (metas[i].getAttribute('content') !== targetContent) {
+                                    metas[i].setAttribute('content', targetContent);
+                                }
                                 found = true;
                             }
                         }
@@ -228,6 +232,16 @@ object PersistentWebViewPool {
                             meta.setAttribute('content', targetContent);
                             if (document.head) document.head.appendChild(meta);
                         }
+
+                        // 注入针对 WebGL / Canvas 行情图表的 GPU 合成隔离样式，彻底消除数据更新时的重绘闪烁
+                        var styleId = '__tv_canvas_antiflicker__';
+                        if (!document.getElementById(styleId)) {
+                            var style = document.createElement('style');
+                            style.id = styleId;
+                            style.textContent = 'canvas, .chart-container, .tv-lightweight-charts { -webkit-transform: translate3d(0,0,0) !important; transform: translate3d(0,0,0) !important; -webkit-backface-visibility: hidden !important; backface-visibility: hidden !important; } html, body { background-color: #131722 !important; }';
+                            if (document.head) document.head.appendChild(style);
+                        }
+
                         if (window.navigator) {
                             Object.defineProperty(navigator, 'userAgentData', {
                                 get: function() {
@@ -300,8 +314,15 @@ object PersistentWebViewPool {
                 ViewGroup.LayoutParams.MATCH_PARENT
             )
 
-            // 启用硬件加速保证 WebGL / Canvas 行情高刷
-            setLayerType(View.LAYER_TYPE_HARDWARE, null)
+            // 关键优化 1：彻底解决 K 线图表在数据更新更正时的周期性闪烁！
+            // Android 窗口在 AndroidManifest 中已开启硬件加速，Chromium 原生通过专用 GPU 合成线程渲染 WebGL / Canvas。
+            // 显式设置 View 级别 LAYER_TYPE_HARDWARE 会强制 Android 分配额外的离屏 FBO 纹理；
+            // 当 TradingView 接收 WebSocket 价格更新重绘 Canvas 时，会造成离屏纹理无效化和重绘不同步闪烁。
+            // 设为 LAYER_TYPE_NONE 让 Chromium 直接渲染至硬件窗口表面，彻底消除闪烁！
+            setLayerType(View.LAYER_TYPE_NONE, null)
+
+            // 关键优化 2：强制设置底层背景为行情深黑色 (#131722)，消除任何图表重绘或缓冲区交换时的瞬时白闪
+            setBackgroundColor(android.graphics.Color.parseColor("#131722"))
 
             settings.apply {
                 javaScriptEnabled = true
@@ -327,12 +348,14 @@ object PersistentWebViewPool {
             // 默认设置 initialScale 为 0，启用 Android WebView 默认 Overview 自适应缩放
             setInitialScale(0)
 
+            var lastReportedUrl = ""
             webViewClient = object : WebViewClient() {
                 override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                     super.onPageStarted(view, url, favicon)
                     // 页面开始加载时，注入根据当前窗口宽度计算的黄金缩放桌面视口
                     view?.let { injectDesktopViewport(it) }
-                    if (url != null) {
+                    if (url != null && url != lastReportedUrl) {
+                        lastReportedUrl = url
                         onUrlChanged?.invoke(windowId, url, view?.title ?: "")
                     }
                 }
@@ -341,7 +364,16 @@ object PersistentWebViewPool {
                     super.onPageFinished(view, url)
                     // 页面渲染完成后再次加固注入，确保 TradingView 异步初始化后依然保持桌面宽屏自适应
                     view?.let { injectDesktopViewport(it) }
-                    if (url != null) {
+                    if (url != null && url != lastReportedUrl) {
+                        lastReportedUrl = url
+                        onUrlChanged?.invoke(windowId, url, view?.title ?: "")
+                    }
+                }
+
+                override fun doUpdateVisitedHistory(view: WebView?, url: String?, isReload: Boolean) {
+                    super.doUpdateVisitedHistory(view, url, isReload)
+                    if (url != null && url != lastReportedUrl) {
+                        lastReportedUrl = url
                         onUrlChanged?.invoke(windowId, url, view?.title ?: "")
                     }
                 }
@@ -358,9 +390,10 @@ object PersistentWebViewPool {
             webChromeClient = object : WebChromeClient() {
                 override fun onReceivedTitle(view: WebView?, title: String?) {
                     super.onReceivedTitle(view, title)
-                    val currentUrl = view?.url
-                    if (currentUrl != null && !title.isNullOrBlank()) {
-                        onUrlChanged?.invoke(windowId, currentUrl, title)
+                    // 关键优化 3：TradingView / Binance 每次 K 线数据更新更正（每十几秒）都会动态更新 document.title（如价格 68500 BTCUSDT）
+                    // 仅通知 onTitleChanged 更新标签栏文字，坚决不触发 onUrlChanged，杜绝 Compose 全局重组与 WebView 重载闪烁！
+                    if (!title.isNullOrBlank()) {
+                        onTitleChanged?.invoke(windowId, title)
                     }
                 }
 
@@ -627,6 +660,10 @@ class TradingViewModel : ViewModel() {
         // 挂载 WebView 实时 URL 变更监听，保证视窗地址栏与 WebView 浏览状态精准同步
         PersistentWebViewPool.onUrlChanged = { windowId, url, pageTitle ->
             updateWindowUrl(windowId, url, if (pageTitle.isNotBlank()) pageTitle else null)
+        }
+        // 挂载网页标题变更监听（如 TradingView 跳价更正，仅更新标签栏文字，不触碰 URL）
+        PersistentWebViewPool.onTitleChanged = { windowId, pageTitle ->
+            updateWindowTitle(windowId, pageTitle)
         }
     }
 
@@ -982,6 +1019,10 @@ class TradingViewModel : ViewModel() {
      * 更新指定视窗 URL
      */
     fun updateWindowUrl(windowId: Int, newUrl: String, title: String? = null) {
+        val currentWin = _uiState.value.windows.find { it.id == windowId }
+        if (currentWin != null && currentWin.currentUrl == newUrl && (title == null || currentWin.title == title)) {
+            return
+        }
         _uiState.update { state ->
             state.copy(
                 windows = state.windows.map { win ->
@@ -991,6 +1032,21 @@ class TradingViewModel : ViewModel() {
                             title = title ?: win.title
                         )
                     } else win
+                }
+            )
+        }
+    }
+
+    /**
+     * 仅更新窗口标题 (如 TradingView 行情跳价更正，不触碰 URL，不触发导航)
+     */
+    fun updateWindowTitle(windowId: Int, title: String) {
+        val currentWin = _uiState.value.windows.find { it.id == windowId }
+        if (currentWin == null || currentWin.title == title) return
+        _uiState.update { state ->
+            state.copy(
+                windows = state.windows.map { win ->
+                    if (win.id == windowId) win.copy(title = title) else win
                 }
             )
         }
@@ -1049,6 +1105,20 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.trading.multiview.viewmodel.TradingViewModel
 import com.trading.multiview.viewmodel.WindowState
 import com.trading.multiview.webview.PersistentWebViewPool
+import android.app.Activity
+import android.content.pm.ActivityInfo
+import android.content.ContextWrapper
+
+private fun Context.findActivity(): Activity? {
+    var currentContext = this
+    while (currentContext is ContextWrapper) {
+        if (currentContext is Activity) {
+            return currentContext
+        }
+        currentContext = currentContext.baseContext
+    }
+    return null
+}
 
 @Composable
 fun TradingMultiViewScreen(
@@ -1316,6 +1386,32 @@ fun TradingMultiViewScreen(
                             imageVector = if (!uiState.isGlobalUrlCollapsed) Icons.Default.ExpandLess else Icons.Default.Settings,
                             contentDescription = "配置网址",
                             tint = if (!uiState.isGlobalUrlCollapsed) Color.White else Color(0xFFCBD5E1),
+                            modifier = Modifier.size(15.dp)
+                        )
+                    }
+
+                    // 屏幕旋转按钮：标准 30dp x 30dp 方形，圆角 6dp，支持横屏/竖屏自由切换
+                    Box(
+                        modifier = Modifier
+                            .size(30.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(Color(0xFF1E293B))
+                            .border(1.dp, Color(0xFF334155), RoundedCornerShape(6.dp))
+                            .clickable {
+                                val activity = context.findActivity()
+                                val isLandscape = context.resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+                                activity?.requestedOrientation = if (isLandscape) {
+                                    ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+                                } else {
+                                    ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                                }
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.ScreenRotation,
+                            contentDescription = "旋转屏幕",
+                            tint = Color(0xFF38BDF8),
                             modifier = Modifier.size(15.dp)
                         )
                     }

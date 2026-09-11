@@ -127,6 +127,10 @@ class TradingViewModel : ViewModel() {
         PersistentWebViewPool.onUrlChanged = { windowId, url, pageTitle ->
             updateWindowUrl(windowId, url, if (pageTitle.isNotBlank()) pageTitle else null)
         }
+        // 挂载网页标题变更监听（如 TradingView 跳价更正，仅更新标签栏文字，不触碰 URL）
+        PersistentWebViewPool.onTitleChanged = { windowId, pageTitle ->
+            updateWindowTitle(windowId, pageTitle)
+        }
     }
 
     /**
@@ -504,6 +508,10 @@ class TradingViewModel : ViewModel() {
      * 更新指定视窗 URL
      */
     fun updateWindowUrl(windowId: Int, newUrl: String, title: String? = null) {
+        val currentWin = _uiState.value.windows.find { it.id == windowId }
+        if (currentWin != null && currentWin.currentUrl == newUrl && (title == null || currentWin.title == title)) {
+            return
+        }
         _uiState.update { state ->
             state.copy(
                 windows = state.windows.map { win ->
@@ -513,6 +521,21 @@ class TradingViewModel : ViewModel() {
                             title = title ?: win.title
                         )
                     } else win
+                }
+            )
+        }
+    }
+
+    /**
+     * 仅更新窗口标题 (如 TradingView 行情跳价更正，不触碰 URL，不触发导航)
+     */
+    fun updateWindowTitle(windowId: Int, title: String) {
+        val currentWin = _uiState.value.windows.find { it.id == windowId }
+        if (currentWin == null || currentWin.title == title) return
+        _uiState.update { state ->
+            state.copy(
+                windows = state.windows.map { win ->
+                    if (win.id == windowId) win.copy(title = title) else win
                 }
             )
         }

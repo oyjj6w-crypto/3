@@ -46,6 +46,20 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.trading.multiview.viewmodel.TradingViewModel
 import com.trading.multiview.viewmodel.WindowState
 import com.trading.multiview.webview.PersistentWebViewPool
+import android.app.Activity
+import android.content.pm.ActivityInfo
+import android.content.ContextWrapper
+
+private fun Context.findActivity(): Activity? {
+    var currentContext = this
+    while (currentContext is ContextWrapper) {
+        if (currentContext is Activity) {
+            return currentContext
+        }
+        currentContext = currentContext.baseContext
+    }
+    return null
+}
 
 @Composable
 fun TradingMultiViewScreen(
@@ -316,6 +330,32 @@ fun TradingMultiViewScreen(
                             modifier = Modifier.size(15.dp)
                         )
                     }
+
+                    // 屏幕旋转按钮：标准 30dp x 30dp 方形，圆角 6dp，支持横屏/竖屏自由切换
+                    Box(
+                        modifier = Modifier
+                            .size(30.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(Color(0xFF1E293B))
+                            .border(1.dp, Color(0xFF334155), RoundedCornerShape(6.dp))
+                            .clickable {
+                                val activity = context.findActivity()
+                                val isLandscape = context.resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+                                activity?.requestedOrientation = if (isLandscape) {
+                                    ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+                                } else {
+                                    ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                                }
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.ScreenRotation,
+                            contentDescription = "旋转屏幕",
+                            tint = Color(0xFF38BDF8),
+                            modifier = Modifier.size(15.dp)
+                        )
+                    }
                 }
             }
         }
@@ -469,7 +509,8 @@ fun TradingMultiViewScreen(
                                 .border(1.dp, Color(0xFF1E293B))
                         ) {
                             SingleTradingWindowView(
-                                window = window
+                                windowId = window.id,
+                                zoomPercent = window.zoomPercent
                             )
                         }
                     }
@@ -586,10 +627,12 @@ fun SaveGroupDialog(
 
 /**
  * 单个看盘视窗：纯净图表全屏渲染 (窗口内彻底移除 W1/W2/W3 状态、刷新、最大化、隐藏等任何按钮与遮挡)
+ * 仅依赖 windowId 与 zoomPercent，完全解耦 title 与 url 的频繁变动，坚决防止 Compose 重组引发闪烁！
  */
 @Composable
 fun SingleTradingWindowView(
-    window: WindowState,
+    windowId: Int,
+    zoomPercent: Int,
     modifier: Modifier = Modifier
 ) {
     Box(
@@ -600,7 +643,7 @@ fun SingleTradingWindowView(
         // ================= 底层常驻 WebView (100% 纯净满屏渲染) =================
         AndroidView(
             factory = { context ->
-                val webView = PersistentWebViewPool.getWebView(window.id)
+                val webView = PersistentWebViewPool.getWebView(windowId)
                     ?: android.webkit.WebView(context)
 
                 // 确保从旧父容器解绑并添加到当前视窗
@@ -608,16 +651,14 @@ fun SingleTradingWindowView(
                 
                 // 当 View 完成排版测量拥有实际像素尺寸后，注入基于实际物理宽度的黄金桌面自适应缩放
                 webView.post {
-                    PersistentWebViewPool.injectDesktopViewport(webView, window.zoomPercent)
+                    PersistentWebViewPool.injectDesktopViewport(webView, zoomPercent)
                 }
 
                 webView
             },
             update = { webView ->
-                // 仅当 URL 与当前加载的不同时才触发 loadUrl，坚决防止重绘刷新中断 WebSocket！
-                if (webView.url != window.currentUrl && window.currentUrl.isNotEmpty()) {
-                    webView.loadUrl(window.currentUrl)
-                }
+                // WebView 实例在 PersistentWebViewPool 中完全独立常驻并保持单例运行，
+                // 严禁在 Compose 的 update 回调中执行 reload 或 loadUrl，保证图表 WebSocket 持续保活且零重绘闪烁！
             },
             modifier = Modifier.fillMaxSize()
         )

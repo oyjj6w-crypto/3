@@ -21,6 +21,8 @@ object PersistentWebViewPool {
 
     // URL 变化监听回调 (windowId, newUrl, pageTitle)
     var onUrlChanged: ((Int, String, String) -> Unit)? = null
+    // 网页标题更新回调 (windowId, newTitle) - 独立解耦，避免价格频繁跳动触发 URL 变更重绘
+    var onTitleChanged: ((Int, String) -> Unit)? = null
 
     // 默认看盘标的预设 (默认加载 TradingView 官网 www.tradingview.com)
     val DEFAULT_URLS = mapOf(
@@ -83,7 +85,9 @@ object PersistentWebViewPool {
                         var found = false;
                         for (var i = 0; i < metas.length; i++) {
                             if (metas[i].getAttribute('name') === 'viewport') {
-                                metas[i].setAttribute('content', targetContent);
+                                if (metas[i].getAttribute('content') !== targetContent) {
+                                    metas[i].setAttribute('content', targetContent);
+                                }
                                 found = true;
                             }
                         }
@@ -93,6 +97,16 @@ object PersistentWebViewPool {
                             meta.setAttribute('content', targetContent);
                             if (document.head) document.head.appendChild(meta);
                         }
+
+                        // 注入 GPU 硬件加速隔离样式，防止 K 线图表 Canvas/WebGL 在数据更正与重绘时被清除引起闪白
+                        var styleId = '__tv_canvas_antiflicker__';
+                        if (!document.getElementById(styleId)) {
+                            var style = document.createElement('style');
+                            style.id = styleId;
+                            style.textContent = 'canvas, .chart-container, .tv-lightweight-charts { -webkit-transform: translate3d(0,0,0) !important; transform: translate3d(0,0,0) !important; -webkit-backface-visibility: hidden !important; backface-visibility: hidden !important; } html, body { background-color: #131722 !important; }';
+                            if (document.head) document.head.appendChild(style);
+                        }
+
                         if (window.navigator) {
                             Object.defineProperty(navigator, 'userAgentData', {
                                 get: function() {
@@ -165,8 +179,15 @@ object PersistentWebViewPool {
                 ViewGroup.LayoutParams.MATCH_PARENT
             )
 
-            // 启用硬件加速保证 WebGL / Canvas 行情高刷
-            setLayerType(View.LAYER_TYPE_HARDWARE, null)
+            // 关键优化 1：彻底解决 K 线图表在数据更新更正时的周期性闪烁！
+            // Android 窗口在 AndroidManifest 中已开启硬件加速，Chromium 原生通过专用 GPU 合成线程渲染 WebGL / Canvas。
+            // 显式设置 View 级别 LAYER_TYPE_HARDWARE 会强制 Android 分配额外的离屏 FBO 纹理；
+            // 当 TradingView 接收 WebSocket 价格更新重绘 Canvas 时，会造成离屏纹理无效化和重绘不同步闪烁。
+            // 设为 LAYER_TYPE_NONE 让 Chromium 直接渲染至硬件窗口表面，彻底消除闪烁！
+            setLayerType(View.LAYER_TYPE_NONE, null)
+
+            // 关键优化 2：强制设置底层背景为行情深黑色 (#131722)，消除任何图表重绘或缓冲区交换时的瞬时白闪
+            setBackgroundColor(android.graphics.Color.parseColor("#131722"))
 
             settings.apply {
                 javaScriptEnabled = true
@@ -192,12 +213,14 @@ object PersistentWebViewPool {
             // 默认设置 initialScale 为 0，启用 Android WebView 默认 Overview 自适应缩放
             setInitialScale(0)
 
+            var lastReportedUrl = ""
             webViewClient = object : WebViewClient() {
                 override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                     super.onPageStarted(view, url, favicon)
                     // 页面开始加载时，注入根据当前窗口宽度计算的黄金缩放桌面视口
                     view?.let { injectDesktopViewport(it) }
-                    if (url != null) {
+                    if (url != null && url != lastReportedUrl) {
+                        lastReportedUrl = url
                         onUrlChanged?.invoke(windowId, url, view?.title ?: "")
                     }
                 }
@@ -206,7 +229,16 @@ object PersistentWebViewPool {
                     super.onPageFinished(view, url)
                     // 页面渲染完成后再次加固注入，确保 TradingView 异步初始化后依然保持桌面宽屏自适应
                     view?.let { injectDesktopViewport(it) }
-                    if (url != null) {
+                    if (url != null && url != lastReportedUrl) {
+                        lastReportedUrl = url
+                        onUrlChanged?.invoke(windowId, url, view?.title ?: "")
+                    }
+                }
+
+                override fun doUpdateVisitedHistory(view: WebView?, url: String?, isReload: Boolean) {
+                    super.doUpdateVisitedHistory(view, url, isReload)
+                    if (url != null && url != lastReportedUrl) {
+                        lastReportedUrl = url
                         onUrlChanged?.invoke(windowId, url, view?.title ?: "")
                     }
                 }
@@ -223,9 +255,10 @@ object PersistentWebViewPool {
             webChromeClient = object : WebChromeClient() {
                 override fun onReceivedTitle(view: WebView?, title: String?) {
                     super.onReceivedTitle(view, title)
-                    val currentUrl = view?.url
-                    if (currentUrl != null && !title.isNullOrBlank()) {
-                        onUrlChanged?.invoke(windowId, currentUrl, title)
+                    // 关键优化 3：TradingView / Binance 每次 K 线数据更新更正（每十几秒）都会动态更新 document.title（如价格 68500 BTCUSDT）
+                    // 仅通知 onTitleChanged 更新标签栏文字，坚决不触发 onUrlChanged，杜绝 Compose 全局重组与 WebView 重载闪烁！
+                    if (!title.isNullOrBlank()) {
+                        onTitleChanged?.invoke(windowId, title)
                     }
                 }
 

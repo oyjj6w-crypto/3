@@ -656,6 +656,16 @@ export default function App() {
                 >
                   <SlidersHorizontal className="w-3.5 h-3.5 text-sky-400" />
                 </button>
+
+                {/* 屏幕旋转按钮：标准 30px x 30px 方形，高度齐平，支持在模拟平板中一键横/竖屏切换 */}
+                <button
+                  type="button"
+                  onClick={() => setOrientation((prev) => (prev === 'landscape' ? 'portrait' : 'landscape'))}
+                  className="w-[30px] h-[30px] flex items-center justify-center rounded-md bg-slate-900/80 border border-slate-700/80 text-slate-300 hover:bg-slate-800 hover:text-white transition-colors cursor-pointer"
+                  title="旋转屏幕（切换横屏/竖屏）"
+                >
+                  <RotateCw className="w-3.5 h-3.5 text-sky-400" />
+                </button>
               </div>
             </div>
 
