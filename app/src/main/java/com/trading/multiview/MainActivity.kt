@@ -35,8 +35,10 @@ class MainActivity : ComponentActivity() {
         controller.systemBarsBehavior =
             WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
 
-        // 初始化常驻单例 WebView 池（与 Activity 实例解耦，绝不反复销毁）
+        // 初始化常驻单例 WebView 池（与 Activity 实例解耦，优先恢复用户输入的网址）
         PersistentWebViewPool.init(applicationContext)
+        // 预载本地持久化配置（视窗网址、分组状态）
+        viewModel.loadSavedStateFromPrefs(applicationContext)
 
         setContent {
             TradingMultiViewTheme {
@@ -58,6 +60,12 @@ class MainActivity : ComponentActivity() {
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         // 此处可做额外横竖屏 UI 逻辑自适应，WebView 零重载
+    }
+
+    override fun onPause() {
+        super.onPause()
+        // 用户切换或退出应用时，将当前全部视窗网址与状态持久化保存
+        viewModel.saveStateToPrefs(applicationContext)
     }
 
     override fun onDestroy() {

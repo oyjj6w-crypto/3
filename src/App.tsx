@@ -37,7 +37,7 @@ import { TradingWindow } from './components/TradingWindow';
 import { HiddenWindowsDock } from './components/HiddenWindowsDock';
 import { CodeExplorerModal } from './components/CodeExplorerModal';
 import { generateAndroidProjectZip, triggerDownload } from './utils/zipGenerator';
-import { PRESET_GROUPS, loadSavedGroups, saveCustomGroups } from './data/windowGroups';
+import { PRESET_GROUPS, loadSavedGroups, saveCustomGroups, loadSavedState, saveFullState } from './data/windowGroups';
 
 const INITIAL_WINDOWS: WindowConfig[] = [
   {
@@ -91,7 +91,13 @@ const INITIAL_WINDOWS: WindowConfig[] = [
 ];
 
 export default function App() {
-  const [windows, setWindows] = useState<WindowConfig[]>(INITIAL_WINDOWS);
+  const [windows, setWindows] = useState<WindowConfig[]>(() => {
+    const saved = loadSavedState();
+    if (saved.windows && saved.windows.length === 3) {
+      return saved.windows;
+    }
+    return INITIAL_WINDOWS;
+  });
   const [orientation, setOrientation] = useState<OrientationMode>('landscape');
   const [showFrame, setShowFrame] = useState<boolean>(true);
   const [isCodeModalOpen, setIsCodeModalOpen] = useState<boolean>(false);
@@ -100,17 +106,26 @@ export default function App() {
   const [isDownloading, setIsDownloading] = useState<boolean>(false);
   const [modalInitialTab, setModalInitialTab] = useState<'source' | 'architecture' | 'guide' | 'github'>('source');
 
-  // 地址栏分组标签集合状态 (预设 3 个分组 + 本地持久化保存的分组)
+  // 地址栏分组标签集合状态 (优先从本地持久化加载用户修改过的分组与网址)
   const [groups, setGroups] = useState<WindowGroup[]>(() => {
-    const saved = loadSavedGroups();
-    return saved.length > 0 ? saved : PRESET_GROUPS;
+    const saved = loadSavedState();
+    if (saved.groups && saved.groups.length > 0) return saved.groups;
+    const oldSaved = loadSavedGroups();
+    return oldSaved.length > 0 ? oldSaved : PRESET_GROUPS;
   });
   const [activeGroupId, setActiveGroupId] = useState<string>(() => {
-    const saved = loadSavedGroups();
-    return (saved.length > 0 ? saved[0].id : PRESET_GROUPS[0].id);
+    const saved = loadSavedState();
+    if (saved.activeGroupId) return saved.activeGroupId;
+    const oldSaved = loadSavedGroups();
+    return (oldSaved.length > 0 ? oldSaved[0].id : PRESET_GROUPS[0].id);
   });
   const [isSaveGroupModalOpen, setIsSaveGroupModalOpen] = useState<boolean>(false);
   const [newGroupName, setNewGroupName] = useState<string>('');
+
+  // 核心自动持久化：用户输入的任何网址、分组切换、自定义分组修改，自动同步至 localStorage
+  useEffect(() => {
+    saveFullState(windows, groups, activeGroupId);
+  }, [windows, groups, activeGroupId]);
 
   // 方式1重命名分组状态：双击或点击编辑进入内联修改
   const [editingGroupId, setEditingGroupId] = useState<string | null>(null);

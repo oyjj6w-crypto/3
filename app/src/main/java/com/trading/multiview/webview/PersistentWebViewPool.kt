@@ -188,22 +188,32 @@ object PersistentWebViewPool {
     private val mainHandler = Handler(Looper.getMainLooper())
     // 缓存每个视窗的休眠状态
     private val pausedMap = java.util.concurrent.ConcurrentHashMap<Int, Boolean>()
+    private var appContext: Context? = null
 
     /**
-     * 智能初始化：分屏并发平滑（错峰加载）
-     * 3 个视窗同时打开 8 分屏即并发 24 个图表，瞬间并发会打满网络 I/O、DNS 解析与 Chromium IPC 线程造成白屏等待。
-     * 通过拉开 120ms 的错峰间隔（Window 1: 0ms, Window 2: 120ms, Window 3: 240ms），
-     * 视觉上感觉完全无延迟，但彻底避开了网络握手与初次编译的峰值拥塞！
+     * 智能初始化：分屏并发平滑（错峰加载）+ 本地记忆持久化
+     * 启动时优先读取用户之前在视窗中输入的自定义网址（存放在 SharedPreferences），
+     * 只有初次安装或未自定义时才回退至 DEFAULT_URLS 官方行情！
      */
     fun init(context: Context) {
         if (isInitialized) return
-        val appContext = context.applicationContext
+        val appCtx = context.applicationContext
+        this.appContext = appCtx
+        val prefs = appCtx.getSharedPreferences("trading_multiview_prefs", Context.MODE_PRIVATE)
         
         // 为 3 个视窗分别创建专属 WebView 实例并错峰启动
         listOf(1, 2, 3).forEachIndexed { index, windowId ->
-            val webView = createConfiguredWebView(appContext, windowId)
+            val webView = createConfiguredWebView(appCtx, windowId)
             webViewMap[windowId] = webView
-            val initialUrl = DEFAULT_URLS[windowId] ?: "https://www.tradingview.com"
+            
+            // 优先使用用户历史输入的网址
+            val savedUrl = prefs.getString("window_url_$windowId", null)
+            val initialUrl = if (!savedUrl.isNullOrBlank()) {
+                savedUrl
+            } else {
+                DEFAULT_URLS[windowId] ?: "https://www.tradingview.com"
+            }
+
             val delayMs = index * 120L
             if (delayMs == 0L) {
                 webView.loadUrl(initialUrl)
@@ -278,6 +288,12 @@ object PersistentWebViewPool {
                     view?.let { injectDesktopViewport(it) }
                     if (url != null && url != lastReportedUrl) {
                         lastReportedUrl = url
+                        try {
+                            appContext?.getSharedPreferences("trading_multiview_prefs", Context.MODE_PRIVATE)
+                                ?.edit()
+                                ?.putString("window_url_$windowId", url)
+                                ?.apply()
+                        } catch (e: Exception) {}
                         onUrlChanged?.invoke(windowId, url, view?.title ?: "")
                     }
                 }
@@ -477,6 +493,13 @@ object PersistentWebViewPool {
             return false
         }
         appliedScaleMap.remove(windowId)
+        try {
+            appContext?.getSharedPreferences("trading_multiview_prefs", Context.MODE_PRIVATE)
+                ?.edit()
+                ?.putString("window_url_$windowId", formatted)
+                ?.apply()
+        } catch (e: Exception) {}
+
         if (delayMs <= 0L) {
             webView.loadUrl(formatted)
         } else {
