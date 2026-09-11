@@ -2,9 +2,9 @@ import { AndroidProjectFile } from '../types';
 
 export const ANDROID_PROJECT_FILES: AndroidProjectFile[] = [
   {
-    path: 'app/src/main/AndroidManifest.xml',
-    language: 'xml',
-    description: '核心配置：声明 configChanges 防止屏幕旋转与尺寸变化导致 Activity 重建与 WebView 重载',
+    path: "app/src/main/AndroidManifest.xml",
+    language: "xml",
+    description: "核心配置：声明 configChanges 防止屏幕旋转与尺寸变化导致 Activity 重建与 WebView 重载",
     content: `<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
@@ -28,19 +28,16 @@ export const ANDROID_PROJECT_FILES: AndroidProjectFile[] = [
         tools:targetApi="34">
 
         <!-- 
-          关键点：配置 configChanges 包含：
-          - orientation: 旋转屏幕（横屏/竖屏）时不销毁 Activity
-          - screenSize: 屏幕物理尺寸改变（如折叠屏展开或多窗口分屏）时不重建
-          - screenLayout: 屏幕布局模式变更时不重建
-          - smallestScreenSize: 最小屏幕尺寸变更
-          - keyboardHidden|keyboard: 键盘弹出/收起时不重建
-          配合 hardwareAccelerated="true" 保证 TradingView Canvas/WebGL 60FPS 流畅渲染
+          关键点：
+          1. screenOrientation="sensorLandscape" 强制横屏（支持 180° 重力感应顺反倒转，绝不误切竖屏）
+          2. 配置 configChanges 防止旋转与多窗口分屏重载 Activity 与断开 WebSocket
         -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
             android:label="@string/app_name"
             android:theme="@style/Theme.TradingMultiView"
+            android:screenOrientation="sensorLandscape"
             android:windowSoftInputMode="adjustNothing"
             android:hardwareAccelerated="true"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|uiMode|keyboardHidden|keyboard">
@@ -55,11 +52,12 @@ export const ANDROID_PROJECT_FILES: AndroidProjectFile[] = [
 </manifest>`
   },
   {
-    path: 'app/src/main/java/com/trading/multiview/MainActivity.kt',
-    language: 'kotlin',
-    description: '主入口 Activity：启用沉浸式全屏、处理配置变更并注入 PersistentWebViewPool',
+    path: "app/src/main/java/com/trading/multiview/MainActivity.kt",
+    language: "kotlin",
+    description: "主入口 Activity：强制传感器横屏锁定 (sensorLandscape)、初始化常驻单例池并恢复历史配置",
     content: `package com.trading.multiview
 
+import android.content.pm.ActivityInfo
 import android.content.res.Configuration
 import android.os.Bundle
 import android.view.WindowManager
@@ -85,6 +83,9 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // 强制传感器横屏锁定 (Sensor Landscape，支持 180° 正反横屏倒转，禁止误切竖屏，保证 3 窗口最宽可视区)
+        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+
         // 保持屏幕常亮（看盘专用）
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
@@ -97,6 +98,9 @@ class MainActivity : ComponentActivity() {
 
         // 初始化常驻单例 WebView 池（与 Activity 实例解耦，绝不反复销毁）
         PersistentWebViewPool.init(applicationContext)
+
+        // 恢复持久化配置（上次输入的网址、历史分组及分辨率）
+        viewModel.loadSavedGroupsFromPrefs(applicationContext)
 
         setContent {
             TradingMultiViewTheme {
@@ -130,9 +134,9 @@ class MainActivity : ComponentActivity() {
 }`
   },
   {
-    path: 'app/src/main/java/com/trading/multiview/webview/PersistentWebViewPool.kt',
-    language: 'kotlin',
-    description: '持久化系统 WebView 单例池：深度优化 WebSettings（DOM存储、WebGL硬件加速、WebSocket防断连）',
+    path: "app/src/main/java/com/trading/multiview/webview/PersistentWebViewPool.kt",
+    language: "kotlin",
+    description: "持久化 WebView 单例池：深度优化 WebSettings、固定像素视口注入 (960px~1920px)、实时 URL 持久化",
     content: `package com.trading.multiview.webview
 
 import android.annotation.SuppressLint
@@ -151,6 +155,13 @@ import android.webkit.*
  */
 object PersistentWebViewPool {
 
+    var appContext: Context? = null
+        private set
+
+    const val PREFS_NAME = "trading_multiview_prefs"
+    const val KEY_WINDOW_URL_PREFIX = "saved_window_url_"
+    const val KEY_WINDOW_TITLE_PREFIX = "saved_window_title_"
+
     private val webViewMap = mutableMapOf<Int, WebView>()
     private var isInitialized = false
 
@@ -158,6 +169,41 @@ object PersistentWebViewPool {
     var onUrlChanged: ((Int, String, String) -> Unit)? = null
     // 网页标题更新回调 (windowId, newTitle) - 独立解耦，避免价格频繁跳动触发 URL 变更重绘
     var onTitleChanged: ((Int, String) -> Unit)? = null
+
+    fun getSavedWindowUrl(context: Context? = null, windowId: Int): String? {
+        val ctx = context ?: appContext ?: return null
+        return try {
+            val prefs = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            prefs.getString("\${KEY_WINDOW_URL_PREFIX}$windowId", null)?.takeIf { it.isNotBlank() }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    fun getSavedWindowTitle(context: Context? = null, windowId: Int): String? {
+        val ctx = context ?: appContext ?: return null
+        return try {
+            val prefs = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            prefs.getString("\${KEY_WINDOW_TITLE_PREFIX}$windowId", null)?.takeIf { it.isNotBlank() }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    fun saveWindowUrl(windowId: Int, url: String, title: String? = null, context: Context? = null) {
+        if (url.isBlank()) return
+        val ctx = context ?: appContext ?: return
+        try {
+            val editor = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+            editor.putString("\${KEY_WINDOW_URL_PREFIX}$windowId", url)
+            if (!title.isNullOrBlank()) {
+                editor.putString("\${KEY_WINDOW_TITLE_PREFIX}$windowId", title)
+            }
+            editor.apply()
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
 
     // 默认看盘标的预设 (默认加载 TradingView 官网 www.tradingview.com)
     val DEFAULT_URLS = mapOf(
@@ -184,6 +230,26 @@ object PersistentWebViewPool {
     // 强制各大交易所与行情站（Binance, TradingView, OKX, Bybit 等）加载完整版 PC 桌面交易终端
     const val PC_DESKTOP_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
 
+    // 固定像素桌面视口基准预设 (默认 1280px 标准桌面基准)
+    data class FixedPixelPreset(
+        val width: Int,
+        val label: String,
+        val badge: String,
+        val description: String
+    )
+
+    val PRESET_FIXED_PIXEL_WIDTHS = listOf(
+        FixedPixelPreset(960, "960px", "紧凑", "960px 紧凑视口 (适合小屏平板或分屏)"),
+        FixedPixelPreset(1280, "1280px", "标准 PC", "1280px 标准 PC 基准 (推荐，完整展现桌面工具栏与指标)"),
+        FixedPixelPreset(1440, "1440px", "2K 宽屏", "1440px 2K 宽屏视口 (呈现更宽阔图表视野)"),
+        FixedPixelPreset(1920, "1920px", "1080P 全高清", "1920px 全高清视口 (超宽视界，高精细度)")
+    )
+
+    // 默认 1280px 标准桌面基准
+    private var _fixedPixelWidth: Int = 1280
+    val fixedPixelWidth: Int
+        get() = _fixedPixelWidth
+
     // 默认保存当前用户设定的全局缩放比例 (默认 100%)
     var currentZoomPercent: Int = 100
 
@@ -202,16 +268,21 @@ object PersistentWebViewPool {
     }
 
     /**
-     * 动态桌面视口与全景自适应缩放引擎 (Auto-Fit Desktop Viewport Engine)
+     * 固定像素桌面视口与全景自适应缩放引擎 (Fixed-Pixel Desktop Viewport Engine)
      * 核心设计：
-     * 1. 强制设定 width=1280 桌面宽屏标准，击穿 TradingView @media 手机端断点，确保展示全部 8 分屏与桌面工具栏；
-     * 2. 根据当前视窗在平板上的精确物理/显示宽度（以 dp 为单位，如 3 分屏下单窗 ~380-426dp），
-     *    动态计算最优缩放系数 autoScale = (widthDp / 1280.0) * (currentZoomPercent / 100.0)；
-     *    例如：单窗宽度 384dp -> autoScale = 0.3000；1280 * 0.3000 = 384dp，刚好 100% 贴合屏幕宽度！
-     * 3. 彻底告别刷新后右侧被截断、需手动两指捏合缩放的痛点；
-     * 4. 智能缓存判断：如果当前网页缩放比例未发生改变，自动拦截并跳过 DOM 修改与重排，大幅加快网页展示！
+     * 1. 引入 fixedPixelWidth (默认 1280px 标准桌面基准，支持 960px/1280px/1440px/1920px)；
+     * 2. 彻底击穿 TradingView @media 移动端响应式折叠断点，确保完整展现顶部时间周期工具条、
+     *    左侧画线指标栏、右侧精确价格刻度与完整蜡烛图；
+     * 3. 根据当前视窗在平板上的精确物理宽度 (dp)，动态计算最优缩放比：
+     *    autoScale = (widthDp / targetPixelWidth) * (zoomPercent / 100.0)；
+     * 4. 通过 evaluateJavascript 实时注入与热更新 DOM 视口，无需刷新页面，不中断 WebSocket 行情流！
      */
-    fun injectDesktopViewport(webView: WebView, zoomPercent: Int = currentZoomPercent, force: Boolean = false) {
+    fun injectDesktopViewport(
+        webView: WebView,
+        targetPixelWidth: Int = fixedPixelWidth,
+        zoomPercent: Int = currentZoomPercent,
+        force: Boolean = false
+    ) {
         val windowId = (webView.tag as? Int) ?: webViewMap.entries.find { it.value == webView }?.key
         val metrics = webView.context.resources.displayMetrics
         val density = metrics.density
@@ -221,28 +292,31 @@ object PersistentWebViewPool {
         } else {
             (metrics.widthPixels / density) / 3f
         }
-        val desktopWidth = 1280f
+        val desktopWidth = targetPixelWidth.toFloat()
         val zoomFactor = (zoomPercent.coerceIn(50, 250)) / 100f
-        val calculatedScale = ((widthDp / desktopWidth) * zoomFactor).coerceIn(0.15f, 2.0f)
+        val calculatedScale = ((widthDp / desktopWidth) * zoomFactor).coerceIn(0.10f, 3.0f)
         val scaleStr = String.format(java.util.Locale.US, "%.4f", calculatedScale)
 
-        // 核心优化：如果未强制重置，且该视窗已经成功注入过相同的缩放比例，
-        // 则坚决跳过 JS 注入与 Chromium 布局重排，杜绝标签集合切换时重复缩放！
-        if (!force && windowId != null && appliedScaleMap[windowId] == scaleStr) {
+        val cacheKey = "\${targetPixelWidth}_\${scaleStr}"
+        // 核心优化：如果未强制重置，且该视窗已经成功注入过相同的目标宽度和缩放比例，
+        // 则跳过 JS 注入与 Chromium 布局重排，杜绝重复计算
+        if (!force && windowId != null && appliedScaleMap[windowId] == cacheKey) {
             return
         }
         if (windowId != null) {
-            appliedScaleMap[windowId] = scaleStr
+            appliedScaleMap[windowId] = cacheKey
         }
 
         val script = """
             (function() {
+                var targetWidth = $targetPixelWidth;
                 var targetScale = '$scaleStr';
-                if (window.__current_applied_desktop_scale === targetScale) {
+                if (window.__current_applied_fixed_width === targetWidth && window.__current_applied_desktop_scale === targetScale) {
                     return; // 网页内部视口已生效相同比例，立即返回，防止二次重绘
                 }
+                window.__current_applied_fixed_width = targetWidth;
                 window.__current_applied_desktop_scale = targetScale;
-                var targetContent = 'width=1280, initial-scale=' + targetScale + ', minimum-scale=0.1, maximum-scale=5.0, user-scalable=yes';
+                var targetContent = 'width=' + targetWidth + ', initial-scale=' + targetScale + ', minimum-scale=0.1, maximum-scale=5.0, user-scalable=yes';
                 function applyDesktop() {
                     try {
                         var metas = document.getElementsByTagName('meta');
@@ -264,7 +338,6 @@ object PersistentWebViewPool {
                         }
 
                         // 仅注入纯深色背景底色防护，防止图表重绘和异步加载时的瞬时白闪
-                        // 坚决不覆盖 canvas 的 transform / translate3d，彻底避免 GPU 复合图层爆炸与 WebGL 显存崩溃！
                         var styleId = '__tv_bg_antiflicker__';
                         if (!document.getElementById(styleId)) {
                             var style = document.createElement('style');
@@ -273,7 +346,7 @@ object PersistentWebViewPool {
                             if (document.head) document.head.appendChild(style);
                         }
 
-                        // 模拟 PC 平台标头，但保留真实触屏支持（不覆写 maxTouchPoints），确保周期切换按钮与下拉菜单可流畅点击
+                        // 模拟 PC 平台标头，但保留真实触屏支持，确保周期切换按钮与下拉菜单流畅交互
                         if (window.navigator) {
                             try {
                                 Object.defineProperty(navigator, 'userAgentData', {
@@ -310,6 +383,30 @@ object PersistentWebViewPool {
         webView.evaluateJavascript(script, null)
     }
 
+    /**
+     * 动态热切换固定像素桌面视口基准 (960px / 1280px / 1440px / 1920px)
+     * 通过 evaluateJavascript 实时更新 DOM 视口，无需刷新页面，不中断 WebSocket 行情流
+     */
+    fun setFixedPixelWidth(newWidth: Int) {
+        _fixedPixelWidth = newWidth
+        appliedScaleMap.clear()
+        webViewMap.forEach { (_, webView) ->
+            injectDesktopViewport(webView, targetPixelWidth = newWidth, force = true)
+        }
+    }
+
+    /**
+     * 循环切换下一个预设固定像素基准
+     */
+    fun cycleFixedPixelWidth(): Int {
+        val widths = PRESET_FIXED_PIXEL_WIDTHS.map { it.width }
+        val currentIndex = widths.indexOf(fixedPixelWidth)
+        val nextIndex = if (currentIndex in widths.indices) (currentIndex + 1) % widths.size else 1
+        val nextWidth = widths[nextIndex]
+        setFixedPixelWidth(nextWidth)
+        return nextWidth
+    }
+
     val DESKTOP_VIEWPORT_JS: String
         get() = """
             (function() {
@@ -319,13 +416,15 @@ object PersistentWebViewPool {
         """.trimIndent()
 
     fun init(context: Context) {
+        val appCtx = context.applicationContext
+        this.appContext = appCtx
         if (isInitialized) return
-        val appContext = context.applicationContext
         
         // 为 3 个视窗分别创建专属 WebView 实例
         listOf(1, 2, 3).forEach { windowId ->
-            val webView = createConfiguredWebView(appContext, windowId)
-            val initialUrl = DEFAULT_URLS[windowId] ?: "https://www.tradingview.com"
+            val webView = createConfiguredWebView(appCtx, windowId)
+            val savedUrl = getSavedWindowUrl(appCtx, windowId)
+            val initialUrl = if (!savedUrl.isNullOrBlank()) savedUrl else (DEFAULT_URLS[windowId] ?: "https://www.tradingview.com")
             webView.loadUrl(initialUrl)
             webViewMap[windowId] = webView
         }
@@ -384,6 +483,7 @@ object PersistentWebViewPool {
                     view?.let { injectDesktopViewport(it) }
                     if (url != null && url != lastReportedUrl) {
                         lastReportedUrl = url
+                        saveWindowUrl(windowId, url, view?.title ?: "")
                         onUrlChanged?.invoke(windowId, url, view?.title ?: "")
                     }
                 }
@@ -394,6 +494,7 @@ object PersistentWebViewPool {
                     view?.let { injectDesktopViewport(it) }
                     if (url != null && url != lastReportedUrl) {
                         lastReportedUrl = url
+                        saveWindowUrl(windowId, url, view?.title ?: "")
                         onUrlChanged?.invoke(windowId, url, view?.title ?: "")
                     }
                 }
@@ -402,6 +503,7 @@ object PersistentWebViewPool {
                     super.doUpdateVisitedHistory(view, url, isReload)
                     if (url != null && url != lastReportedUrl) {
                         lastReportedUrl = url
+                        saveWindowUrl(windowId, url, view?.title ?: "")
                         onUrlChanged?.invoke(windowId, url, view?.title ?: "")
                     }
                 }
@@ -540,6 +642,8 @@ object PersistentWebViewPool {
     fun loadCustomUrl(windowId: Int, url: String, forceReload: Boolean = false): Boolean {
         val formatted = formatUrl(url)
         val webView = webViewMap[windowId] ?: return false
+        // 关键持久化：记录用户输入的网址
+        saveWindowUrl(windowId, formatted)
         val current = webView.url ?: ""
         if (!forceReload && isSameUrl(current, formatted)) {
             return false
@@ -562,9 +666,9 @@ object PersistentWebViewPool {
 }`
   },
   {
-    path: 'app/src/main/java/com/trading/multiview/viewmodel/TradingViewModel.kt',
-    language: 'kotlin',
-    description: '多视窗状态驱动引擎：计算 1:1:1、50:50、100% 动态等比拉伸与最大化/隐藏策略',
+    path: "app/src/main/java/com/trading/multiview/viewmodel/TradingViewModel.kt",
+    language: "kotlin",
+    description: "ViewModel 状态引擎：支持窗口平分(1:1:1/50%/100%)、全量分组持久化、视窗真实网址持久化",
     content: `package com.trading.multiview.viewmodel
 
 import android.content.Context
@@ -594,10 +698,10 @@ data class TabGroup(
 
 val DEFAULT_TAB_GROUPS = listOf(
     TabGroup(
-        id = "preset_tv_official",
-        name = "TradingView 官网",
-        isPreset = true,
-        description = "TradingView 官方网站 (www.tradingview.com)",
+        id = "preset_1",
+        name = "1",
+        isPreset = false,
+        description = "分组 1 (TradingView 官方行情)",
         items = listOf(
             TabGroupItem("TradingView 1", "BTCUSDT", "https://www.tradingview.com", "15m"),
             TabGroupItem("TradingView 2", "ETHUSDT", "https://www.tradingview.com", "60m"),
@@ -605,10 +709,10 @@ val DEFAULT_TAB_GROUPS = listOf(
         )
     ),
     TabGroup(
-        id = "preset_major",
-        name = "主流大盘 (BTC/ETH/SOL)",
-        isPreset = true,
-        description = "核心主流资产，跨 15m/1h/4h 周期对比",
+        id = "preset_2",
+        name = "2",
+        isPreset = false,
+        description = "分组 2 (主流大盘 BTC/ETH/SOL)",
         items = listOf(
             TabGroupItem("BTC/USDT 15M", "BTCUSDT", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:BTCUSDT&interval=15&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1", "15m"),
             TabGroupItem("ETH/USDT 1H", "ETHUSDT", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:ETHUSDT&interval=60&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1", "60m"),
@@ -616,25 +720,14 @@ val DEFAULT_TAB_GROUPS = listOf(
         )
     ),
     TabGroup(
-        id = "preset_l1",
-        name = "公链龙头 (BNB/AVAX/NEAR)",
-        isPreset = true,
-        description = "公链生态核心代币",
+        id = "preset_3",
+        name = "3",
+        isPreset = false,
+        description = "分组 3 (公链龙头 BNB/AVAX/NEAR)",
         items = listOf(
             TabGroupItem("BNB/USDT 15M", "BNBUSDT", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:BNBUSDT&interval=15&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1", "15m"),
             TabGroupItem("AVAX/USDT 1H", "AVAXUSDT", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:AVAXUSDT&interval=60&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1", "60m"),
             TabGroupItem("NEAR/USDT 4H", "NEARUSDT", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:NEARUSDT&interval=240&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1", "240m")
-        )
-    ),
-    TabGroup(
-        id = "preset_volatile",
-        name = "波动异动 (DOGE/PEPE/XRP)",
-        isPreset = true,
-        description = "高波动热门代币短线",
-        items = listOf(
-            TabGroupItem("DOGE/USDT 15M", "DOGEUSDT", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:DOGEUSDT&interval=15&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1", "15m"),
-            TabGroupItem("PEPE/USDT 15M", "PEPEUSDT", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:PEPEUSDT&interval=15&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1", "15m"),
-            TabGroupItem("XRP/USDT 1H", "XRPUSDT", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:XRPUSDT&interval=60&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1", "60m")
         )
     )
 )
@@ -651,17 +744,32 @@ data class WindowState(
     val isUrlCollapsed: Boolean = false // 是否折叠网址输入框以放入更多按钮
 )
 
+fun createInitialWindows(): List<WindowState> {
+    val defaults = listOf(
+        Triple(1, "TradingView 1" to "BTCUSDT", "https://www.tradingview.com"),
+        Triple(2, "TradingView 2" to "ETHUSDT", "https://www.tradingview.com"),
+        Triple(3, "TradingView 3" to "SOLUSDT", "https://www.tradingview.com")
+    )
+    return defaults.map { (id, titleSymbol, defaultUrl) ->
+        val savedUrl = PersistentWebViewPool.getSavedWindowUrl(null, id)
+        val savedTitle = PersistentWebViewPool.getSavedWindowTitle(null, id)
+        WindowState(
+            id = id,
+            title = if (!savedTitle.isNullOrBlank()) savedTitle else titleSymbol.first,
+            symbol = titleSymbol.second,
+            currentUrl = if (!savedUrl.isNullOrBlank()) savedUrl else defaultUrl
+        )
+    }
+}
+
 data class MultiViewUiState(
-    val windows: List<WindowState> = listOf(
-        WindowState(1, "TradingView 1", "BTCUSDT", "https://www.tradingview.com"),
-        WindowState(2, "TradingView 2", "ETHUSDT", "https://www.tradingview.com"),
-        WindowState(3, "TradingView 3", "SOLUSDT", "https://www.tradingview.com")
-    ),
+    val windows: List<WindowState> = createInitialWindows(),
     val maximizedWindowId: Int? = null,
     val groups: List<TabGroup> = DEFAULT_TAB_GROUPS,
-    val activeGroupId: String = "preset_tv_official",
+    val activeGroupId: String = "preset_1",
     val globalZoomPercent: Int = 100,
-    val isGlobalUrlCollapsed: Boolean = false
+    val isGlobalUrlCollapsed: Boolean = true,
+    val fixedPixelWidth: Int = 1280 // 固定像素桌面视口基准 (默认 1280px 标准 PC)
 ) {
     // 获取当前活跃且未隐藏的窗口列表
     val visibleWindows: List<WindowState>
@@ -698,6 +806,11 @@ class TradingViewModel : ViewModel() {
     companion object {
         private const val PREFS_NAME = "trading_multiview_prefs"
         private const val KEY_CUSTOM_GROUPS = "custom_tab_groups"
+        private const val KEY_ALL_GROUPS = "all_tab_groups"
+        private const val KEY_ACTIVE_GROUP_ID = "active_group_id"
+        private const val KEY_WINDOW_URL_PREFIX = "saved_window_url_"
+        private const val KEY_WINDOW_TITLE_PREFIX = "saved_window_title_"
+        private const val KEY_FIXED_PIXEL_WIDTH = "fixed_pixel_width"
     }
 
     init {
@@ -754,6 +867,9 @@ class TradingViewModel : ViewModel() {
                     PersistentWebViewPool.loadCustomUrl(win.id, targetUrl)
                 }
 
+                // 持久化当前窗口切换后的目标 URL 与标题
+                PersistentWebViewPool.saveWindowUrl(win.id, targetUrl, targetItem.title)
+
                 win.copy(
                     title = targetItem.title,
                     symbol = targetItem.symbol,
@@ -766,6 +882,9 @@ class TradingViewModel : ViewModel() {
                 activeGroupId = groupId
             )
         }
+
+        // 持久化活跃分组与最新分组数据
+        persistAllGroupsToPrefs(updatedGroups, activeGroupId = groupId)
     }
 
     /**
@@ -848,56 +967,169 @@ class TradingViewModel : ViewModel() {
         val updatedGroups = _uiState.value.groups + newGroup
         _uiState.update { it.copy(groups = updatedGroups, activeGroupId = newGroup.id) }
 
-        // 持久化保存至 SharedPreferences
-        persistCustomGroupsToPrefs(updatedGroups.filter { !it.isPreset }, context)
+        // 持久化保存所有分组与当前活跃分组至 SharedPreferences
+        persistAllGroupsToPrefs(updatedGroups, activeGroupId = newGroup.id, context = context)
     }
 
     /**
-     * 从 SharedPreferences 加载已保存的用户自定义分组
+     * 从 SharedPreferences 恢复用户上次使用的所有配置：
+     * 1. 3个视窗实际输入的最后网址 (最高优先级，保证退出重进不丢失用户输入)
+     * 2. 用户最后停留的分组 (activeGroupId)
+     * 3. 所有分组的最新状态 (包括预设分组与用户新建的分组)
+     * 4. 固定像素视口基准 (960px / 1280px / 1440px / 1920px)
      */
     fun loadSavedGroupsFromPrefs(context: Context) {
         try {
             val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            val jsonString = prefs.getString(KEY_CUSTOM_GROUPS, null) ?: return
-            val jsonArray = JSONArray(jsonString)
-            val customGroups = mutableListOf<TabGroup>()
 
+            // 1. 读取并恢复分组配置
+            val loadedGroups = loadGroupsFromPrefs(prefs)
+
+            // 2. 读取并恢复上次活跃分组 ID
+            val savedActiveGroupId = prefs.getString(KEY_ACTIVE_GROUP_ID, null) ?: "preset_1"
+            val validActiveGroupId = if (loadedGroups.any { it.id == savedActiveGroupId }) {
+                savedActiveGroupId
+            } else {
+                loadedGroups.firstOrNull()?.id ?: "preset_1"
+            }
+
+            // 3. 读取并恢复 3 个视窗的真实网址与标题 (最高优先级：直接读取用户在窗口中输入的 saved_window_url_X)
+            val targetGroup = loadedGroups.find { it.id == validActiveGroupId }
+            val currentWindows = _uiState.value.windows.map { win ->
+                val savedUrl = prefs.getString("\${KEY_WINDOW_URL_PREFIX}\${win.id}", null)?.takeIf { it.isNotBlank() }
+                val savedTitle = prefs.getString("\${KEY_WINDOW_TITLE_PREFIX}\${win.id}", null)
+                val groupItem = targetGroup?.items?.getOrNull(win.id - 1)
+
+                val targetUrl = savedUrl ?: groupItem?.url?.takeIf { it.isNotBlank() } ?: win.currentUrl
+                val targetTitle = savedTitle ?: groupItem?.title ?: win.title
+                val targetSymbol = groupItem?.symbol ?: win.symbol
+
+                // 确保已挂载的底层常驻 WebView 加载目标真实网址
+                val webView = PersistentWebViewPool.getWebView(win.id)
+                if (webView != null) {
+                    val currentLoaded = webView.url ?: ""
+                    if (!PersistentWebViewPool.isSameUrl(currentLoaded, targetUrl)) {
+                        PersistentWebViewPool.loadCustomUrl(win.id, targetUrl)
+                    }
+                }
+
+                win.copy(
+                    currentUrl = targetUrl,
+                    title = targetTitle,
+                    symbol = targetSymbol
+                )
+            }
+
+            // 4. 读取并恢复固定像素基准
+            val savedPixelWidth = prefs.getInt(KEY_FIXED_PIXEL_WIDTH, 1280)
+            PersistentWebViewPool.setFixedPixelWidth(savedPixelWidth)
+
+            _uiState.update { state ->
+                state.copy(
+                    groups = loadedGroups,
+                    windows = currentWindows,
+                    activeGroupId = validActiveGroupId,
+                    fixedPixelWidth = savedPixelWidth
+                )
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    private fun loadGroupsFromPrefs(prefs: android.content.SharedPreferences): List<TabGroup> {
+        val allGroupsJson = prefs.getString(KEY_ALL_GROUPS, null)
+        if (!allGroupsJson.isNullOrBlank()) {
+            val list = parseGroupsJson(allGroupsJson)
+            if (list.isNotEmpty()) return list
+        }
+
+        val customJson = prefs.getString(KEY_CUSTOM_GROUPS, null)
+        if (!customJson.isNullOrBlank()) {
+            val customList = parseGroupsJson(customJson)
+            if (customList.isNotEmpty()) {
+                return DEFAULT_TAB_GROUPS + customList
+            }
+        }
+
+        return DEFAULT_TAB_GROUPS
+    }
+
+    private fun parseGroupsJson(jsonString: String): List<TabGroup> {
+        return try {
+            val jsonArray = JSONArray(jsonString)
+            val groups = mutableListOf<TabGroup>()
             for (i in 0 until jsonArray.length()) {
                 val obj = jsonArray.getJSONObject(i)
                 val id = obj.getString("id")
                 val name = obj.getString("name")
+                val isPreset = obj.optBoolean("isPreset", false)
                 val desc = obj.optString("description", "")
                 val itemsArray = obj.getJSONArray("items")
                 val items = mutableListOf<TabGroupItem>()
-
                 for (j in 0 until itemsArray.length()) {
                     val itemObj = itemsArray.getJSONObject(j)
                     items.add(
                         TabGroupItem(
-                            title = itemObj.getString("title"),
-                            symbol = itemObj.getString("symbol"),
-                            url = itemObj.getString("url"),
+                            title = itemObj.optString("title", ""),
+                            symbol = itemObj.optString("symbol", ""),
+                            url = itemObj.optString("url", ""),
                             timeframe = itemObj.optString("timeframe", "15m")
                         )
                     )
                 }
-
-                customGroups.add(
+                groups.add(
                     TabGroup(
                         id = id,
                         name = name,
-                        isPreset = false,
+                        isPreset = isPreset,
                         description = desc,
                         items = items
                     )
                 )
             }
-
-            _uiState.update { state ->
-                state.copy(groups = DEFAULT_TAB_GROUPS + customGroups)
-            }
+            groups
         } catch (e: Exception) {
-            e.printStackTrace()
+            emptyList()
+        }
+    }
+
+    /**
+     * 动态热切换固定像素基准 (960px / 1280px / 1440px / 1920px) 并持久化
+     * 通过 evaluateJavascript 实时注入与热更新 DOM 视口，无需刷新页面，不中断 WebSocket 行情流！
+     */
+    fun setFixedPixelWidth(width: Int, context: Context? = null) {
+        PersistentWebViewPool.setFixedPixelWidth(width)
+        _uiState.update { it.copy(fixedPixelWidth = width) }
+        val ctx = context ?: PersistentWebViewPool.appContext
+        if (ctx != null) {
+            try {
+                ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                    .edit()
+                    .putInt(KEY_FIXED_PIXEL_WIDTH, width)
+                    .apply()
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    /**
+     * 顶部栏快捷胶囊循环切换分辨率基准并持久化
+     */
+    fun cycleFixedPixelWidth(context: Context? = null) {
+        val nextWidth = PersistentWebViewPool.cycleFixedPixelWidth()
+        _uiState.update { it.copy(fixedPixelWidth = nextWidth) }
+        val ctx = context ?: PersistentWebViewPool.appContext
+        if (ctx != null) {
+            try {
+                ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                    .edit()
+                    .putInt(KEY_FIXED_PIXEL_WIDTH, nextWidth)
+                    .apply()
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
         }
     }
 
@@ -907,15 +1139,47 @@ class TradingViewModel : ViewModel() {
     fun deleteCustomGroup(groupId: String, context: Context) {
         _uiState.update { state ->
             val updated = state.groups.filter { it.id != groupId }
-            val nextActiveId = if (state.activeGroupId == groupId) "preset_major" else state.activeGroupId
-            persistCustomGroupsToPrefs(updated.filter { !it.isPreset }, context)
+            val nextActiveId = if (state.activeGroupId == groupId) "preset_1" else state.activeGroupId
+            persistAllGroupsToPrefs(updated, activeGroupId = nextActiveId, context = context)
             state.copy(groups = updated, activeGroupId = nextActiveId)
         }
     }
 
-    private fun persistCustomGroupsToPrefs(customGroups: List<TabGroup>, context: Context) {
+    private fun persistAllGroupsToPrefs(
+        groups: List<TabGroup>,
+        activeGroupId: String? = null,
+        context: Context? = null
+    ) {
+        val ctx = context ?: PersistentWebViewPool.appContext ?: return
         try {
             val jsonArray = JSONArray()
+            groups.forEach { group ->
+                val obj = JSONObject().apply {
+                    put("id", group.id)
+                    put("name", group.name)
+                    put("isPreset", group.isPreset)
+                    put("description", group.description)
+                    val itemsArr = JSONArray()
+                    group.items.forEach { item ->
+                        val itemObj = JSONObject().apply {
+                            put("title", item.title)
+                            put("symbol", item.symbol)
+                            put("url", item.url)
+                            put("timeframe", item.timeframe)
+                        }
+                        itemsArr.put(itemObj)
+                    }
+                    put("items", itemsArr)
+                }
+                jsonArray.put(obj)
+            }
+
+            val editor = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+            editor.putString(KEY_ALL_GROUPS, jsonArray.toString())
+
+            // 兼容保存只包含非预设的自定义分组
+            val customGroups = groups.filter { !it.isPreset }
+            val customArr = JSONArray()
             customGroups.forEach { group ->
                 val obj = JSONObject().apply {
                     put("id", group.id)
@@ -933,12 +1197,14 @@ class TradingViewModel : ViewModel() {
                     }
                     put("items", itemsArr)
                 }
-                jsonArray.put(obj)
+                customArr.put(obj)
             }
-            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                .edit()
-                .putString(KEY_CUSTOM_GROUPS, jsonArray.toString())
-                .apply()
+            editor.putString(KEY_CUSTOM_GROUPS, customArr.toString())
+
+            if (activeGroupId != null) {
+                editor.putString(KEY_ACTIVE_GROUP_ID, activeGroupId)
+            }
+            editor.apply()
         } catch (e: Exception) {
             e.printStackTrace()
         }
@@ -965,6 +1231,29 @@ class TradingViewModel : ViewModel() {
      */
     fun goForward(windowId: Int): Boolean {
         return PersistentWebViewPool.goForward(windowId)
+    }
+
+    /**
+     * 全局一键刷新全部 3 个视窗 (保持常驻单例并重载页面)
+     */
+    fun reloadAll() {
+        listOf(1, 2, 3).forEach { windowId ->
+            PersistentWebViewPool.reloadWindow(windowId)
+        }
+    }
+
+    /**
+     * 方式1：重命名分组名称
+     */
+    fun renameGroup(groupId: String, newName: String, context: Context) {
+        val trimmed = newName.trim().ifEmpty { "未命名" }
+        _uiState.update { state ->
+            val updated = state.groups.map { g ->
+                if (g.id == groupId) g.copy(name = trimmed) else g
+            }
+            persistAllGroupsToPrefs(updated, activeGroupId = state.activeGroupId, context = context)
+            state.copy(groups = updated)
+        }
     }
 
     /**
@@ -1102,6 +1391,10 @@ class TradingViewModel : ViewModel() {
         if (currentWin != null && currentWin.currentUrl == newUrl && (title == null || currentWin.title == title)) {
             return
         }
+
+        // 关键持久化：一旦窗口 URL 改变，立即持久化保存该窗口真实网址与标题
+        PersistentWebViewPool.saveWindowUrl(windowId, newUrl, title)
+
         _uiState.update { state ->
             val updatedWindows = state.windows.map { win ->
                 if (win.id == windowId) {
@@ -1134,6 +1427,9 @@ class TradingViewModel : ViewModel() {
                 groups = updatedGroups
             )
         }
+
+        // 关键持久化：将包含了最新网址的分组数据同步保存
+        persistAllGroupsToPrefs(_uiState.value.groups, activeGroupId = _uiState.value.activeGroupId)
     }
 
     /**
@@ -1142,6 +1438,7 @@ class TradingViewModel : ViewModel() {
     fun updateWindowTitle(windowId: Int, title: String) {
         val currentWin = _uiState.value.windows.find { it.id == windowId }
         if (currentWin == null || currentWin.title == title) return
+        PersistentWebViewPool.saveWindowUrl(windowId, currentWin.currentUrl, title)
         _uiState.update { state ->
             state.copy(
                 windows = state.windows.map { win ->
@@ -1153,9 +1450,9 @@ class TradingViewModel : ViewModel() {
 }`
   },
   {
-    path: 'app/src/main/java/com/trading/multiview/ui/TradingMultiViewScreen.kt',
-    language: 'kotlin',
-    description: 'Jetpack Compose 多视窗排布视图：标准化顶栏所有按钮高度(30dp)与圆角，统一对齐无凹凸',
+    path: "app/src/main/java/com/trading/multiview/ui/TradingMultiViewScreen.kt",
+    language: "kotlin",
+    description: "Compose 响应式主界面：支持视窗均分/最大化、快捷顶栏、分辨率循环切换、自定义分组管理",
     content: `package com.trading.multiview.ui
 
 import android.content.Context
@@ -1399,6 +1696,33 @@ fun TradingMultiViewScreen(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
+                    // 顶部栏固定像素快捷胶囊：电脑图标 + 1280px，点击在 960 / 1280 / 1440 / 1920 循环切换
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .height(30.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(Color(0xFF0F2338))
+                            .border(1.dp, Color(0xFF0284C7), RoundedCornerShape(6.dp))
+                            .clickable { viewModel.cycleFixedPixelWidth(context) }
+                            .padding(horizontal = 6.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Computer,
+                            contentDescription = "切换桌面基准像素",
+                            tint = Color(0xFF38BDF8),
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = "\${uiState.fixedPixelWidth}px",
+                            color = Color(0xFF38BDF8),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
+
                     // 全局一键刷新按钮：标准 30dp x 30dp 方形，圆角 6dp，与左侧保持严格一致
                     Box(
                         modifier = Modifier
@@ -1529,112 +1853,183 @@ fun TradingMultiViewScreen(
                 color = Color(0xFF0F172A),
                 border = BorderStroke(width = 0.5.dp, color = Color(0xFF334155))
             ) {
-                Row(
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 8.dp, vertical = 6.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    uiState.windows.forEach { win ->
-                        var inputUrl by remember(win.currentUrl) { mutableStateOf(win.currentUrl) }
-                        Column(
-                            modifier = Modifier
-                                .weight(1f)
-                                .clip(RoundedCornerShape(4.dp))
-                                .background(Color(0xFF090D16))
-                                .border(1.dp, Color(0xFF1E293B), RoundedCornerShape(4.dp))
-                                .padding(6.dp),
-                            verticalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
+                    // 1. 各窗口详细网址配置行
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        uiState.windows.forEach { win ->
+                            var inputUrl by remember(win.currentUrl) { mutableStateOf(win.currentUrl) }
+                            Column(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .background(Color(0xFF090D16))
+                                    .border(1.dp, Color(0xFF1E293B), RoundedCornerShape(4.dp))
+                                    .padding(6.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
                                 Row(
+                                    modifier = Modifier.fillMaxWidth(),
                                     verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(6.dp)
-                                            .clip(CircleShape)
-                                            .background(Color(0xFF10B981))
-                                    )
-                                    Text(
-                                        text = "窗口 \${win.id}",
-                                        color = Color(0xFF38BDF8),
-                                        fontSize = 10.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(6.dp)
+                                                .clip(CircleShape)
+                                                .background(Color(0xFF10B981))
+                                        )
+                                        Text(
+                                            text = "窗口 \${win.id}",
+                                            color = Color(0xFF38BDF8),
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        // 窗口单独刷新
+                                        Icon(
+                                            imageVector = Icons.Default.Refresh,
+                                            contentDescription = "刷新",
+                                            tint = Color(0xFF94A3B8),
+                                            modifier = Modifier
+                                                .size(13.dp)
+                                                .clickable { viewModel.reload(win.id) }
+                                        )
+
+                                        // 快捷前往
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(3.dp))
+                                                .background(Color(0xFF0284C7))
+                                                .clickable {
+                                                    if (inputUrl.isNotBlank()) {
+                                                        viewModel.navigateToUrl(win.id, inputUrl)
+                                                    }
+                                                    focusManager.clearFocus()
+                                                }
+                                                .padding(horizontal = 5.dp, vertical = 1.dp)
+                                        ) {
+                                            Text(text = "前往", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                    }
                                 }
 
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                // 极简 URL 输入栏 (删除了后面的常用书签按钮)
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(24.dp)
+                                        .clip(RoundedCornerShape(3.dp))
+                                        .background(Color(0xFF161E2E))
+                                        .border(1.dp, Color(0xFF334155), RoundedCornerShape(3.dp))
+                                        .padding(horizontal = 4.dp),
+                                    contentAlignment = Alignment.CenterStart
                                 ) {
-                                    // 窗口单独刷新
-                                    Icon(
-                                        imageVector = Icons.Default.Refresh,
-                                        contentDescription = "刷新",
-                                        tint = Color(0xFF94A3B8),
-                                        modifier = Modifier
-                                            .size(13.dp)
-                                            .clickable { viewModel.reload(win.id) }
-                                    )
-
-                                    // 快捷前往
-                                    Box(
-                                        modifier = Modifier
-                                            .clip(RoundedCornerShape(3.dp))
-                                            .background(Color(0xFF0284C7))
-                                            .clickable {
+                                    BasicTextField(
+                                        value = inputUrl,
+                                        onValueChange = { inputUrl = it },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        singleLine = true,
+                                        textStyle = TextStyle(
+                                            color = Color(0xFFF1F5F9),
+                                            fontSize = 10.sp,
+                                            fontFamily = FontFamily.Monospace
+                                        ),
+                                        cursorBrush = SolidColor(Color(0xFF38BDF8)),
+                                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go, keyboardType = KeyboardType.Uri),
+                                        keyboardActions = KeyboardActions(
+                                            onGo = {
                                                 if (inputUrl.isNotBlank()) {
                                                     viewModel.navigateToUrl(win.id, inputUrl)
                                                 }
                                                 focusManager.clearFocus()
                                             }
-                                            .padding(horizontal = 5.dp, vertical = 1.dp)
-                                    ) {
-                                        Text(text = "前往", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold)
-                                    }
+                                        )
+                                    )
                                 }
                             }
+                        }
+                    }
 
-                            // 极简 URL 输入栏 (删除了后面的常用书签按钮)
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(24.dp)
-                                    .clip(RoundedCornerShape(3.dp))
-                                    .background(Color(0xFF161E2E))
-                                    .border(1.dp, Color(0xFF334155), RoundedCornerShape(3.dp))
-                                    .padding(horizontal = 4.dp),
-                                contentAlignment = Alignment.CenterStart
+                    // 2. 固定像素桌面视口基准点选标签条与即时说明
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(Color(0xFF0A101D))
+                            .border(1.dp, Color(0xFF1E293B), RoundedCornerShape(4.dp))
+                            .padding(horizontal = 8.dp, vertical = 5.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
-                                BasicTextField(
-                                    value = inputUrl,
-                                    onValueChange = { inputUrl = it },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    singleLine = true,
-                                    textStyle = TextStyle(
-                                        color = Color(0xFFF1F5F9),
-                                        fontSize = 10.sp,
-                                        fontFamily = FontFamily.Monospace
-                                    ),
-                                    cursorBrush = SolidColor(Color(0xFF38BDF8)),
-                                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go, keyboardType = KeyboardType.Uri),
-                                    keyboardActions = KeyboardActions(
-                                        onGo = {
-                                            if (inputUrl.isNotBlank()) {
-                                                viewModel.navigateToUrl(win.id, inputUrl)
-                                            }
-                                            focusManager.clearFocus()
-                                        }
-                                    )
+                                Icon(
+                                    imageVector = Icons.Default.Computer,
+                                    contentDescription = null,
+                                    tint = Color(0xFF38BDF8),
+                                    modifier = Modifier.size(13.dp)
+                                )
+                                Text(
+                                    text = "桌面视口基准:",
+                                    color = Color(0xFF94A3B8),
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold
                                 )
                             }
+
+                            PersistentWebViewPool.PRESET_FIXED_PIXEL_WIDTHS.forEach { preset ->
+                                val isSelected = uiState.fixedPixelWidth == preset.width
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(4.dp))
+                                        .background(if (isSelected) Color(0xFF0284C7) else Color(0xFF1E293B))
+                                        .border(
+                                            1.dp,
+                                            if (isSelected) Color(0xFF38BDF8) else Color(0xFF334155),
+                                            RoundedCornerShape(4.dp)
+                                        )
+                                        .clickable { viewModel.setFixedPixelWidth(preset.width, context) }
+                                        .padding(horizontal = 8.dp, vertical = 3.dp)
+                                ) {
+                                    Text(
+                                        text = "\${preset.width}px (\${preset.badge})",
+                                        color = if (isSelected) Color.White else Color(0xFFCBD5E1),
+                                        fontSize = 10.sp,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                        fontFamily = FontFamily.Monospace
+                                    )
+                                }
+                            }
                         }
+
+                        Text(
+                            text = "动态注入 <meta viewport> 击穿 TradingView 移动端折叠，免刷新热生效",
+                            color = Color(0xFF64748B),
+                            fontSize = 9.sp
+                        )
                     }
                 }
             }
@@ -1667,7 +2062,8 @@ fun TradingMultiViewScreen(
                                 .border(1.dp, Color(0xFF1E293B))
                         ) {
                             SingleTradingWindowView(
-                                window = window
+                                windowId = window.id,
+                                zoomPercent = window.zoomPercent
                             )
                         }
                     }
@@ -1784,10 +2180,12 @@ fun SaveGroupDialog(
 
 /**
  * 单个看盘视窗：纯净图表全屏渲染 (窗口内彻底移除 W1/W2/W3 状态、刷新、最大化、隐藏等任何按钮与遮挡)
+ * 仅依赖 windowId 与 zoomPercent，完全解耦 title 与 url 的频繁变动，坚决防止 Compose 重组引发闪烁！
  */
 @Composable
 fun SingleTradingWindowView(
-    window: WindowState,
+    windowId: Int,
+    zoomPercent: Int,
     modifier: Modifier = Modifier
 ) {
     Box(
@@ -1798,7 +2196,7 @@ fun SingleTradingWindowView(
         // ================= 底层常驻 WebView (100% 纯净满屏渲染) =================
         AndroidView(
             factory = { context ->
-                val webView = PersistentWebViewPool.getWebView(window.id)
+                val webView = PersistentWebViewPool.getWebView(windowId)
                     ?: android.webkit.WebView(context)
 
                 // 确保从旧父容器解绑并添加到当前视窗
@@ -1806,16 +2204,14 @@ fun SingleTradingWindowView(
                 
                 // 当 View 完成排版测量拥有实际像素尺寸后，注入基于实际物理宽度的黄金桌面自适应缩放
                 webView.post {
-                    PersistentWebViewPool.injectDesktopViewport(webView, window.zoomPercent)
+                    PersistentWebViewPool.injectDesktopViewport(webView, zoomPercent)
                 }
 
                 webView
             },
             update = { webView ->
-                // 仅当 URL 与当前加载的不同时才触发 loadUrl，坚决防止重绘刷新中断 WebSocket！
-                if (webView.url != window.currentUrl && window.currentUrl.isNotEmpty()) {
-                    webView.loadUrl(window.currentUrl)
-                }
+                // WebView 实例在 PersistentWebViewPool 中完全独立常驻并保持单例运行，
+                // 严禁在 Compose 的 update 回调中执行 reload 或 loadUrl，保证图表 WebSocket 持续保活且零重绘闪烁！
             },
             modifier = Modifier.fillMaxSize()
         )
@@ -1893,9 +2289,9 @@ fun HiddenWindowsTray(
 }`
   },
   {
-    path: 'app/src/main/java/com/trading/multiview/ui/theme/Theme.kt',
-    language: 'kotlin',
-    description: 'Material 3 深色主题配置：专为夜间高强度盯盘设计',
+    path: "app/src/main/java/com/trading/multiview/ui/theme/Theme.kt",
+    language: "kotlin",
+    description: "专业深色行情主题系统 (Dark Mode 优化，针对 K 线与图表深度定制配色)",
     content: `package com.trading.multiview.ui.theme
 
 import androidx.compose.material3.MaterialTheme
@@ -1924,9 +2320,9 @@ fun TradingMultiViewTheme(content: @Composable () -> Unit) {
 }`
   },
   {
-    path: 'app/build.gradle.kts',
-    language: 'kotlin',
-    description: '模块级 Gradle 构建脚本：启用 Jetpack Compose 与 WebKit 支持',
+    path: "app/build.gradle.kts",
+    language: "kotlin",
+    description: "App 模块构建脚本：配置 Jetpack Compose、混淆优化与多视窗核心依赖",
     content: `plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -2002,9 +2398,9 @@ dependencies {
 }`
   },
   {
-    path: 'gradle/libs.versions.toml',
-    language: 'toml',
-    description: '现代 Gradle Version Catalog：规范管理 Jetpack Compose、AGP 与 Kotlin 版本',
+    path: "gradle/libs.versions.toml",
+    language: "toml",
+    description: "Gradle 依赖版本目录 (Version Catalog)：统一管理 AndroidX、Compose、Kotlin 版本",
     content: `[versions]
 agp = "8.8.2"
 kotlin = "2.0.21"
@@ -2036,9 +2432,9 @@ kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }`
   },
   {
-    path: 'build.gradle.kts',
-    language: 'kotlin',
-    description: '根目录构建脚本',
+    path: "build.gradle.kts",
+    language: "kotlin",
+    description: "根项目构建脚本：配置 Android 与 Kotlin Gradle 插件",
     content: `// Top-level build file where you can add configuration options common to all sub-projects/modules.
 plugins {
     alias(libs.plugins.android.application) apply false
@@ -2047,9 +2443,9 @@ plugins {
 }`
   },
   {
-    path: 'settings.gradle.kts',
-    language: 'kotlin',
-    description: '工程模块与 Maven 仓库定义',
+    path: "settings.gradle.kts",
+    language: "kotlin",
+    description: "项目工程设置：配置 Gradle 仓库源与模块结构",
     content: `pluginManagement {
     repositories {
         google()
@@ -2069,9 +2465,9 @@ rootProject.name = "TradingMultiView"
 include(":app")`
   },
   {
-    path: '.github/workflows/android-build.yml',
-    language: 'yaml',
-    description: 'GitHub Actions 自动编译工作流：Push 代码后自动触发 Gradle 编译并输出 APK 产物',
+    path: ".github/workflows/android-build.yml",
+    language: "yaml",
+    description: "GitHub Actions CI/CD 流水线：全自动编译 Debug/Release APK 并生成构建工件",
     content: `name: Android CI & Auto Build APK
 
 on:
@@ -2098,7 +2494,6 @@ jobs:
         with:
           java-version: '17'
           distribution: 'temurin'
-          cache: 'gradle'
 
       - name: Setup Android SDK & Licenses
         run: |
@@ -2146,24 +2541,264 @@ jobs:
 `
   },
   {
-    path: 'gradlew',
-    language: 'bash',
-    description: 'Gradle 跨平台启动运行脚本 (POSIX Shell)',
-    content: `#!/usr/bin/env sh
-APP_HOME=\`cd "\`dirname "$0"\`" >/dev/null; pwd\`
-if command -v gradle >/dev/null 2>&1; then
-    exec gradle "$@"
-elif [ -f "$APP_HOME/gradle/wrapper/gradle-wrapper.jar" ]; then
-    exec java -jar "$APP_HOME/gradle/wrapper/gradle-wrapper.jar" "$@"
-else
-    echo "Error: Gradle 8.8+ is required. Please install Gradle or open this project in Android Studio." >&2
+    path: "gradlew",
+    language: "bash",
+    description: "Gradle 包装器执行脚本 (Linux/macOS)",
+    content: `#!/bin/sh
+
+#
+# Copyright © 2015-2021 the original authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+##############################################################################
+#
+#   Gradle start up script for POSIX generated by Gradle.
+#
+#   Important for running:
+#
+#   (1) You need a POSIX-compliant shell to run this script. If your /bin/sh is
+#       noncompliant, but you have some other compliant shell such as ksh or
+#       bash, then to run this script, type that shell name before the whole
+#       command line, like:
+#
+#           ksh Gradle
+#
+#       Busybox and similar reduced shells will NOT work, because this script
+#       requires all of these POSIX shell features:
+#         * functions;
+#         * expansions «$var», «\${var}», «\${var:-default}», «\${var+SET}»,
+#           «\${var#prefix}», «\${var%suffix}», and «$( cmd )»;
+#         * compound commands having a testable exit status, especially «case»;
+#         * various built-in commands including «command», «set», and «ulimit».
+#
+#   Important for patching:
+#
+#   (2) This script targets any POSIX shell, so it avoids extensions provided
+#       by Bash, Ksh, etc; in particular arrays are avoided.
+#
+#       The "traditional" practice of packing multiple parameters into a
+#       space-separated string is a well documented source of bugs and security
+#       problems, so this is (mostly) avoided, by progressively accumulating
+#       options in "$@", and eventually passing that to Java.
+#
+#       Where the inherited environment variables (DEFAULT_JVM_OPTS, JAVA_OPTS,
+#       and GRADLE_OPTS) rely on word-splitting, this is performed explicitly;
+#       see the in-line comments for details.
+#
+#       There are tweaks for specific operating systems such as AIX, CygWin,
+#       Darwin, MinGW, and NonStop.
+#
+#   (3) This script is generated from the Groovy template
+#       https://github.com/gradle/gradle/blob/HEAD/platforms/jvm/plugins-application/src/main/resources/org/gradle/api/internal/plugins/unixStartScript.txt
+#       within the Gradle project.
+#
+#       You can find Gradle at https://github.com/gradle/gradle/.
+#
+##############################################################################
+
+# Attempt to set APP_HOME
+
+# Resolve links: $0 may be a link
+app_path=$0
+
+# Need this for daisy-chained symlinks.
+while
+    APP_HOME=\${app_path%"\${app_path##*/}"}  # leaves a trailing /; empty if no leading path
+    [ -h "$app_path" ]
+do
+    ls=$( ls -ld "$app_path" )
+    link=\${ls#*' -> '}
+    case $link in             #(
+      /*)   app_path=$link ;; #(
+      *)    app_path=$APP_HOME$link ;;
+    esac
+done
+
+# This is normally unused
+# shellcheck disable=SC2034
+APP_BASE_NAME=\${0##*/}
+# Discard cd standard output in case $CDPATH is set (https://github.com/gradle/gradle/issues/25036)
+APP_HOME=$( cd "\${APP_HOME:-./}" > /dev/null && pwd -P ) || exit
+
+# Use the maximum available, or set MAX_FD != -1 to use that value.
+MAX_FD=maximum
+
+warn () {
+    echo "$*"
+} >&2
+
+die () {
+    echo
+    echo "$*"
+    echo
     exit 1
-fi`
+} >&2
+
+# OS specific support (must be 'true' or 'false').
+cygwin=false
+msys=false
+darwin=false
+nonstop=false
+case "$( uname )" in                #(
+  CYGWIN* )         cygwin=true  ;; #(
+  Darwin* )         darwin=true  ;; #(
+  MSYS* | MINGW* )  msys=true    ;; #(
+  NONSTOP* )        nonstop=true ;;
+esac
+
+CLASSPATH=$APP_HOME/gradle/wrapper/gradle-wrapper.jar
+
+
+# Determine the Java command to use to start the JVM.
+if [ -n "$JAVA_HOME" ] ; then
+    if [ -x "$JAVA_HOME/jre/sh/java" ] ; then
+        # IBM's JDK on AIX uses strange locations for the executables
+        JAVACMD=$JAVA_HOME/jre/sh/java
+    else
+        JAVACMD=$JAVA_HOME/bin/java
+    fi
+    if [ ! -x "$JAVACMD" ] ; then
+        die "ERROR: JAVA_HOME is set to an invalid directory: $JAVA_HOME
+
+Please set the JAVA_HOME variable in your environment to match the
+location of your Java installation."
+    fi
+else
+    JAVACMD=java
+    if ! command -v java >/dev/null 2>&1
+    then
+        die "ERROR: JAVA_HOME is not set and no 'java' command could be found in your PATH.
+
+Please set the JAVA_HOME variable in your environment to match the
+location of your Java installation."
+    fi
+fi
+
+# Increase the maximum file descriptors if we can.
+if ! "$cygwin" && ! "$darwin" && ! "$nonstop" ; then
+    case $MAX_FD in #(
+      max*)
+        # In POSIX sh, ulimit -H is undefined. That's why the result is checked to see if it worked.
+        # shellcheck disable=SC2039,SC3045
+        MAX_FD=$( ulimit -H -n ) ||
+            warn "Could not query maximum file descriptor limit"
+    esac
+    case $MAX_FD in  #(
+      '' | soft) :;; #(
+      *)
+        # In POSIX sh, ulimit -n is undefined. That's why the result is checked to see if it worked.
+        # shellcheck disable=SC2039,SC3045
+        ulimit -n "$MAX_FD" ||
+            warn "Could not set maximum file descriptor limit to $MAX_FD"
+    esac
+fi
+
+# Collect all arguments for the java command, stacking in reverse order:
+#   * args from the command line
+#   * the main class name
+#   * -classpath
+#   * -D...appname settings
+#   * --module-path (only if needed)
+#   * DEFAULT_JVM_OPTS, JAVA_OPTS, and GRADLE_OPTS environment variables.
+
+# For Cygwin or MSYS, switch paths to Windows format before running java
+if "$cygwin" || "$msys" ; then
+    APP_HOME=$( cygpath --path --mixed "$APP_HOME" )
+    CLASSPATH=$( cygpath --path --mixed "$CLASSPATH" )
+
+    JAVACMD=$( cygpath --unix "$JAVACMD" )
+
+    # Now convert the arguments - kludge to limit ourselves to /bin/sh
+    for arg do
+        if
+            case $arg in                                #(
+              -*)   false ;;                            # don't mess with options #(
+              /?*)  t=\${arg#/} t=/\${t%%/*}              # looks like a POSIX filepath
+                    [ -e "$t" ] ;;                      #(
+              *)    false ;;
+            esac
+        then
+            arg=$( cygpath --path --ignore --mixed "$arg" )
+        fi
+        # Roll the args list around exactly as many times as the number of
+        # args, so each arg winds up back in the position where it started, but
+        # possibly modified.
+        #
+        # NB: a \`for\` loop captures its iteration list before it begins, so
+        # changing the positional parameters here affects neither the number of
+        # iterations, nor the values presented in \`arg\`.
+        shift                   # remove old arg
+        set -- "$@" "$arg"      # push replacement arg
+    done
+fi
+
+
+# Add default JVM options here. You can also use JAVA_OPTS and GRADLE_OPTS to pass JVM options to this script.
+DEFAULT_JVM_OPTS='-Dfile.encoding=UTF-8 "-Xmx64m" "-Xms64m"'
+
+# Collect all arguments for the java command:
+#   * DEFAULT_JVM_OPTS, JAVA_OPTS, JAVA_OPTS, and optsEnvironmentVar are not allowed to contain shell fragments,
+#     and any embedded shellness will be escaped.
+#   * For example: A user cannot expect \${Hostname} to be expanded, as it is an environment variable and will be
+#     treated as '\${Hostname}' itself on the command line.
+
+set -- \\
+        "-Dorg.gradle.appname=$APP_BASE_NAME" \\
+        -classpath "$CLASSPATH" \\
+        org.gradle.wrapper.GradleWrapperMain \\
+        "$@"
+
+# Stop when "xargs" is not available.
+if ! command -v xargs >/dev/null 2>&1
+then
+    die "xargs is not available"
+fi
+
+# Use "xargs" to parse quoted args.
+#
+# With -n1 it outputs one arg per line, with the quotes and backslashes removed.
+#
+# In Bash we could simply go:
+#
+#   readarray ARGS < <( xargs -n1 <<<"$var" ) &&
+#   set -- "\${ARGS[@]}" "$@"
+#
+# but POSIX shell has neither arrays nor command substitution, so instead we
+# post-process each arg (as a line of input to sed) to backslash-escape any
+# character that might be a shell metacharacter, then use eval to reverse
+# that process (while maintaining the separation between arguments), and wrap
+# the whole thing up as a single "set" statement.
+#
+# This will of course break if any of these variables contains a newline or
+# an unmatched quote.
+#
+
+eval "set -- $(
+        printf '%s\\n' "$DEFAULT_JVM_OPTS $JAVA_OPTS $GRADLE_OPTS" |
+        xargs -n1 |
+        sed ' s~[^-[:alnum:]+,./:=@_]~\\\\&~g; ' |
+        tr '\\n' ' '
+    )" '"$@"'
+
+exec "$JAVACMD" "$@"
+`
   },
   {
-    path: 'app/src/main/res/xml/data_extraction_rules.xml',
-    language: 'xml',
-    description: 'Android 12+ 数据备份保护规则定义',
+    path: "app/src/main/res/xml/data_extraction_rules.xml",
+    language: "xml",
+    description: "Android 12+ 数据备份与提取安全策略配置",
     content: `<?xml version="1.0" encoding="utf-8"?>
 <data-extraction-rules>
     <cloud-backup>
@@ -2172,21 +2807,23 @@ fi`
     <device-transfer>
         <include domain="sharedpref" path="."/>
     </device-transfer>
-</data-extraction-rules>`
+</data-extraction-rules>
+`
   },
   {
-    path: 'app/src/main/res/xml/backup_rules.xml',
-    language: 'xml',
-    description: 'Android 备份与恢复规则',
+    path: "app/src/main/res/xml/backup_rules.xml",
+    language: "xml",
+    description: "系统应用备份过滤规则配置",
     content: `<?xml version="1.0" encoding="utf-8"?>
 <full-backup-content>
     <include domain="sharedpref" path="."/>
-</full-backup-content>`
+</full-backup-content>
+`
   },
   {
-    path: 'app/src/main/res/drawable/ic_launcher.xml',
-    language: 'xml',
-    description: '应用矢量启动图标 (多视窗深色主题)',
+    path: "app/src/main/res/drawable/ic_launcher.xml",
+    language: "xml",
+    description: "应用矢量图标 (深色主题矢量图标设计)",
     content: `<?xml version="1.0" encoding="utf-8"?>
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
@@ -2205,21 +2842,22 @@ fi`
     <path
         android:fillColor="#F59E0B"
         android:pathData="M68,36h16v44h-16z"/>
-</vector>`
+</vector>
+`
   },
   {
-    path: 'gradle.properties',
-    language: 'properties',
-    description: 'Gradle JVM 内存优化与 AndroidX 特性配置',
+    path: "gradle.properties",
+    language: "properties",
+    description: "Gradle JVM 编译优化参数 (并行编译、守护进程与缓存配置)",
     content: `org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
 android.useAndroidX=true
 android.nonTransitiveRClass=true
 kotlin.code.style=official`
   },
   {
-    path: 'gradle/wrapper/gradle-wrapper.properties',
-    language: 'properties',
-    description: 'Gradle Wrapper 8.10.2 下载与运行配置',
+    path: "gradle/wrapper/gradle-wrapper.properties",
+    language: "properties",
+    description: "Gradle Wrapper 版本配置 (Gradle 8.10.2)",
     content: `distributionBase=GRADLE_USER_HOME
 distributionPath=wrapper/dists
 distributionUrl=https\\://services.gradle.org/distributions/gradle-8.10.2-bin.zip
@@ -2229,9 +2867,9 @@ zipStoreBase=GRADLE_USER_HOME
 zipStorePath=wrapper/dists`
   },
   {
-    path: 'app/proguard-rules.pro',
-    language: 'pro',
-    description: '混淆防劣化与 WebKit 原生接口保护规则',
+    path: "app/proguard-rules.pro",
+    language: "pro",
+    description: "ProGuard 代码混淆规则：安全保留 WebView JavaScriptInterface 与反射模型",
     content: `# Proguard rules for Android WebKit and Coroutines
 -keepclassmembers class * {
     @android.webkit.JavascriptInterface <methods>;
@@ -2240,17 +2878,17 @@ zipStorePath=wrapper/dists`
 -dontwarn com.trading.multiview.**`
   },
   {
-    path: 'app/src/main/res/values/strings.xml',
-    language: 'xml',
-    description: '应用字符串资源',
+    path: "app/src/main/res/values/strings.xml",
+    language: "xml",
+    description: "应用字符串资源定义",
     content: `<resources>
     <string name="app_name">多窗口看盘浏览器</string>
 </resources>`
   },
   {
-    path: 'app/src/main/res/values/styles.xml',
-    language: 'xml',
-    description: '沉浸式全屏主题配置',
+    path: "app/src/main/res/values/styles.xml",
+    language: "xml",
+    description: "应用启动主题与窗口样式定义",
     content: `<?xml version="1.0" encoding="utf-8"?>
 <resources>
     <style name="Theme.TradingMultiView" parent="android:Theme.Material.NoActionBar.Fullscreen">
@@ -2261,9 +2899,9 @@ zipStorePath=wrapper/dists`
 </resources>`
   },
   {
-    path: 'README.md',
-    language: 'markdown',
-    description: 'Android 工程编译指南 & Push 到 GitHub 自动编译 CI/CD 说明',
+    path: "README.md",
+    language: "markdown",
+    description: "完整工程文档与快速编译运行指南",
     content: `# Android 平板横屏轻量级原生看盘浏览器 (TradingMultiView)
 
 ## 📌 项目概述

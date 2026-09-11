@@ -16,6 +16,13 @@ import android.webkit.*
  */
 object PersistentWebViewPool {
 
+    var appContext: Context? = null
+        private set
+
+    const val PREFS_NAME = "trading_multiview_prefs"
+    const val KEY_WINDOW_URL_PREFIX = "saved_window_url_"
+    const val KEY_WINDOW_TITLE_PREFIX = "saved_window_title_"
+
     private val webViewMap = mutableMapOf<Int, WebView>()
     private var isInitialized = false
 
@@ -23,6 +30,41 @@ object PersistentWebViewPool {
     var onUrlChanged: ((Int, String, String) -> Unit)? = null
     // 网页标题更新回调 (windowId, newTitle) - 独立解耦，避免价格频繁跳动触发 URL 变更重绘
     var onTitleChanged: ((Int, String) -> Unit)? = null
+
+    fun getSavedWindowUrl(context: Context? = null, windowId: Int): String? {
+        val ctx = context ?: appContext ?: return null
+        return try {
+            val prefs = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            prefs.getString("${KEY_WINDOW_URL_PREFIX}$windowId", null)?.takeIf { it.isNotBlank() }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    fun getSavedWindowTitle(context: Context? = null, windowId: Int): String? {
+        val ctx = context ?: appContext ?: return null
+        return try {
+            val prefs = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            prefs.getString("${KEY_WINDOW_TITLE_PREFIX}$windowId", null)?.takeIf { it.isNotBlank() }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    fun saveWindowUrl(windowId: Int, url: String, title: String? = null, context: Context? = null) {
+        if (url.isBlank()) return
+        val ctx = context ?: appContext ?: return
+        try {
+            val editor = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+            editor.putString("${KEY_WINDOW_URL_PREFIX}$windowId", url)
+            if (!title.isNullOrBlank()) {
+                editor.putString("${KEY_WINDOW_TITLE_PREFIX}$windowId", title)
+            }
+            editor.apply()
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
 
     // 默认看盘标的预设 (默认加载 TradingView 官网 www.tradingview.com)
     val DEFAULT_URLS = mapOf(
@@ -235,13 +277,15 @@ object PersistentWebViewPool {
         """.trimIndent()
 
     fun init(context: Context) {
+        val appCtx = context.applicationContext
+        this.appContext = appCtx
         if (isInitialized) return
-        val appContext = context.applicationContext
         
         // 为 3 个视窗分别创建专属 WebView 实例
         listOf(1, 2, 3).forEach { windowId ->
-            val webView = createConfiguredWebView(appContext, windowId)
-            val initialUrl = DEFAULT_URLS[windowId] ?: "https://www.tradingview.com"
+            val webView = createConfiguredWebView(appCtx, windowId)
+            val savedUrl = getSavedWindowUrl(appCtx, windowId)
+            val initialUrl = if (!savedUrl.isNullOrBlank()) savedUrl else (DEFAULT_URLS[windowId] ?: "https://www.tradingview.com")
             webView.loadUrl(initialUrl)
             webViewMap[windowId] = webView
         }
@@ -300,6 +344,7 @@ object PersistentWebViewPool {
                     view?.let { injectDesktopViewport(it) }
                     if (url != null && url != lastReportedUrl) {
                         lastReportedUrl = url
+                        saveWindowUrl(windowId, url, view?.title ?: "")
                         onUrlChanged?.invoke(windowId, url, view?.title ?: "")
                     }
                 }
@@ -310,6 +355,7 @@ object PersistentWebViewPool {
                     view?.let { injectDesktopViewport(it) }
                     if (url != null && url != lastReportedUrl) {
                         lastReportedUrl = url
+                        saveWindowUrl(windowId, url, view?.title ?: "")
                         onUrlChanged?.invoke(windowId, url, view?.title ?: "")
                     }
                 }
@@ -318,6 +364,7 @@ object PersistentWebViewPool {
                     super.doUpdateVisitedHistory(view, url, isReload)
                     if (url != null && url != lastReportedUrl) {
                         lastReportedUrl = url
+                        saveWindowUrl(windowId, url, view?.title ?: "")
                         onUrlChanged?.invoke(windowId, url, view?.title ?: "")
                     }
                 }
@@ -456,6 +503,8 @@ object PersistentWebViewPool {
     fun loadCustomUrl(windowId: Int, url: String, forceReload: Boolean = false): Boolean {
         val formatted = formatUrl(url)
         val webView = webViewMap[windowId] ?: return false
+        // 关键持久化：记录用户输入的网址
+        saveWindowUrl(windowId, formatted)
         val current = webView.url ?: ""
         if (!forceReload && isSameUrl(current, formatted)) {
             return false

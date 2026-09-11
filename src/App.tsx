@@ -90,8 +90,24 @@ const INITIAL_WINDOWS: WindowConfig[] = [
   },
 ];
 
+function getInitialWindows(): WindowConfig[] {
+  try {
+    return INITIAL_WINDOWS.map((win) => {
+      const savedUrl = localStorage.getItem(`trading_multiview_saved_window_url_${win.id}`);
+      const savedTitle = localStorage.getItem(`trading_multiview_saved_window_title_${win.id}`);
+      return {
+        ...win,
+        url: savedUrl || win.url,
+        title: savedTitle || win.title,
+      };
+    });
+  } catch {
+    return INITIAL_WINDOWS;
+  }
+}
+
 export default function App() {
-  const [windows, setWindows] = useState<WindowConfig[]>(INITIAL_WINDOWS);
+  const [windows, setWindows] = useState<WindowConfig[]>(getInitialWindows);
   const [orientation, setOrientation] = useState<OrientationMode>('landscape');
   const [showFrame, setShowFrame] = useState<boolean>(true);
   const [isCodeModalOpen, setIsCodeModalOpen] = useState<boolean>(false);
@@ -200,6 +216,14 @@ export default function App() {
       prev.map((win) => (win.id === id ? { ...win, ...updates } : win))
     );
     if (updates.url) {
+      try {
+        localStorage.setItem(`trading_multiview_saved_window_url_${id}`, updates.url);
+        if (updates.title) {
+          localStorage.setItem(`trading_multiview_saved_window_title_${id}`, updates.title);
+        }
+      } catch {
+        // ignore
+      }
       setGroups((prevGroups) =>
         prevGroups.map((grp) => {
           if (grp.id === activeGroupId) {
@@ -256,6 +280,15 @@ export default function App() {
 
     const targetGroup = updatedGroups.find((g) => g.id === groupId);
     if (!targetGroup) return;
+
+    targetGroup.items.forEach((item, idx) => {
+      try {
+        localStorage.setItem(`trading_multiview_saved_window_url_${idx + 1}`, item.url);
+        localStorage.setItem(`trading_multiview_saved_window_title_${idx + 1}`, item.title);
+      } catch {
+        // ignore
+      }
+    });
 
     setActiveGroupId(groupId);
     setWindows((prev) =>
