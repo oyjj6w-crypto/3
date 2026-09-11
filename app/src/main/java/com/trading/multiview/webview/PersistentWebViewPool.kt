@@ -98,38 +98,38 @@ object PersistentWebViewPool {
                             if (document.head) document.head.appendChild(meta);
                         }
 
-                        // 注入 GPU 硬件加速隔离样式，防止 K 线图表 Canvas/WebGL 在数据更正与重绘时被清除引起闪白
-                        var styleId = '__tv_canvas_antiflicker__';
+                        // 仅注入纯深色背景底色防护，防止图表重绘和异步加载时的瞬时白闪
+                        // 坚决不覆盖 canvas 的 transform / translate3d，彻底避免 GPU 复合图层爆炸与 WebGL 显存崩溃！
+                        var styleId = '__tv_bg_antiflicker__';
                         if (!document.getElementById(styleId)) {
                             var style = document.createElement('style');
                             style.id = styleId;
-                            style.textContent = 'canvas, .chart-container, .tv-lightweight-charts { -webkit-transform: translate3d(0,0,0) !important; transform: translate3d(0,0,0) !important; -webkit-backface-visibility: hidden !important; backface-visibility: hidden !important; } html, body { background-color: #131722 !important; }';
+                            style.textContent = 'html, body { background-color: #131722 !important; }';
                             if (document.head) document.head.appendChild(style);
                         }
 
+                        // 模拟 PC 平台标头，但保留真实触屏支持（不覆写 maxTouchPoints），确保周期切换按钮与下拉菜单可流畅点击
                         if (window.navigator) {
-                            Object.defineProperty(navigator, 'userAgentData', {
-                                get: function() {
-                                    return {
-                                        mobile: false,
-                                        platform: 'Windows',
-                                        brands: [
-                                            { brand: 'Chromium', version: '128' },
-                                            { brand: 'Google Chrome', version: '128' },
-                                            { brand: 'Not;A=Brand', version: '24' }
-                                        ]
-                                    };
-                                },
-                                configurable: true
-                            });
-                            Object.defineProperty(navigator, 'platform', {
-                                get: function() { return 'Win32'; },
-                                configurable: true
-                            });
-                            Object.defineProperty(navigator, 'maxTouchPoints', {
-                                get: function() { return 0; },
-                                configurable: true
-                            });
+                            try {
+                                Object.defineProperty(navigator, 'userAgentData', {
+                                    get: function() {
+                                        return {
+                                            mobile: false,
+                                            platform: 'Windows',
+                                            brands: [
+                                                { brand: 'Chromium', version: '128' },
+                                                { brand: 'Google Chrome', version: '128' },
+                                                { brand: 'Not;A=Brand', version: '24' }
+                                            ]
+                                        };
+                                    },
+                                    configurable: true
+                                });
+                                Object.defineProperty(navigator, 'platform', {
+                                    get: function() { return 'Win32'; },
+                                    configurable: true
+                                });
+                            } catch(e) {}
                         }
                     } catch(e) {}
                 }
@@ -139,9 +139,6 @@ object PersistentWebViewPool {
                 } else {
                     applyDesktop();
                 }
-                // 针对 TradingView 等 SPA 异步脚本初始化完毕后再执行一次加固，防止被其内部脚本重置
-                setTimeout(applyDesktop, 300);
-                setTimeout(applyDesktop, 1200);
             })();
         """.trimIndent()
 
