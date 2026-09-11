@@ -135,12 +135,38 @@ class TradingViewModel : ViewModel() {
 
     /**
      * 点击分组标签时，3 个窗口同时切换到该分组对应的 3 个目标 URL
+     * 关键优化：在切换离开当前标签集合前，先自动同步记忆当前 3 个窗口中用户修改过的实时网址；
+     * 确保后续切换回来时，展示的是用户在原标签页输入的网址，绝不回滚到默认网址！
      */
     fun switchGroup(groupId: String) {
-        val group = _uiState.value.groups.find { it.id == groupId } ?: return
+        val currentActiveId = _uiState.value.activeGroupId
+        if (groupId == currentActiveId) return
+
+        val currentWindows = _uiState.value.windows
+
+        // 1. 将当前标签集合中各视窗被用户修改后的实时 URL、标题和代码保存下来
+        val updatedGroups = _uiState.value.groups.map { group ->
+            if (group.id == currentActiveId) {
+                group.copy(
+                    items = group.items.mapIndexed { index, item ->
+                        val win = currentWindows.getOrNull(index)
+                        if (win != null && win.currentUrl.isNotBlank()) {
+                            item.copy(
+                                url = win.currentUrl,
+                                title = win.title,
+                                symbol = win.symbol
+                            )
+                        } else item
+                    }
+                )
+            } else group
+        }
+
+        val targetGroup = updatedGroups.find { it.id == groupId } ?: return
+
         _uiState.update { state ->
             val updatedWindows = state.windows.mapIndexed { index, win ->
-                val targetItem = group.items.getOrNull(index) ?: group.items.first()
+                val targetItem = targetGroup.items.getOrNull(index) ?: targetGroup.items.first()
                 PersistentWebViewPool.loadCustomUrl(win.id, targetItem.url)
                 win.copy(
                     title = targetItem.title,
@@ -149,6 +175,7 @@ class TradingViewModel : ViewModel() {
                 )
             }
             state.copy(
+                groups = updatedGroups,
                 windows = updatedWindows,
                 activeGroupId = groupId
             )
@@ -505,7 +532,7 @@ class TradingViewModel : ViewModel() {
     }
 
     /**
-     * 更新指定视窗 URL
+     * 更新指定视窗 URL，并同步更新至当前活动标签集合，确保随时记忆用户输入的网址
      */
     fun updateWindowUrl(windowId: Int, newUrl: String, title: String? = null) {
         val currentWin = _uiState.value.windows.find { it.id == windowId }
@@ -513,15 +540,35 @@ class TradingViewModel : ViewModel() {
             return
         }
         _uiState.update { state ->
+            val updatedWindows = state.windows.map { win ->
+                if (win.id == windowId) {
+                    win.copy(
+                        currentUrl = newUrl,
+                        title = title ?: win.title
+                    )
+                } else win
+            }
+
+            // 同步实时记忆到当前活动分组中
+            val activeId = state.activeGroupId
+            val updatedGroups = state.groups.map { group ->
+                if (group.id == activeId) {
+                    group.copy(
+                        items = group.items.mapIndexed { index, item ->
+                            if (index == windowId - 1) {
+                                item.copy(
+                                    url = newUrl,
+                                    title = title ?: item.title
+                                )
+                            } else item
+                        }
+                    )
+                } else group
+            }
+
             state.copy(
-                windows = state.windows.map { win ->
-                    if (win.id == windowId) {
-                        win.copy(
-                            currentUrl = newUrl,
-                            title = title ?: win.title
-                        )
-                    } else win
-                }
+                windows = updatedWindows,
+                groups = updatedGroups
             )
         }
     }

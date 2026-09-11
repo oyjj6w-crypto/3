@@ -199,16 +199,68 @@ export default function App() {
     setWindows((prev) =>
       prev.map((win) => (win.id === id ? { ...win, ...updates } : win))
     );
+    if (updates.url) {
+      setGroups((prevGroups) =>
+        prevGroups.map((grp) => {
+          if (grp.id === activeGroupId) {
+            return {
+              ...grp,
+              items: grp.items.map((item, idx) => {
+                if (idx === id - 1) {
+                  return {
+                    ...item,
+                    url: updates.url!,
+                    ...(updates.title ? { title: updates.title } : {}),
+                    ...(updates.symbol ? { symbol: updates.symbol } : {}),
+                  };
+                }
+                return item;
+              }),
+            };
+          }
+          return grp;
+        })
+      );
+    }
   };
 
   // 标签页集合：点击分组标签时，3 个窗口同时切换到该分组对应的 3 个目标 URL
+  // 关键优化：切换离开当前分组前，先自动记忆保存当前各窗口被用户修改的网址，
+  // 确保切走后再切回原标签页时，能精准还原用户输入的网址，绝不被默认网址覆盖！
   const handleSwitchGroup = (groupId: string) => {
-    const group = groups.find((g) => g.id === groupId);
-    if (!group) return;
+    if (groupId === activeGroupId) return;
+
+    // 1. 将当前标签组中各窗口最新的 URL 存回 groups
+    const updatedGroups = groups.map((grp) => {
+      if (grp.id === activeGroupId) {
+        return {
+          ...grp,
+          items: grp.items.map((item, idx) => {
+            const currentWin = windows[idx];
+            if (currentWin && currentWin.url) {
+              return {
+                ...item,
+                url: currentWin.url,
+                title: currentWin.title,
+                symbol: currentWin.symbol,
+              };
+            }
+            return item;
+          }),
+        };
+      }
+      return grp;
+    });
+
+    setGroups(updatedGroups);
+
+    const targetGroup = updatedGroups.find((g) => g.id === groupId);
+    if (!targetGroup) return;
+
     setActiveGroupId(groupId);
     setWindows((prev) =>
       prev.map((win, idx) => {
-        const item = group.items[idx] || group.items[0];
+        const item = targetGroup.items[idx] || targetGroup.items[0];
         return {
           ...win,
           title: item.title,
