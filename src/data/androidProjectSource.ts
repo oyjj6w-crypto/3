@@ -825,13 +825,35 @@ object PersistentWebViewPool {
                                     target.dispatchEvent(ku);
                                     document.dispatchEvent(ku);
                                     window.dispatchEvent(ku);
+
+                                    // 额外在 40ms 后触发一次左键单击，清除 hover 遗留的十字线
+                                    setTimeout(function() {
+                                        var cleanEvt = {
+                                            clientX: p.x,
+                                            clientY: p.y,
+                                            screenX: p.x,
+                                            screenY: p.y,
+                                            bubbles: true,
+                                            cancelable: true,
+                                            view: window,
+                                            buttons: 1,
+                                            composed: true
+                                        };
+                                        try {
+                                            target.dispatchEvent(new PointerEvent('pointerdown', cleanEvt));
+                                            target.dispatchEvent(new MouseEvent('mousedown', cleanEvt));
+                                            target.dispatchEvent(new PointerEvent('pointerup', cleanEvt));
+                                            target.dispatchEvent(new MouseEvent('mouseup', cleanEvt));
+                                            target.dispatchEvent(new MouseEvent('click', cleanEvt));
+                                        } catch(e) {}
+                                    }, 40);
                                 }, 15);
                             }
 
-                            // 间隔 60ms 串行处理下一个图表
+                            // 间隔 120ms 串行处理下一个图表
                             setTimeout(function() {
                                 processPoint(idx + 1);
-                            }, 60);
+                            }, 120);
                         }, 40);
                     }
 
@@ -845,88 +867,10 @@ object PersistentWebViewPool {
     }
 
     /**
-     * 自动向 TradingView 网页内注入顶部工具栏 3 图标 (隐藏·磁力·翻转)
+     * 自动向 TradingView 网页内注入顶部工具栏 3 图标 (已根据用户需求彻底删除移除此注入功能)
      */
     fun injectTradingViewEnhancer(webView: WebView, url: String?) {
-        val targetUrl = url ?: webView.url ?: ""
-        if (!targetUrl.contains("tradingview.com", ignoreCase = true)) return
-
-        val script = """
-            (function() {
-                if (document.getElementById('tv-app-enhancer-tabs')) return;
-                function addButtons() {
-                    if (document.getElementById('tv-app-enhancer-tabs')) return;
-                    var tb = document.querySelector('#header-toolbar') || 
-                             document.querySelector('[data-role="header-toolbar"]') ||
-                             document.querySelector('.tv-header') ||
-                             document.querySelector('.layout__area--top');
-                    
-                    var wrap = document.createElement('div');
-                    wrap.id = 'tv-app-enhancer-tabs';
-                    wrap.style.cssText = 'display:inline-flex;align-items:center;gap:4px;padding:2px 6px;margin:0 4px;background:rgba(20,27,45,0.85);border-radius:6px;border:1px solid rgba(56,189,248,0.3);z-index:9999;';
-
-                    function makeBtn(svg, title, onClick) {
-                        var b = document.createElement('button');
-                        b.type = 'button';
-                        b.title = title;
-                        b.innerHTML = svg;
-                        b.style.cssText = 'display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;background:transparent;border:1px solid rgba(255,255,255,0.15);border-radius:4px;color:#cbd5e1;cursor:pointer;padding:0;';
-                        b.onclick = function(e) {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            onClick(b);
-                        };
-                        return b;
-                    }
-
-                    // 1. 隐藏
-                    var bHide = makeBtn('<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>', '隐藏/显示画线 (Ctrl+Alt+H)', function() {
-                        var kd = new KeyboardEvent('keydown', { key: 'h', code: 'KeyH', keyCode: 72, which: 72, altKey: true, ctrlKey: true, bubbles: true, composed: true });
-                        document.dispatchEvent(kd);
-                    });
-
-                    // 2. 磁力
-                    var bMag = makeBtn('<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#f43f5e" stroke-width="2"><path d="m6 15-4-4 6.75-6.77a7.79 7.79 0 0 1 11 11L13 22l-4-4 6.35-6.35a2.85 2.85 0 0 0-4-4.03L6 15Z"/></svg>', '磁力吸附切换 (Ctrl)', function(btn) {
-                        var mBtn = document.querySelector('[data-name="magnet"]');
-                        if (mBtn) mBtn.click();
-                        else {
-                            var held = window.__tv_m = !window.__tv_m;
-                            btn.style.background = held ? 'rgba(244,63,94,0.3)' : 'transparent';
-                            var ce = { key: 'Control', code: 'ControlLeft', keyCode: 17, which: 17, ctrlKey: held, bubbles: true, composed: true };
-                            document.dispatchEvent(new KeyboardEvent(held ? 'keydown' : 'keyup', ce));
-                        }
-                    });
-
-                    // 3. 翻转
-                    var bInv = makeBtn('<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#34d399" stroke-width="2"><path d="m3 16 4 4 4-4"/><path d="M7 20V4"/><path d="m21 8-4-4-4 4"/><path d="M17 4v16"/></svg>', '翻转K线 (Alt+I)', function() {
-                        var kd = new KeyboardEvent('keydown', { key: 'i', code: 'KeyI', keyCode: 73, which: 73, altKey: true, bubbles: true, composed: true });
-                        document.dispatchEvent(kd);
-                    });
-
-                    wrap.appendChild(bHide);
-                    wrap.appendChild(bMag);
-                    wrap.appendChild(bInv);
-
-                    if (tb) {
-                        tb.appendChild(wrap);
-                    } else {
-                        wrap.style.position = 'fixed';
-                        wrap.style.top = '8px';
-                        wrap.style.right = '60px';
-                        document.body.appendChild(wrap);
-                    }
-                }
-
-                if (document.readyState === 'loading') {
-                    document.addEventListener('DOMContentLoaded', addButtons, { once: true });
-                } else {
-                    addButtons();
-                }
-                setTimeout(addButtons, 1500);
-            })();
-        """.trimIndent()
-
-        webView.evaluateJavascript(script, null)
+        // 用户已要求删除网页内的浮动工具栏，保持看盘界面完全纯净无遮挡
     }
 
     fun destroyAll() {
@@ -2338,18 +2282,42 @@ fun TradingMultiViewScreen(
                                                 .clip(CircleShape)
                                                 .background(Color(0xFF10B981))
                                         )
-                                        Text(
-                                            text = "窗口 \${win.id}",
-                                            color = Color(0xFF38BDF8),
-                                            fontSize = 10.sp,
-                                            fontWeight = FontWeight.Bold
-                                        )
                                     }
 
                                     Row(
                                         verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
                                     ) {
+                                        // 隐藏/显示画图快捷键图标 (Ctrl+Alt+H)
+                                        Icon(
+                                            imageVector = Icons.Default.VisibilityOff,
+                                            contentDescription = "隐藏画图 (Ctrl+Alt+H)",
+                                            tint = Color(0xFF38BDF8),
+                                            modifier = Modifier
+                                                .size(13.dp)
+                                                .clickable { viewModel.triggerHideDrawings(context) }
+                                        )
+
+                                        // 磁吸快捷键图标 (Ctrl)
+                                        Icon(
+                                            imageVector = Icons.Default.CenterFocusStrong,
+                                            contentDescription = "磁力吸附切换 (Ctrl)",
+                                            tint = if (uiState.isMagnetActive) Color(0xFFFB7185) else Color(0xFFCBD5E1),
+                                            modifier = Modifier
+                                                .size(13.dp)
+                                                .clickable { viewModel.triggerToggleMagnet(context) }
+                                        )
+
+                                        // 翻转K线快捷键图标 (Alt+I)
+                                        Icon(
+                                            imageVector = Icons.Default.SwapVert,
+                                            contentDescription = "翻转 K 线 (Alt+I)",
+                                            tint = Color(0xFF34D399),
+                                            modifier = Modifier
+                                                .size(13.dp)
+                                                .clickable { viewModel.triggerInvert4Charts(context) }
+                                        )
+
                                         // 窗口单独刷新
                                         Icon(
                                             imageVector = Icons.Default.Refresh,
@@ -2378,7 +2346,7 @@ fun TradingMultiViewScreen(
                                     }
                                 }
 
-                                // 极简 URL 输入栏 (删除了后面的常用书签按钮)
+                                // 极简 URL 输入栏
                                 Box(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -2413,71 +2381,6 @@ fun TradingMultiViewScreen(
                                 }
                             }
                         }
-                    }
-
-                    // 2. 固定像素桌面视口基准点选标签条与即时说明
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(4.dp))
-                            .background(Color(0xFF0A101D))
-                            .border(1.dp, Color(0xFF1E293B), RoundedCornerShape(4.dp))
-                            .padding(horizontal = 8.dp, vertical = 5.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Computer,
-                                    contentDescription = null,
-                                    tint = Color(0xFF38BDF8),
-                                    modifier = Modifier.size(13.dp)
-                                )
-                                Text(
-                                    text = "桌面视口基准:",
-                                    color = Color(0xFF94A3B8),
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                            }
-
-                            PersistentWebViewPool.PRESET_FIXED_PIXEL_WIDTHS.forEach { preset ->
-                                val isSelected = uiState.fixedPixelWidth == preset.width
-                                Box(
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(4.dp))
-                                        .background(if (isSelected) Color(0xFF0284C7) else Color(0xFF1E293B))
-                                        .border(
-                                            1.dp,
-                                            if (isSelected) Color(0xFF38BDF8) else Color(0xFF334155),
-                                            RoundedCornerShape(4.dp)
-                                        )
-                                        .clickable { viewModel.setFixedPixelWidth(preset.width, context) }
-                                        .padding(horizontal = 8.dp, vertical = 3.dp)
-                                ) {
-                                    Text(
-                                        text = "\${preset.width}px (\${preset.badge})",
-                                        color = if (isSelected) Color.White else Color(0xFFCBD5E1),
-                                        fontSize = 10.sp,
-                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                        fontFamily = FontFamily.Monospace
-                                    )
-                                }
-                            }
-                        }
-
-                        Text(
-                            text = "动态注入 <meta viewport> 击穿 TradingView 移动端折叠，免刷新热生效",
-                            color = Color(0xFF64748B),
-                            fontSize = 9.sp
-                        )
                     }
                 }
             }

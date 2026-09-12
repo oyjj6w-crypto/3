@@ -686,13 +686,35 @@ object PersistentWebViewPool {
                                     target.dispatchEvent(ku);
                                     document.dispatchEvent(ku);
                                     window.dispatchEvent(ku);
+
+                                    // 额外在 40ms 后触发一次左键单击，清除 hover 遗留的十字线
+                                    setTimeout(function() {
+                                        var cleanEvt = {
+                                            clientX: p.x,
+                                            clientY: p.y,
+                                            screenX: p.x,
+                                            screenY: p.y,
+                                            bubbles: true,
+                                            cancelable: true,
+                                            view: window,
+                                            buttons: 1,
+                                            composed: true
+                                        };
+                                        try {
+                                            target.dispatchEvent(new PointerEvent('pointerdown', cleanEvt));
+                                            target.dispatchEvent(new MouseEvent('mousedown', cleanEvt));
+                                            target.dispatchEvent(new PointerEvent('pointerup', cleanEvt));
+                                            target.dispatchEvent(new MouseEvent('mouseup', cleanEvt));
+                                            target.dispatchEvent(new MouseEvent('click', cleanEvt));
+                                        } catch(e) {}
+                                    }, 40);
                                 }, 15);
                             }
 
-                            // 间隔 60ms 串行处理下一个图表
+                            // 间隔 120ms 串行处理下一个图表
                             setTimeout(function() {
                                 processPoint(idx + 1);
-                            }, 60);
+                            }, 120);
                         }, 40);
                     }
 
@@ -706,88 +728,10 @@ object PersistentWebViewPool {
     }
 
     /**
-     * 自动向 TradingView 网页内注入顶部工具栏 3 图标 (隐藏·磁力·翻转)
+     * 自动向 TradingView 网页内注入顶部工具栏 3 图标 (已根据用户需求彻底删除移除此注入功能)
      */
     fun injectTradingViewEnhancer(webView: WebView, url: String?) {
-        val targetUrl = url ?: webView.url ?: ""
-        if (!targetUrl.contains("tradingview.com", ignoreCase = true)) return
-
-        val script = """
-            (function() {
-                if (document.getElementById('tv-app-enhancer-tabs')) return;
-                function addButtons() {
-                    if (document.getElementById('tv-app-enhancer-tabs')) return;
-                    var tb = document.querySelector('#header-toolbar') || 
-                             document.querySelector('[data-role="header-toolbar"]') ||
-                             document.querySelector('.tv-header') ||
-                             document.querySelector('.layout__area--top');
-                    
-                    var wrap = document.createElement('div');
-                    wrap.id = 'tv-app-enhancer-tabs';
-                    wrap.style.cssText = 'display:inline-flex;align-items:center;gap:4px;padding:2px 6px;margin:0 4px;background:rgba(20,27,45,0.85);border-radius:6px;border:1px solid rgba(56,189,248,0.3);z-index:9999;';
-
-                    function makeBtn(svg, title, onClick) {
-                        var b = document.createElement('button');
-                        b.type = 'button';
-                        b.title = title;
-                        b.innerHTML = svg;
-                        b.style.cssText = 'display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;background:transparent;border:1px solid rgba(255,255,255,0.15);border-radius:4px;color:#cbd5e1;cursor:pointer;padding:0;';
-                        b.onclick = function(e) {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            onClick(b);
-                        };
-                        return b;
-                    }
-
-                    // 1. 隐藏
-                    var bHide = makeBtn('<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>', '隐藏/显示画线 (Ctrl+Alt+H)', function() {
-                        var kd = new KeyboardEvent('keydown', { key: 'h', code: 'KeyH', keyCode: 72, which: 72, altKey: true, ctrlKey: true, bubbles: true, composed: true });
-                        document.dispatchEvent(kd);
-                    });
-
-                    // 2. 磁力
-                    var bMag = makeBtn('<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#f43f5e" stroke-width="2"><path d="m6 15-4-4 6.75-6.77a7.79 7.79 0 0 1 11 11L13 22l-4-4 6.35-6.35a2.85 2.85 0 0 0-4-4.03L6 15Z"/></svg>', '磁力吸附切换 (Ctrl)', function(btn) {
-                        var mBtn = document.querySelector('[data-name="magnet"]');
-                        if (mBtn) mBtn.click();
-                        else {
-                            var held = window.__tv_m = !window.__tv_m;
-                            btn.style.background = held ? 'rgba(244,63,94,0.3)' : 'transparent';
-                            var ce = { key: 'Control', code: 'ControlLeft', keyCode: 17, which: 17, ctrlKey: held, bubbles: true, composed: true };
-                            document.dispatchEvent(new KeyboardEvent(held ? 'keydown' : 'keyup', ce));
-                        }
-                    });
-
-                    // 3. 翻转
-                    var bInv = makeBtn('<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#34d399" stroke-width="2"><path d="m3 16 4 4 4-4"/><path d="M7 20V4"/><path d="m21 8-4-4-4 4"/><path d="M17 4v16"/></svg>', '翻转K线 (Alt+I)', function() {
-                        var kd = new KeyboardEvent('keydown', { key: 'i', code: 'KeyI', keyCode: 73, which: 73, altKey: true, bubbles: true, composed: true });
-                        document.dispatchEvent(kd);
-                    });
-
-                    wrap.appendChild(bHide);
-                    wrap.appendChild(bMag);
-                    wrap.appendChild(bInv);
-
-                    if (tb) {
-                        tb.appendChild(wrap);
-                    } else {
-                        wrap.style.position = 'fixed';
-                        wrap.style.top = '8px';
-                        wrap.style.right = '60px';
-                        document.body.appendChild(wrap);
-                    }
-                }
-
-                if (document.readyState === 'loading') {
-                    document.addEventListener('DOMContentLoaded', addButtons, { once: true });
-                } else {
-                    addButtons();
-                }
-                setTimeout(addButtons, 1500);
-            })();
-        """.trimIndent()
-
-        webView.evaluateJavascript(script, null)
+        // 用户已要求删除网页内的浮动工具栏，保持看盘界面完全纯净无遮挡
     }
 
     fun destroyAll() {

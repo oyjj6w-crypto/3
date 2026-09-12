@@ -181,15 +181,6 @@ fun TradingMultiViewScreen(
                                 )
                                 .padding(horizontal = 4.dp)
                         ) {
-                            Text(
-                                text = "${win.id}",
-                                color = if (isMaximized) Color.White else if (isHidden) Color(0xFF94A3B8) else Color(0xFF38BDF8),
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                fontFamily = FontFamily.Monospace,
-                                modifier = Modifier.padding(horizontal = 4.dp)
-                            )
-
                             // 独立最大化 / 还原按钮
                             Box(
                                 modifier = Modifier
@@ -293,72 +284,48 @@ fun TradingMultiViewScreen(
                     // 3. 4图翻转 K线 (Alt+I)
                     Box(
                         modifier = Modifier
-                            .height(24.dp)
-                            .padding(horizontal = 2.dp)
+                            .size(24.dp)
                             .clip(RoundedCornerShape(4.dp))
                             .background(Color(0xFF1E293B).copy(alpha = 0.7f))
                             .clickable { viewModel.triggerInvert4Charts(context) },
                         contentAlignment = Alignment.Center
                     ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(horizontal = 4.dp),
-                            horizontalArrangement = Arrangement.spacedBy(1.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.SwapVert,
-                                contentDescription = "4图布局翻转 K线 (Alt+I)",
-                                tint = Color(0xFF34D399),
-                                modifier = Modifier.size(14.dp)
-                            )
-                            Text(
-                                text = "4图",
-                                color = Color(0xFF34D399),
-                                fontSize = 9.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
+                        Text(
+                            text = "4",
+                            color = Color(0xFF34D399),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace
+                        )
                     }
 
                     // 4. 8图翻转 K线 (Alt+I)
                     Box(
                         modifier = Modifier
-                            .height(24.dp)
-                            .padding(horizontal = 2.dp)
+                            .size(24.dp)
                             .clip(RoundedCornerShape(4.dp))
                             .background(Color(0xFF1E293B).copy(alpha = 0.7f))
                             .clickable { viewModel.triggerInvert8Charts(context) },
                         contentAlignment = Alignment.Center
                     ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(horizontal = 4.dp),
-                            horizontalArrangement = Arrangement.spacedBy(1.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.SwapVert,
-                                contentDescription = "8图布局翻转 K线 (Alt+I)",
-                                tint = Color(0xFF10B981),
-                                modifier = Modifier.size(14.dp)
-                            )
-                            Text(
-                                text = "8图",
-                                color = Color(0xFF10B981),
-                                fontSize = 9.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
+                        Text(
+                            text = "8",
+                            color = Color(0xFF10B981),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace
+                        )
                     }
                 }
 
                 Spacer(modifier = Modifier.width(6.dp))
 
-                // 右侧：全局控制区 (全局刷新仅留图标 + 统一缩放去掉文字 + 网址配置仅留图标，全部统一 30dp 高度)
+                // 右侧：全局控制区 (全局刷新仅留图标 + 网址配置仅留图标，全部统一 30dp 高度)
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    // 顶部栏固定像素快捷胶囊：电脑图标 + 1280px，点击在 960 / 1280 / 1440 / 1920 循环切换
+                    // 顶部栏固定像素快捷胶囊：仅电脑图标，点击在 960 / 1280 / 1440 / 1920 循环切换
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
@@ -367,21 +334,13 @@ fun TradingMultiViewScreen(
                             .background(Color(0xFF0F2338))
                             .border(1.dp, Color(0xFF0284C7), RoundedCornerShape(6.dp))
                             .clickable { viewModel.cycleFixedPixelWidth(context) }
-                            .padding(horizontal = 6.dp)
+                            .padding(horizontal = 8.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Default.Computer,
                             contentDescription = "切换桌面基准像素",
                             tint = Color(0xFF38BDF8),
                             modifier = Modifier.size(14.dp)
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            text = "${uiState.fixedPixelWidth}px",
-                            color = Color(0xFF38BDF8),
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            fontFamily = FontFamily.Monospace
                         )
                     }
 
@@ -401,56 +360,6 @@ fun TradingMultiViewScreen(
                             tint = Color(0xFF38BDF8),
                             modifier = Modifier.size(15.dp)
                         )
-                    }
-
-                    // 统一全局缩放调节器：高度统一为 30dp，圆角 6dp，与旁边按钮完美对齐
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .height(30.dp)
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(Color(0xFF090D16))
-                            .border(1.dp, Color(0xFF334155), RoundedCornerShape(6.dp))
-                            .padding(horizontal = 2.dp)
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(26.dp)
-                                .clip(RoundedCornerShape(4.dp))
-                                .clickable { viewModel.zoomOutAll() },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Remove,
-                                contentDescription = "缩小",
-                                tint = Color(0xFF94A3B8),
-                                modifier = Modifier.size(13.dp)
-                            )
-                        }
-                        Text(
-                            text = "${uiState.globalZoomPercent}%",
-                            color = Color(0xFF38BDF8),
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            fontFamily = FontFamily.Monospace,
-                            modifier = Modifier
-                                .clickable { viewModel.resetGlobalZoom() }
-                                .padding(horizontal = 4.dp)
-                        )
-                        Box(
-                            modifier = Modifier
-                                .size(26.dp)
-                                .clip(RoundedCornerShape(4.dp))
-                                .clickable { viewModel.zoomInAll() },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Add,
-                                contentDescription = "放大",
-                                tint = Color(0xFF94A3B8),
-                                modifier = Modifier.size(13.dp)
-                            )
-                        }
                     }
 
                     // 网址配置抽屉开关按钮：标准 30dp x 30dp 方形，圆角 6dp，与旁边按钮严格一致
@@ -552,18 +461,42 @@ fun TradingMultiViewScreen(
                                                 .clip(CircleShape)
                                                 .background(Color(0xFF10B981))
                                         )
-                                        Text(
-                                            text = "窗口 ${win.id}",
-                                            color = Color(0xFF38BDF8),
-                                            fontSize = 10.sp,
-                                            fontWeight = FontWeight.Bold
-                                        )
                                     }
 
                                     Row(
                                         verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
                                     ) {
+                                        // 隐藏/显示画图快捷键图标 (Ctrl+Alt+H)
+                                        Icon(
+                                            imageVector = Icons.Default.VisibilityOff,
+                                            contentDescription = "隐藏画图 (Ctrl+Alt+H)",
+                                            tint = Color(0xFF38BDF8),
+                                            modifier = Modifier
+                                                .size(13.dp)
+                                                .clickable { viewModel.triggerHideDrawings(context) }
+                                        )
+
+                                        // 磁吸快捷键图标 (Ctrl)
+                                        Icon(
+                                            imageVector = Icons.Default.CenterFocusStrong,
+                                            contentDescription = "磁力吸附切换 (Ctrl)",
+                                            tint = if (uiState.isMagnetActive) Color(0xFFFB7185) else Color(0xFFCBD5E1),
+                                            modifier = Modifier
+                                                .size(13.dp)
+                                                .clickable { viewModel.triggerToggleMagnet(context) }
+                                        )
+
+                                        // 翻转K线快捷键图标 (Alt+I)
+                                        Icon(
+                                            imageVector = Icons.Default.SwapVert,
+                                            contentDescription = "翻转 K 线 (Alt+I)",
+                                            tint = Color(0xFF34D399),
+                                            modifier = Modifier
+                                                .size(13.dp)
+                                                .clickable { viewModel.triggerInvert4Charts(context) }
+                                        )
+
                                         // 窗口单独刷新
                                         Icon(
                                             imageVector = Icons.Default.Refresh,
@@ -592,7 +525,7 @@ fun TradingMultiViewScreen(
                                     }
                                 }
 
-                                // 极简 URL 输入栏 (删除了后面的常用书签按钮)
+                                // 极简 URL 输入栏
                                 Box(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -627,71 +560,6 @@ fun TradingMultiViewScreen(
                                 }
                             }
                         }
-                    }
-
-                    // 2. 固定像素桌面视口基准点选标签条与即时说明
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(4.dp))
-                            .background(Color(0xFF0A101D))
-                            .border(1.dp, Color(0xFF1E293B), RoundedCornerShape(4.dp))
-                            .padding(horizontal = 8.dp, vertical = 5.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Computer,
-                                    contentDescription = null,
-                                    tint = Color(0xFF38BDF8),
-                                    modifier = Modifier.size(13.dp)
-                                )
-                                Text(
-                                    text = "桌面视口基准:",
-                                    color = Color(0xFF94A3B8),
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                            }
-
-                            PersistentWebViewPool.PRESET_FIXED_PIXEL_WIDTHS.forEach { preset ->
-                                val isSelected = uiState.fixedPixelWidth == preset.width
-                                Box(
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(4.dp))
-                                        .background(if (isSelected) Color(0xFF0284C7) else Color(0xFF1E293B))
-                                        .border(
-                                            1.dp,
-                                            if (isSelected) Color(0xFF38BDF8) else Color(0xFF334155),
-                                            RoundedCornerShape(4.dp)
-                                        )
-                                        .clickable { viewModel.setFixedPixelWidth(preset.width, context) }
-                                        .padding(horizontal = 8.dp, vertical = 3.dp)
-                                ) {
-                                    Text(
-                                        text = "${preset.width}px (${preset.badge})",
-                                        color = if (isSelected) Color.White else Color(0xFFCBD5E1),
-                                        fontSize = 10.sp,
-                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                        fontFamily = FontFamily.Monospace
-                                    )
-                                }
-                            }
-                        }
-
-                        Text(
-                            text = "动态注入 <meta viewport> 击穿 TradingView 移动端折叠，免刷新热生效",
-                            color = Color(0xFF64748B),
-                            fontSize = 9.sp
-                        )
                     }
                 }
             }

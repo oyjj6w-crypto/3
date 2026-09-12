@@ -146,6 +146,13 @@ export default function App() {
   // 方案C：顶部地址栏展开配置面板开关 (默认收起，点击地址图标展开查看与修改 3 个窗口的详细网址)
   const [showAddressConfigPanel, setShowAddressConfigPanel] = useState<boolean>(false);
 
+  // 每个窗口的独立重载 Key 状态
+  const [reloadKeys, setReloadKeys] = useState<Record<number, number>>({ 1: 0, 2: 0, 3: 0 });
+
+  const handleReloadWindow = (id: number) => {
+    setReloadKeys(prev => ({ ...prev, [id]: (prev[id] || 0) + 1 }));
+  };
+
   // 3 视窗网页全局缩放与全局折叠状态
   const [globalZoom, setGlobalZoom] = useState<number>(100);
   const [refreshTrigger, setRefreshTrigger] = useState<number>(0);
@@ -755,10 +762,6 @@ export default function App() {
                         : 'bg-slate-900/80 border-slate-700 text-slate-300'
                     }`}
                   >
-                    <span className={`font-bold px-1 text-xs ${w.isMaximized ? 'text-white' : w.isHidden ? 'text-slate-500' : 'text-sky-400'}`}>
-                      {w.id}
-                    </span>
-
                     {/* 最大化 / 还原 */}
                     <button
                       type="button"
@@ -825,26 +828,24 @@ export default function App() {
                 <button
                   type="button"
                   onClick={handleTriggerInvert4Charts}
-                  className="h-7 px-1.5 flex items-center gap-1 rounded bg-slate-800/80 hover:bg-slate-700 text-emerald-400 hover:text-emerald-300 transition-colors cursor-pointer font-mono"
+                  className="w-7 h-7 flex items-center justify-center rounded bg-slate-800/80 hover:bg-slate-700 text-emerald-400 hover:text-emerald-300 transition-colors cursor-pointer font-mono font-bold text-xs"
                   title="全部 3 窗口同步触发：4图纵向布局，依次激活并翻转 K 线 (Alt+I)"
                 >
-                  <ArrowUpDown className="w-3.5 h-3.5" />
-                  <span className="text-[10px] font-bold">4图</span>
+                  4
                 </button>
 
                 {/* 4. 8图布局依次翻转K线 (Alt+I) */}
                 <button
                   type="button"
                   onClick={handleTriggerInvert8Charts}
-                  className="h-7 px-1.5 flex items-center gap-1 rounded bg-slate-800/80 hover:bg-slate-700 text-teal-400 hover:text-teal-300 transition-colors cursor-pointer font-mono"
+                  className="w-7 h-7 flex items-center justify-center rounded bg-slate-800/80 hover:bg-slate-700 text-teal-400 hover:text-teal-300 transition-colors cursor-pointer font-mono font-bold text-xs"
                   title="全部 3 窗口同步触发：8图双排布局，依次激活并翻转 K 线 (Alt+I)"
                 >
-                  <ArrowUpDown className="w-3.5 h-3.5" />
-                  <span className="text-[10px] font-bold">8图</span>
+                  8
                 </button>
               </div>
 
-              {/* 右侧：全局一键刷新(仅图标) + 全局统一缩放(无文字) + 3窗口详细网址面板折叠(仅图标)，全部 30px 高度齐平 */}
+              {/* 右侧：全局一键刷新(仅图标) + 3窗口详细网址面板折叠(仅图标)，全部 30px 高度齐平 */}
               <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
                 {/* 全局一键刷新按钮：高度 30px x 30px，与左侧保持严格一致 */}
                 <button
@@ -855,37 +856,6 @@ export default function App() {
                 >
                   <RefreshCw className="w-3.5 h-3.5 text-sky-400" />
                 </button>
-
-                {/* 统一全局缩放控制器：高度统一 30px，与旁边按钮完美平齐 */}
-                <div
-                  className="h-[30px] flex items-center bg-slate-900 border border-slate-700/80 rounded-md px-1 text-slate-200"
-                  title="统一缩放全部视窗网页（50% ~ 200%）"
-                >
-                  <button
-                    type="button"
-                    onClick={() => handleGlobalZoom(globalZoom - 10)}
-                    className="w-6 h-6 flex items-center justify-center rounded text-slate-400 hover:text-sky-300 hover:bg-slate-800 transition-colors"
-                    title="全局缩小 -10%"
-                  >
-                    <Minus className="w-3 h-3" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleGlobalZoom(100)}
-                    className="px-1 text-xs font-mono text-sky-400 hover:text-sky-300 font-semibold"
-                    title="点击重置缩放为 100%"
-                  >
-                    {globalZoom}%
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleGlobalZoom(globalZoom + 10)}
-                    className="w-6 h-6 flex items-center justify-center rounded text-slate-400 hover:text-sky-300 hover:bg-slate-800 transition-colors"
-                    title="全局放大 +10%"
-                  >
-                    <Plus className="w-3 h-3" />
-                  </button>
-                </div>
 
                 {/* 网址配置开关：标准 30px x 30px 方形，高度齐平 */}
                 <button
@@ -949,10 +919,55 @@ export default function App() {
                     >
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-1 font-mono font-bold text-sky-400 text-[11px]">
-                          <span className="w-2 h-2 rounded-full bg-emerald-400" />
-                          <span>视窗 {w.id} (W{w.id})</span>
+                          <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
                         </div>
-                        <span className="text-[10px] text-slate-400">{w.symbol}</span>
+                        
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] font-mono text-slate-500 bg-[#0c101b] px-1.5 py-0.5 rounded border border-slate-800">{w.symbol}</span>
+                          <div className="flex items-center gap-1 bg-[#090d16] border border-slate-800 rounded px-1 py-0.5 shrink-0">
+                            {/* 1. 隐藏画线 (Ctrl+Alt+H) */}
+                            <button
+                              type="button"
+                              onClick={handleTriggerHideDrawings}
+                              className="text-sky-400 hover:text-sky-300 p-1 rounded hover:bg-slate-800 transition-colors"
+                              title="隐藏/恢复画线 (Ctrl+Alt+H)"
+                            >
+                              <EyeOff className="w-3.5 h-3.5" />
+                            </button>
+
+                            {/* 2. 磁力吸附 (Ctrl) */}
+                            <button
+                              type="button"
+                              onClick={handleTriggerToggleMagnet}
+                              className={`${
+                                isMagnetActive ? 'text-rose-400' : 'text-slate-400 hover:text-slate-300'
+                              } p-1 rounded hover:bg-slate-800 transition-colors`}
+                              title="磁力吸附切换 (Ctrl)"
+                            >
+                              <Magnet className="w-3.5 h-3.5" />
+                            </button>
+
+                            {/* 3. 翻转K线 (Alt+I) */}
+                            <button
+                              type="button"
+                              onClick={handleTriggerInvert4Charts}
+                              className="text-emerald-400 hover:text-emerald-300 p-1 rounded hover:bg-slate-800 transition-colors"
+                              title="翻转K线 (Alt+I)"
+                            >
+                              <ArrowUpDown className="w-3.5 h-3.5" />
+                            </button>
+
+                            {/* 4. 刷新单个视窗 */}
+                            <button
+                              type="button"
+                              onClick={() => handleReloadWindow(w.id)}
+                              className="text-sky-500 hover:text-sky-400 p-1 rounded hover:bg-slate-800 transition-colors"
+                              title="重载当前视窗网页"
+                            >
+                              <RefreshCw className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
                       </div>
 
                       <div className="flex items-center gap-1">
@@ -1033,6 +1048,7 @@ export default function App() {
                     }`}
                   >
                     <TradingWindow
+                      key={`${win.id}-${reloadKeys[win.id] || 0}`}
                       window={win}
                       isMaximized={isWinMaximized}
                       canHide={canHide}
