@@ -873,4 +873,70 @@ class TradingViewModel : ViewModel() {
             android.widget.Toast.makeText(it, "已向窗口 $windowId 单独触发: 翻转 K 线 (Alt+I)", android.widget.Toast.LENGTH_SHORT).show()
         }
     }
+
+    /**
+     * 一键全局切换 3 个视窗的 K 线周期
+     */
+    fun triggerGlobalTimeframe(tf: String, context: Context? = null) {
+        val mapping = mapOf(
+            "3m" to "3", "5m" to "5", "10m" to "10", "15m" to "15", "30m" to "30",
+            "1h" to "60", "2h" to "120", "3h" to "180", "4h" to "240", "6h" to "360", "12h" to "720",
+            "1D" to "D", "2D" to "2D", "3D" to "3D", "1W" to "W", "1M" to "M"
+        )
+        val tvVal = mapping[tf] ?: tf
+
+        _uiState.update { state ->
+            val updatedWindows = state.windows.map { win ->
+                var updatedUrl = win.currentUrl
+                try {
+                    updatedUrl = if (updatedUrl.contains("interval=")) {
+                        updatedUrl.replace(Regex("interval=[^&]+"), "interval=$tvVal")
+                    } else if (updatedUrl.contains("?")) {
+                        "$updatedUrl&interval=$tvVal"
+                    } else {
+                        "$updatedUrl?interval=$tvVal"
+                    }
+                } catch (e: Exception) {
+                    // ignore
+                }
+                
+                PersistentWebViewPool.saveWindowUrl(win.id, updatedUrl, win.title)
+
+                win.copy(
+                    timeframe = tf,
+                    currentUrl = updatedUrl
+                )
+            }
+
+            val activeId = state.activeGroupId
+            val updatedGroups = state.groups.map { group ->
+                if (group.id == activeId) {
+                    group.copy(
+                        items = group.items.mapIndexed { index, item ->
+                            val win = updatedWindows.find { it.id == index + 1 }
+                            if (win != null) {
+                                item.copy(
+                                    url = win.currentUrl,
+                                    timeframe = tf
+                                )
+                            } else item
+                        }
+                    )
+                } else group
+            }
+
+            persistAllGroupsToPrefs(updatedGroups, activeGroupId = activeId, context = context)
+
+            state.copy(
+                windows = updatedWindows,
+                groups = updatedGroups
+            )
+        }
+
+        PersistentWebViewPool.dispatchTradingViewAction("timeframe_$tvVal")
+
+        context?.let {
+            android.widget.Toast.makeText(it, "已同步触发 K 线周期切换为 $tf", android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
 }

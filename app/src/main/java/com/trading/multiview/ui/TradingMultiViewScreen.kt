@@ -43,6 +43,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.text.style.TextAlign
 import com.trading.multiview.viewmodel.TradingViewModel
 import com.trading.multiview.viewmodel.WindowState
 import com.trading.multiview.webview.PersistentWebViewPool
@@ -70,6 +72,7 @@ fun TradingMultiViewScreen(
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
     var showSaveDialog by remember { mutableStateOf(false) }
+    var showTimeframeDropdown by remember { mutableStateOf(false) }
 
     // 初始化时加载本地存储的自定义分组
     LaunchedEffect(Unit) {
@@ -238,6 +241,144 @@ fun TradingMultiViewScreen(
                         .padding(horizontal = 3.dp),
                     horizontalArrangement = Arrangement.spacedBy(3.dp)
                 ) {
+                    // T. 周期选择 (T字按钮)
+                    Box {
+                        Box(
+                            modifier = Modifier
+                                .size(24.dp)
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(
+                                    if (showTimeframeDropdown) Color(0xFF2563EB)
+                                    else Color(0xFF1E293B).copy(alpha = 0.7f)
+                                )
+                                .clickable { showTimeframeDropdown = !showTimeframeDropdown },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "T",
+                                color = if (showTimeframeDropdown) Color.White else Color(0xFF38BDF8),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+
+                        if (showTimeframeDropdown) {
+                            Popup(
+                                alignment = Alignment.TopStart,
+                                onDismissRequest = { showTimeframeDropdown = false }
+                            ) {
+                                Card(
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = Color(0xFF111827)
+                                    ),
+                                    border = BorderStroke(1.dp, Color(0xFF374151)),
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier
+                                        .padding(top = 34.dp)
+                                        .width(260.dp)
+                                ) {
+                                    Column(
+                                        modifier = Modifier.padding(8.dp),
+                                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        // 第一行 3m, 5m, 10m, 15m, 30m
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
+                                            Text(
+                                                text = "分钟:",
+                                                color = Color(0xFF9CA3AF),
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                modifier = Modifier.width(36.dp),
+                                                textAlign = TextAlign.End
+                                            )
+                                            listOf("3m", "5m", "10m", "15m", "30m").forEach { tf ->
+                                                Box(
+                                                    modifier = Modifier
+                                                        .weight(1f)
+                                                        .height(24.dp)
+                                                        .clip(RoundedCornerShape(4.dp))
+                                                        .background(Color(0xFF1F2937))
+                                                        .clickable {
+                                                            viewModel.triggerGlobalTimeframe(tf, context)
+                                                            showTimeframeDropdown = false
+                                                        },
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    Text(text = tf, color = Color.White, fontSize = 10.sp)
+                                                }
+                                            }
+                                        }
+
+                                        // 第二行 1h, 2h, 3h, 4h, 6h, 12h
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
+                                            Text(
+                                                text = "小时:",
+                                                color = Color(0xFF9CA3AF),
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                modifier = Modifier.width(36.dp),
+                                                textAlign = TextAlign.End
+                                            )
+                                            listOf("1h", "2h", "3h", "4h", "6h", "12h").forEach { tf ->
+                                                Box(
+                                                    modifier = Modifier
+                                                        .weight(1f)
+                                                        .height(24.dp)
+                                                        .clip(RoundedCornerShape(4.dp))
+                                                        .background(Color(0xFF1F2937))
+                                                        .clickable {
+                                                            viewModel.triggerGlobalTimeframe(tf, context)
+                                                            showTimeframeDropdown = false
+                                                        },
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    Text(text = tf, color = Color.White, fontSize = 10.sp)
+                                                }
+                                            }
+                                        }
+
+                                        // 第三行 1D, 2D, 3D, 1W, 1M
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
+                                            Text(
+                                                text = "日/周:",
+                                                color = Color(0xFF9CA3AF),
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                modifier = Modifier.width(36.dp),
+                                                textAlign = TextAlign.End
+                                            )
+                                            listOf("1D", "2D", "3D", "1W", "1M").forEach { tf ->
+                                                Box(
+                                                    modifier = Modifier
+                                                        .weight(1f)
+                                                        .height(24.dp)
+                                                        .clip(RoundedCornerShape(4.dp))
+                                                        .background(Color(0xFF1F2937))
+                                                        .clickable {
+                                                            viewModel.triggerGlobalTimeframe(tf, context)
+                                                            showTimeframeDropdown = false
+                                                        },
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    Text(text = tf, color = Color.White, fontSize = 10.sp)
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     // 1. 隐藏/恢复画线 (Ctrl+Alt+H)
                     Box(
                         modifier = Modifier

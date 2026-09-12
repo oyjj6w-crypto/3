@@ -309,8 +309,22 @@ object PersistentWebViewPool {
             // 设为 LAYER_TYPE_NONE 让 Chromium 直接渲染至硬件窗口表面，彻底消除闪烁！
             setLayerType(View.LAYER_TYPE_NONE, null)
 
-            // 关键优化 2：强制设置底层背景为行情深黑色 (#131722)，消除任何图表重绘或缓冲区交换时的瞬时白闪
+            // 关键优化 2：强制设置底层背景为行情深黑色 (#131722)，消除 any 图表重绘或缓冲区交换时的瞬时白闪
             setBackgroundColor(android.graphics.Color.parseColor("#131722"))
+
+            // 关键优化 3：动态监听布局尺寸变化，彻底解决最大化/还原、隐藏/显示、横竖屏切换时不会缩放到满屏显示的问题
+            addOnLayoutChangeListener { v, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom ->
+                val newWidth = right - left
+                val oldWidth = oldRight - oldLeft
+                val newHeight = bottom - top
+                val oldHeight = oldBottom - oldTop
+                if ((newWidth != oldWidth || newHeight != oldHeight) && newWidth > 0 && newHeight > 0) {
+                    val webView = v as? WebView
+                    webView?.let {
+                        injectDesktopViewport(it, force = true)
+                    }
+                }
+            }
 
             settings.apply {
                 javaScriptEnabled = true
@@ -341,7 +355,7 @@ object PersistentWebViewPool {
                 override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                     super.onPageStarted(view, url, favicon)
                     // 页面开始加载时，注入根据当前窗口宽度计算的黄金缩放桌面视口
-                    view?.let { injectDesktopViewport(it) }
+                    view?.let { injectDesktopViewport(it, force = true) }
                     if (url != null && url != lastReportedUrl) {
                         lastReportedUrl = url
                         saveWindowUrl(windowId, url, view?.title ?: "")
@@ -353,7 +367,7 @@ object PersistentWebViewPool {
                     super.onPageFinished(view, url)
                     // 页面渲染完成后再次加固注入，确保 TradingView 异步初始化后依然保持桌面宽屏自适应
                     view?.let {
-                        injectDesktopViewport(it)
+                        injectDesktopViewport(it, force = true)
                         injectTradingViewEnhancer(it, url)
                     }
                     if (url != null && url != lastReportedUrl) {
@@ -687,6 +701,31 @@ object PersistentWebViewPool {
                                     document.dispatchEvent(ku);
                                     window.dispatchEvent(ku);
                                 }, 15);
+                            } else if (action.indexOf('timeframe_') === 0) {
+                                // 统一一键切换 K 线周期，通过模拟高刷键盘输入触发
+                                var tfVal = action.substring(10);
+                                for (var k = 0; k < tfVal.length; k++) {
+                                    var char = tfVal[k];
+                                    var keyCode = 0;
+                                    var code = "";
+                                    if (char >= '0' && char <= '9') {
+                                        keyCode = 48 + (char.charCodeAt(0) - 48);
+                                        code = "Digit" + char;
+                                    } else {
+                                        var upper = char.toUpperCase();
+                                        keyCode = upper.charCodeAt(0);
+                                        code = "Key" + upper;
+                                    }
+                                    var opts = { key: char, code: code, keyCode: keyCode, which: keyCode, bubbles: true, cancelable: true, composed: true };
+                                    target.dispatchEvent(new KeyboardEvent('keydown', opts));
+                                    target.dispatchEvent(new KeyboardEvent('keypress', opts));
+                                    target.dispatchEvent(new KeyboardEvent('keyup', opts));
+                                }
+                                // 随后发送 Enter 键确认切换周期
+                                var enterOpts = { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true, composed: true };
+                                target.dispatchEvent(new KeyboardEvent('keydown', enterOpts));
+                                target.dispatchEvent(new KeyboardEvent('keypress', enterOpts));
+                                target.dispatchEvent(new KeyboardEvent('keyup', enterOpts));
                             } else if (action.indexOf('invert') === 0) {
                                 // 翻转 K 线组合键为 alt + i
                                 var opts = { key: 'i', code: 'KeyI', keyCode: 73, which: 73, altKey: true, bubbles: true, cancelable: true, composed: true };

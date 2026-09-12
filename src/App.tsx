@@ -137,6 +137,7 @@ export default function App() {
   const [isSaveGroupModalOpen, setIsSaveGroupModalOpen] = useState<boolean>(false);
   const [newGroupName, setNewGroupName] = useState<string>('');
   const [isMagnetActive, setIsMagnetActive] = useState<boolean>(false);
+  const [showTimeframeMenu, setShowTimeframeMenu] = useState<boolean>(false);
   const [actionToast, setActionToast] = useState<string | null>(null);
 
   // 方式1重命名分组状态：双击或点击编辑进入内联修改
@@ -416,6 +417,40 @@ export default function App() {
   const handleSingleTriggerInvert = (id: number) => {
     setActionToast(`已向 窗口 ${id} 单独触发: 翻转 K 线 (Alt+I)`);
     setTimeout(() => setActionToast(null), 2500);
+  };
+
+  const handleTriggerGlobalTimeframe = (tf: string) => {
+    const mapping: Record<string, string> = {
+      '3m': '3', '5m': '5', '10m': '10', '15m': '15', '30m': '30',
+      '1h': '60', '2h': '120', '3h': '180', '4h': '240', '6h': '360', '12h': '720',
+      '1D': 'D', '2D': '2D', '3D': '3D', '1W': 'W', '1M': 'M'
+    };
+    const tvVal = mapping[tf] || tf;
+
+    setActionToast(`已同步向全部 3 个窗口触发: 周期切换为 ${tf}`);
+    setTimeout(() => setActionToast(null), 2500);
+
+    setWindows((prev) =>
+      prev.map((win) => {
+        let updatedUrl = win.url;
+        try {
+          if (updatedUrl.includes('interval=')) {
+            updatedUrl = updatedUrl.replace(/interval=[^&]+/, `interval=${tvVal}`);
+          } else if (updatedUrl.includes('?')) {
+            updatedUrl = `${updatedUrl}&interval=${tvVal}`;
+          } else {
+            updatedUrl = `${updatedUrl}?interval=${tvVal}`;
+          }
+        } catch (e) {
+          // ignore
+        }
+        return {
+          ...win,
+          timeframe: tf,
+          url: updatedUrl,
+        };
+      })
+    );
   };
 
   // 方式1：就地重命名分组名称 (支持双击或点击重命名图标，回车或失焦确认保存)
@@ -832,6 +867,80 @@ export default function App() {
 
               {/* ================= 油猴快捷 3 视窗动作组 (隐藏画线 · 磁力吸附 · 翻转K线) ================= */}
               <div className="flex items-center gap-1.5 bg-[#101827] border border-blue-600/40 rounded-md p-1 shrink-0">
+                {/* T. 周期选择 (T字按钮) */}
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setShowTimeframeMenu(!showTimeframeMenu)}
+                    className={`w-7 h-7 flex items-center justify-center rounded transition-colors cursor-pointer text-xs font-bold ${
+                      showTimeframeMenu
+                        ? 'bg-blue-600 text-white'
+                        : 'bg-slate-800/80 hover:bg-slate-700 text-sky-400 hover:text-sky-300'
+                    }`}
+                    title="全部 3 窗口同步触发：切换 K 线周期"
+                  >
+                    T
+                  </button>
+
+                  {showTimeframeMenu && (
+                    <div className="absolute top-9 left-0 z-50 w-64 bg-[#111827] border border-slate-700 rounded-lg shadow-2xl p-2 flex flex-col gap-2">
+                      {/* Row 1: 3m, 5m, 10m, 15m, 30m */}
+                      <div className="flex items-center gap-1">
+                        <span className="w-10 text-[10px] text-slate-400 font-bold text-right shrink-0">分钟:</span>
+                        {['3m', '5m', '10m', '15m', '30m'].map((tf) => (
+                          <button
+                            key={tf}
+                            type="button"
+                            onClick={() => {
+                              handleTriggerGlobalTimeframe(tf);
+                              setShowTimeframeMenu(false);
+                            }}
+                            className="flex-1 h-6 text-[10px] bg-slate-800 hover:bg-slate-700 text-white rounded transition-colors cursor-pointer"
+                          >
+                            {tf}
+                          </button>
+                        ))}
+                      </div>
+
+                      {/* Row 2: 1h, 2h, 3h, 4h, 6h, 12h */}
+                      <div className="flex items-center gap-1">
+                        <span className="w-10 text-[10px] text-slate-400 font-bold text-right shrink-0">小时:</span>
+                        {['1h', '2h', '3h', '4h', '6h', '12h'].map((tf) => (
+                          <button
+                            key={tf}
+                            type="button"
+                            onClick={() => {
+                              handleTriggerGlobalTimeframe(tf);
+                              setShowTimeframeMenu(false);
+                            }}
+                            className="flex-1 h-6 text-[10px] bg-slate-800 hover:bg-slate-700 text-white rounded transition-colors cursor-pointer"
+                          >
+                            {tf}
+                          </button>
+                        ))}
+                      </div>
+
+                      {/* Row 3: 1D, 2D, 3D, 1W, 1M */}
+                      <div className="flex items-center gap-1">
+                        <span className="w-10 text-[10px] text-slate-400 font-bold text-right shrink-0">日/周:</span>
+                        {['1D', '2D', '3D', '1W', '1M'].map((tf) => (
+                          <button
+                            key={tf}
+                            type="button"
+                            onClick={() => {
+                              handleTriggerGlobalTimeframe(tf);
+                              setShowTimeframeMenu(false);
+                            }}
+                            className="flex-1 h-6 text-[10px] bg-slate-800 hover:bg-slate-700 text-white rounded transition-colors cursor-pointer"
+                          >
+                            {tf}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
                 {/* 1. 隐藏/恢复画线 (Ctrl+Alt+H) */}
                 <button
                   type="button"
@@ -1092,13 +1201,6 @@ export default function App() {
                 );
               })}
             </div>
-
-            {/* Floating Hidden Windows Restore Dock */}
-            <HiddenWindowsDock
-              hiddenWindows={hiddenWindows}
-              onRestore={handleRestoreWindow}
-              onRestoreAll={handleRestoreAll}
-            />
 
             {/* Android Navigation Gesture Indicator */}
             <div className="h-4 bg-[#0a0e18] flex items-center justify-center shrink-0 z-20">

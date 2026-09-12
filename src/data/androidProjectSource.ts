@@ -174,7 +174,7 @@ object PersistentWebViewPool {
         val ctx = context ?: appContext ?: return null
         return try {
             val prefs = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            prefs.getString("\${KEY_WINDOW_URL_PREFIX}$windowId", null)?.takeIf { it.isNotBlank() }
+            prefs.getString("\${KEY_WINDOW_URL_PREFIX}\$windowId", null)?.takeIf { it.isNotBlank() }
         } catch (e: Exception) {
             null
         }
@@ -184,7 +184,7 @@ object PersistentWebViewPool {
         val ctx = context ?: appContext ?: return null
         return try {
             val prefs = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            prefs.getString("\${KEY_WINDOW_TITLE_PREFIX}$windowId", null)?.takeIf { it.isNotBlank() }
+            prefs.getString("\${KEY_WINDOW_TITLE_PREFIX}\$windowId", null)?.takeIf { it.isNotBlank() }
         } catch (e: Exception) {
             null
         }
@@ -195,9 +195,9 @@ object PersistentWebViewPool {
         val ctx = context ?: appContext ?: return
         try {
             val editor = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
-            editor.putString("\${KEY_WINDOW_URL_PREFIX}$windowId", url)
+            editor.putString("\${KEY_WINDOW_URL_PREFIX}\$windowId", url)
             if (!title.isNullOrBlank()) {
-                editor.putString("\${KEY_WINDOW_TITLE_PREFIX}$windowId", title)
+                editor.putString("\${KEY_WINDOW_TITLE_PREFIX}\$windowId", title)
             }
             editor.apply()
         } catch (e: Exception) {
@@ -298,7 +298,7 @@ object PersistentWebViewPool {
         val scaleStr = String.format(java.util.Locale.US, "%.4f", calculatedScale)
 
         val cacheKey = "\${targetPixelWidth}_\${scaleStr}"
-        // 核心优化：如果未强制重置，且该视窗已经成功注入过相同的目标宽度和缩放比例，
+        // 核心优化：如果未强制重置，且该视窗已经成功注入过相同的目标宽度 and 缩放比例，
         // 则跳过 JS 注入与 Chromium 布局重排，杜绝重复计算
         if (!force && windowId != null && appliedScaleMap[windowId] == cacheKey) {
             return
@@ -337,7 +337,7 @@ object PersistentWebViewPool {
                             if (document.head) document.head.appendChild(meta);
                         }
 
-                        // 仅注入纯深色背景底色防护，防止图表重绘和异步加载时的瞬时白闪
+                        // 仅注入纯深色背景底色防护，防止图表重绘 and 异步加载时的瞬时白闪
                         var styleId = '__tv_bg_antiflicker__';
                         if (!document.getElementById(styleId)) {
                             var style = document.createElement('style');
@@ -448,8 +448,22 @@ object PersistentWebViewPool {
             // 设为 LAYER_TYPE_NONE 让 Chromium 直接渲染至硬件窗口表面，彻底消除闪烁！
             setLayerType(View.LAYER_TYPE_NONE, null)
 
-            // 关键优化 2：强制设置底层背景为行情深黑色 (#131722)，消除任何图表重绘或缓冲区交换时的瞬时白闪
+            // 关键优化 2：强制设置底层背景为行情深黑色 (#131722)，消除 any 图表重绘或缓冲区交换时的瞬时白闪
             setBackgroundColor(android.graphics.Color.parseColor("#131722"))
+
+            // 关键优化 3：动态监听布局尺寸变化，彻底解决最大化/还原、隐藏/显示、横竖屏切换时不会缩放到满屏显示的问题
+            addOnLayoutChangeListener { v, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom ->
+                val newWidth = right - left
+                val oldWidth = oldRight - oldLeft
+                val newHeight = bottom - top
+                val oldHeight = oldBottom - oldTop
+                if ((newWidth != oldWidth || newHeight != oldHeight) && newWidth > 0 && newHeight > 0) {
+                    val webView = v as? WebView
+                    webView?.let {
+                        injectDesktopViewport(it, force = true)
+                    }
+                }
+            }
 
             settings.apply {
                 javaScriptEnabled = true
@@ -480,7 +494,7 @@ object PersistentWebViewPool {
                 override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                     super.onPageStarted(view, url, favicon)
                     // 页面开始加载时，注入根据当前窗口宽度计算的黄金缩放桌面视口
-                    view?.let { injectDesktopViewport(it) }
+                    view?.let { injectDesktopViewport(it, force = true) }
                     if (url != null && url != lastReportedUrl) {
                         lastReportedUrl = url
                         saveWindowUrl(windowId, url, view?.title ?: "")
@@ -492,7 +506,7 @@ object PersistentWebViewPool {
                     super.onPageFinished(view, url)
                     // 页面渲染完成后再次加固注入，确保 TradingView 异步初始化后依然保持桌面宽屏自适应
                     view?.let {
-                        injectDesktopViewport(it)
+                        injectDesktopViewport(it, force = true)
                         injectTradingViewEnhancer(it, url)
                     }
                     if (url != null && url != lastReportedUrl) {
@@ -661,7 +675,7 @@ object PersistentWebViewPool {
      * 关键流程：
      * 1. 遍历当前 3 个视窗，依次派发
      * 2. 必须先通过模拟物理点击 (pointerdown / mousedown / click / focus) 激活聚焦该视窗
-     * 3. 延时等待让 TradingView 内部完成焦点切换并按序处理
+     * 3. 延时等待让 TradingView 内部焦点切换并按序处理
      * @param action "hide" (隐藏画线), "invert" / "invert4" (翻转4图K线), "invert8" (翻转8图K线), "magnet" (磁力吸附)
      */
     fun dispatchTradingViewAction(action: String, onProgress: ((Int, Int) -> Unit)? = null) {
@@ -702,7 +716,7 @@ object PersistentWebViewPool {
         return """
             (function() {
                 try {
-                    var action = '\${'$'}action';
+                    var action = '$action';
                     
                     // 磁吸直接单独触发，不需要遍历所有子K线图
                     if (action === 'magnet') {
@@ -726,7 +740,7 @@ object PersistentWebViewPool {
                         layoutCount = 8;
                     }
 
-                    // 2. 收集每个K线图子区域的坐标和目标Canvas
+                    // 2. 收集每个K线图子区域的坐标 and 目标Canvas
                     var points = [];
                     var widgets = Array.from(document.querySelectorAll('.chart-widget') || []);
                     if (widgets.length === 0) {
@@ -826,6 +840,31 @@ object PersistentWebViewPool {
                                     document.dispatchEvent(ku);
                                     window.dispatchEvent(ku);
                                 }, 15);
+                            } else if (action.indexOf('timeframe_') === 0) {
+                                // 统一一键切换 K 线周期，通过模拟高刷键盘输入触发
+                                var tfVal = action.substring(10);
+                                for (var k = 0; k < tfVal.length; k++) {
+                                    var char = tfVal[k];
+                                    var keyCode = 0;
+                                    var code = "";
+                                    if (char >= '0' && char <= '9') {
+                                        keyCode = 48 + (char.charCodeAt(0) - 48);
+                                        code = "Digit" + char;
+                                    } else {
+                                        var upper = char.toUpperCase();
+                                        keyCode = upper.charCodeAt(0);
+                                        code = "Key" + upper;
+                                    }
+                                    var opts = { key: char, code: code, keyCode: keyCode, which: keyCode, bubbles: true, cancelable: true, composed: true };
+                                    target.dispatchEvent(new KeyboardEvent('keydown', opts));
+                                    target.dispatchEvent(new KeyboardEvent('keypress', opts));
+                                    target.dispatchEvent(new KeyboardEvent('keyup', opts));
+                                }
+                                // 随后发送 Enter 键确认切换周期
+                                var enterOpts = { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true, composed: true };
+                                target.dispatchEvent(new KeyboardEvent('keydown', enterOpts));
+                                target.dispatchEvent(new KeyboardEvent('keypress', enterOpts));
+                                target.dispatchEvent(new KeyboardEvent('keyup', enterOpts));
                             } else if (action.indexOf('invert') === 0) {
                                 // 翻转 K 线组合键为 alt + i
                                 var opts = { key: 'i', code: 'KeyI', keyCode: 73, which: 73, altKey: true, bubbles: true, cancelable: true, composed: true };
@@ -896,7 +935,8 @@ object PersistentWebViewPool {
         webViewMap.clear()
         isInitialized = false
     }
-}`
+}
+`
   },
   {
     path: "app/src/main/java/com/trading/multiview/viewmodel/TradingViewModel.kt",
@@ -975,7 +1015,8 @@ data class WindowState(
     val isDesktopMode: Boolean = true, // 默认开启桌面模式，User-Agent 为 PC Chrome
     val zoomPercent: Int = 100, // 网页缩放比例 (50% ~ 200%)
     val isUrlCollapsed: Boolean = false, // 是否折叠网址输入框以放入更多按钮
-    val isMagnetActive: Boolean = false // 单独磁力吸附切换状态 (方案 C 独享)
+    val isMagnetActive: Boolean = false, // 单独磁力吸附切换状态 (方案 C 独享)
+    val timeframe: String = "15m"
 )
 
 fun createInitialWindows(): List<WindowState> {
@@ -1777,7 +1818,74 @@ class TradingViewModel : ViewModel() {
             android.widget.Toast.makeText(it, "已向窗口 $windowId 单独触发: 翻转 K 线 (Alt+I)", android.widget.Toast.LENGTH_SHORT).show()
         }
     }
-}`
+
+    /**
+     * 一键全局切换 3 个视窗的 K 线周期
+     */
+    fun triggerGlobalTimeframe(tf: String, context: Context? = null) {
+        val mapping = mapOf(
+            "3m" to "3", "5m" to "5", "10m" to "10", "15m" to "15", "30m" to "30",
+            "1h" to "60", "2h" to "120", "3h" to "180", "4h" to "240", "6h" to "360", "12h" to "720",
+            "1D" to "D", "2D" to "2D", "3D" to "3D", "1W" to "W", "1M" to "M"
+        )
+        val tvVal = mapping[tf] ?: tf
+
+        _uiState.update { state ->
+            val updatedWindows = state.windows.map { win ->
+                var updatedUrl = win.currentUrl
+                try {
+                    updatedUrl = if (updatedUrl.contains("interval=")) {
+                        updatedUrl.replace(Regex("interval=[^&]+"), "interval=$tvVal")
+                    } else if (updatedUrl.contains("?")) {
+                        "$updatedUrl&interval=$tvVal"
+                    } else {
+                        "$updatedUrl?interval=$tvVal"
+                    }
+                } catch (e: Exception) {
+                    // ignore
+                }
+                
+                PersistentWebViewPool.saveWindowUrl(win.id, updatedUrl, win.title)
+
+                win.copy(
+                    timeframe = tf,
+                    currentUrl = updatedUrl
+                )
+            }
+
+            val activeId = state.activeGroupId
+            val updatedGroups = state.groups.map { group ->
+                if (group.id == activeId) {
+                    group.copy(
+                        items = group.items.mapIndexed { index, item ->
+                            val win = updatedWindows.find { it.id == index + 1 }
+                            if (win != null) {
+                                item.copy(
+                                    url = win.currentUrl,
+                                    timeframe = tf
+                                )
+                            } else item
+                        }
+                    )
+                } else group
+            }
+
+            persistAllGroupsToPrefs(updatedGroups, activeGroupId = activeId, context = context)
+
+            state.copy(
+                windows = updatedWindows,
+                groups = updatedGroups
+            )
+        }
+
+        PersistentWebViewPool.dispatchTradingViewAction("timeframe_$tvVal")
+
+        context?.let {
+            android.widget.Toast.makeText(it, "已同步触发 K 线周期切换为 $tf", android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+}
+`
   },
   {
     path: "app/src/main/java/com/trading/multiview/ui/TradingMultiViewScreen.kt",
