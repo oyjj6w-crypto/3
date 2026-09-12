@@ -699,15 +699,14 @@ object PersistentWebViewPool {
      * 1. 遍历当前 3 个视窗，依次派发
      * 2. 必须先通过模拟物理点击 (pointerdown / mousedown / click / focus) 激活聚焦该视窗
      * 3. 延时等待让 TradingView 内部焦点切换并按序处理
-     * @param action "hide" (隐藏画线), "invert" / "invert4" (翻转4图K线), "invert8" (翻转8图K线), "magnet" (磁力吸附)
+     * @param action "hide" (隐藏画线), "invert" / "invert4" (翻转4图K线), "magnet" (磁力吸附)
      */
     fun dispatchTradingViewAction(action: String, onProgress: ((Int, Int) -> Unit)? = null) {
         val handler = android.os.Handler(android.os.Looper.getMainLooper())
         val windowIds = listOf(1, 2, 3)
-        // 4图翻转每个窗口要处理4个，8图要处理8个，需要增加延时以防止窗口间指令覆盖冲突
+        // 4图翻转每个窗口内部有4个子图串行处理（每个子图间隔约300ms，总共约1200ms），因此多窗口排队延时需要1400ms以上防止指令竞争
         val stepDelay = when (action) {
-            "invert4" -> 600L
-            "invert8" -> 1100L
+            "invert4" -> 1400L
             else -> 200L
         }
         windowIds.forEachIndexed { index, windowId ->
@@ -755,33 +754,51 @@ object PersistentWebViewPool {
                         return;
                     }
 
-                    // 1. 根据布局划分确定需要处理的K线图数量
+                    // 1. 确定需要处理的K线图数量限制
                     var layoutCount = 1;
                     if (action === 'invert4') {
                         layoutCount = 4;
-                    } else if (action === 'invert8') {
-                        layoutCount = 8;
                     }
 
-                    // 2. 收集每个K线图子区域的坐标 and 目标Canvas
-                    var points = [];
+                    // 2. 收集每个K线图子区域
                     var widgets = Array.from(document.querySelectorAll('.chart-widget') || []);
                     if (widgets.length === 0) {
                         widgets = Array.from(document.querySelectorAll('[data-role="chart"]') || []);
                     }
 
-                    if (widgets.length === layoutCount && layoutCount > 1) {
-                        // 如果DOM能匹配到准确的子窗口数量，则直接使用各子窗口中心点
-                        for (var i = 0; i < widgets.length; i++) {
+                    // 【核心优化】过滤掉隐藏、折叠或无尺寸的无效/备用 widget
+                    widgets = widgets.filter(function(w) {
+                        var r = w.getBoundingClientRect();
+                        return r.width > 30 && r.height > 30;
+                    });
+
+                    // 【黄金位置算法】按视觉坐标空间进行精确排序 (从上到下，从左到右)，彻底杜绝因 DOM 声明顺序随机导致的触发顺序混乱！
+                    widgets.sort(function(a, b) {
+                        var rA = a.getBoundingClientRect();
+                        var rB = b.getBoundingClientRect();
+                        // 允许 15 像素内的微弱 Y 轴浮动归为同一排
+                        if (Math.abs(rA.top - rB.top) > 15) {
+                            return rA.top - rB.top; // 按 Y 轴坐标递增（从上至下）
+                        }
+                        return rA.left - rB.left; // 同一排中按 X 轴坐标递增（从左至右）
+                    });
+
+                    var points = [];
+                    if (widgets.length > 0) {
+                        // 如果页面有 DOM K线节点，直接基于高可靠排序结果依次进行焦点与键事件定位
+                        var limit = Math.min(widgets.length, layoutCount);
+                        for (var i = 0; i < limit; i++) {
                             var wRect = widgets[i].getBoundingClientRect();
                             points.push({
                                 x: wRect.left + wRect.width / 2,
                                 y: wRect.top + wRect.height / 2,
-                                element: widgets[i].querySelector('canvas') || widgets[i]
+                                element: widgets[i].querySelector('canvas.interactive-graphics-layer') || 
+                                         widgets[i].querySelector('canvas') || 
+                                         widgets[i]
                             });
                         }
                     } else {
-                        // 几何多图划分兜底 fallback：3个窗口要么同时是4个K线(纵向)，要么同时是8个K线(双列2x4)
+                        // 如果未完全初始化或框架改变，使用纯几何坐标 fallback
                         var container = document.querySelector('.layout__area--center') || 
                                         document.querySelector('.chart-container') || 
                                         document.body;
@@ -795,19 +812,11 @@ object PersistentWebViewPool {
                                 { rx: 0.5, ry: 0.625 },
                                 { rx: 0.5, ry: 0.875 }
                             ];
-                        } else if (layoutCount === 8) {
-                            relativePoints = [
-                                { rx: 0.25, ry: 0.125 }, { rx: 0.75, ry: 0.125 },
-                                { rx: 0.25, ry: 0.375 }, { rx: 0.75, ry: 0.375 },
-                                { rx: 0.25, ry: 0.625 }, { rx: 0.75, ry: 0.625 },
-                                { rx: 0.25, ry: 0.875 }, { rx: 0.75, ry: 0.875 }
-                            ];
                         } else {
-                            // 单图默认
                             relativePoints = [{ rx: 0.5, ry: 0.5 }];
                         }
 
-                        for (var j = 0; j < relativePoints.length; j++) {
+                        for (var j = 0; j < Math.min(relativePoints.length, layoutCount); j++) {
                             var px = rect.left + rect.width * relativePoints[j].rx;
                             var py = rect.top + rect.height * relativePoints[j].ry;
                             var el = document.elementFromPoint(px, py) || container;
@@ -815,7 +824,7 @@ object PersistentWebViewPool {
                         }
                     }
 
-                    // 3. 递归异步队列触发，每次触发都包含：模拟点击、聚焦、发快捷键
+                    // 3. 串行延迟循环调度队列，每一次触发包含：模拟物理轻触、物理聚焦、稍作停顿、再发键盘指令
                     function processPoint(idx) {
                         if (idx >= points.length) return;
                         var p = points[idx];
@@ -848,10 +857,9 @@ object PersistentWebViewPool {
                             target.focus();
                         }
 
-                        // 稍作延时，确保 TradingView 内部已经激活该图表再发送快捷键
+                        // 【安全延迟 110ms】：让 TradingView 内部完完整整地将焦点状态转移至当前 subchart，杜绝按键丢失
                         setTimeout(function() {
                             if (action === 'hide') {
-                                // 隐藏画线修改为 ctrl + alt + h 组合快捷键
                                 var opts = { key: 'h', code: 'KeyH', keyCode: 72, which: 72, altKey: true, ctrlKey: true, bubbles: true, cancelable: true, composed: true };
                                 var kd = new KeyboardEvent('keydown', opts);
                                 target.dispatchEvent(kd);
@@ -864,7 +872,6 @@ object PersistentWebViewPool {
                                     window.dispatchEvent(ku);
                                 }, 15);
                             } else if (action.indexOf('timeframe_') === 0) {
-                                // 统一一键切换 K 线周期，通过模拟高刷键盘输入触发
                                 var tfVal = action.substring(10);
                                 for (var k = 0; k < tfVal.length; k++) {
                                     var char = tfVal[k];
@@ -883,7 +890,6 @@ object PersistentWebViewPool {
                                     target.dispatchEvent(new KeyboardEvent('keypress', opts));
                                     target.dispatchEvent(new KeyboardEvent('keyup', opts));
                                 }
-                                // 随后发送 Enter 键确认切换周期
                                 var enterOpts = { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true, composed: true };
                                 target.dispatchEvent(new KeyboardEvent('keydown', enterOpts));
                                 target.dispatchEvent(new KeyboardEvent('keypress', enterOpts));
@@ -901,7 +907,7 @@ object PersistentWebViewPool {
                                     document.dispatchEvent(ku);
                                     window.dispatchEvent(ku);
 
-                                    // 额外在 40ms 后触发一次左键单击，清除 hover 遗留的十字线
+                                    // 额外在 40ms 后触发一次左键单击，清除 hover 遗留的十字线，让看盘画面纯净
                                     setTimeout(function() {
                                         var cleanEvt = {
                                             clientX: p.x,
@@ -925,11 +931,11 @@ object PersistentWebViewPool {
                                 }, 15);
                             }
 
-                            // 间隔 120ms 串行处理下一个图表
+                            // 【安全延迟 150ms】：处理完毕后，再给浏览器与内核 150ms 的渲染静默空闲，再执行下一个图表，完全打消任何时序冲突！
                             setTimeout(function() {
                                 processPoint(idx + 1);
-                            }, 120);
-                        }, 40);
+                            }, 150);
+                        }, 110);
                     }
 
                     processPoint(0);
@@ -2237,37 +2243,7 @@ fun TradingMultiViewScreen(
                         }
                     }
 
-                    // 4. 8图翻转 K线 (Alt+I)
-                    Box(
-                        modifier = Modifier
-                            .height(24.dp)
-                            .padding(horizontal = 2.dp)
-                            .clip(RoundedCornerShape(4.dp))
-                            .background(Color(0xFF1E293B).copy(alpha = 0.7f))
-                            .clickable { viewModel.triggerInvert8Charts(context) },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(horizontal = 4.dp),
-                            horizontalArrangement = Arrangement.spacedBy(1.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.SwapVert,
-                                contentDescription = "8图布局翻转 K线 (Alt+I)",
-                                tint = Color(0xFF10B981),
-                                modifier = Modifier.size(14.dp)
-                            )
-                            Text(
-                                text = "8图",
-                                color = Color(0xFF10B981),
-                                fontSize = 9.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                    }
-
-                    // 5. 网址配置按钮 (移动至翻转 K 线 4 和 8 按钮的后面，保持高统一)
+                    // 5. 网址配置按钮 (移动至翻转 K 线 4 按钮的后面，保持高统一)
                     Box(
                         modifier = Modifier
                             .size(24.dp)

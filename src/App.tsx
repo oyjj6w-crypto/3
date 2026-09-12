@@ -975,17 +975,7 @@ export default function App() {
                   4
                 </button>
 
-                {/* 4. 8图布局依次翻转K线 (Alt+I) */}
-                <button
-                  type="button"
-                  onClick={handleTriggerInvert8Charts}
-                  className="w-7 h-7 flex items-center justify-center rounded bg-slate-800/80 hover:bg-slate-700 text-teal-400 hover:text-teal-300 transition-colors cursor-pointer font-mono font-bold text-xs"
-                  title="全部 3 窗口同步触发：8图双排布局，依次激活并翻转 K线 (Alt+I)"
-                >
-                  8
-                </button>
-
-                {/* 5. 网址配置按钮 (移动至翻转 K 线 4 和 8 按钮的后面，保持 w-7 h-7 的动作组标准尺寸) */}
+                {/* 5. 网址配置按钮 (移动至翻转 K 线 4 按钮的后面，保持 w-7 h-7 的动作组标准尺寸) */}
                 <button
                   type="button"
                   onClick={() => setShowAddressConfigPanel((prev) => !prev)}

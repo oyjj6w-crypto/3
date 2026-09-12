@@ -441,24 +441,6 @@ fun TradingMultiViewScreen(
                         )
                     }
 
-                    // 4. 8图翻转 K线 (Alt+I)
-                    Box(
-                        modifier = Modifier
-                            .size(24.dp)
-                            .clip(RoundedCornerShape(4.dp))
-                            .background(Color(0xFF1E293B).copy(alpha = 0.7f))
-                            .clickable { viewModel.triggerInvert8Charts(context) },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = "8",
-                            color = Color(0xFF10B981),
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            fontFamily = FontFamily.Monospace
-                        )
-                    }
-
                     // 5. 网址配置按钮 (从右侧控制区移至此处，尺寸调整为 24.dp 以保持动作组高度一致)
                     Box(
                         modifier = Modifier
