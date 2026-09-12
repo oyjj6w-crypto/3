@@ -1836,9 +1836,9 @@ class TradingViewModel : ViewModel() {
     }
 
     fun triggerSingleInvert(windowId: Int, context: Context? = null) {
-        PersistentWebViewPool.dispatchSingleTradingViewAction(windowId, "invert")
+        PersistentWebViewPool.dispatchSingleTradingViewAction(windowId, "invert4")
         context?.let {
-            android.widget.Toast.makeText(it, "已向窗口 $windowId 单独触发: 翻转 K 线 (Alt+I)", android.widget.Toast.LENGTH_SHORT).show()
+            android.widget.Toast.makeText(it, "已向窗口 $windowId 单独触发: 从上往下4个 K 线图的翻转 (Alt+I)", android.widget.Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -2495,15 +2495,24 @@ fun TradingMultiViewScreen(
                                                 .clickable { viewModel.triggerSingleToggleMagnet(win.id, context) }
                                         )
 
-                                        // 翻转K线快捷键图标 (Alt+I) - 独立控制
-                                        Icon(
-                                            imageVector = Icons.Default.SwapVert,
-                                            contentDescription = "翻转 K 线 (Alt+I)",
-                                            tint = Color(0xFF34D399),
+                                        // 翻转K线 - 独立控制当前窗口从上往下4个K线图的翻转 (用阿拉伯数字 4 代替 SwapVert 图标)
+                                        Box(
                                             modifier = Modifier
-                                                .size(13.dp)
-                                                .clickable { viewModel.triggerSingleInvert(win.id, context) }
-                                        )
+                                                .size(14.dp)
+                                                .clip(RoundedCornerShape(3.dp))
+                                                .background(Color(0xFF1E293B))
+                                                .border(0.5.dp, Color(0xFF34D399), RoundedCornerShape(3.dp))
+                                                .clickable { viewModel.triggerSingleInvert(win.id, context) },
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text(
+                                                text = "4",
+                                                color = Color(0xFF34D399),
+                                                fontSize = 9.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                fontFamily = FontFamily.Monospace
+                                            )
+                                        }
 
                                         // 窗口单独刷新
                                         Icon(

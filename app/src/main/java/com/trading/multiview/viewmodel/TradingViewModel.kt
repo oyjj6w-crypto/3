@@ -869,9 +869,9 @@ class TradingViewModel : ViewModel() {
     }
 
     fun triggerSingleInvert(windowId: Int, context: Context? = null) {
-        PersistentWebViewPool.dispatchSingleTradingViewAction(windowId, "invert")
+        PersistentWebViewPool.dispatchSingleTradingViewAction(windowId, "invert4")
         context?.let {
-            android.widget.Toast.makeText(it, "已向窗口 $windowId 单独触发: 翻转 K 线 (Alt+I)", android.widget.Toast.LENGTH_SHORT).show()
+            android.widget.Toast.makeText(it, "已向窗口 $windowId 单独触发: 从上往下4个 K 线图的翻转 (Alt+I)", android.widget.Toast.LENGTH_SHORT).show()
         }
     }
 
