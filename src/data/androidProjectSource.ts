@@ -2584,17 +2584,7 @@ fun TradingMultiViewScreen(
                 }
             }
 
-            // 底部悬浮恢复托盘：当有窗口被隐藏时显现，支持快速一键恢复
-            if (uiState.hiddenWindows.isNotEmpty()) {
-                HiddenWindowsTray(
-                    hiddenWindows = uiState.hiddenWindows,
-                    onRestore = { id -> viewModel.restoreWindow(id) },
-                    onRestoreAll = { viewModel.restoreAll() },
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .padding(bottom = 12.dp)
-                )
-            }
+
         }
     }
 

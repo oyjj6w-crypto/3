@@ -280,7 +280,7 @@ export const CodeExplorerModal: React.FC<CodeExplorerModalProps> = ({
                   - 3 窗口可见时：分配比例 1 : 1 : 1（各 33.3%）<br />
                   - 隐藏 1 个窗口时：剩余 2 个自动拉伸为 50% : 50%<br />
                   - 隐藏 2 个窗口或全屏时：剩余 1 个独占 100% 屏幕宽度<br />
-                  - 支持底部悬浮托盘一键恢复。
+                  - 隐藏的窗口可随时在上方导航标签栏点击眼睛图标一键恢复。
                 </p>
               </div>
             </div>
