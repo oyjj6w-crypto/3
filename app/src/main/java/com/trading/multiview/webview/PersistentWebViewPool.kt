@@ -565,9 +565,10 @@ object PersistentWebViewPool {
     fun dispatchTradingViewAction(action: String, onProgress: ((Int, Int) -> Unit)? = null) {
         val handler = android.os.Handler(android.os.Looper.getMainLooper())
         val windowIds = listOf(1, 2, 3)
-        // 4图翻转每个窗口内部有4个子图串行处理（每个子图间隔约300ms，总共约1200ms），因此多窗口排队延时需要1400ms以上防止指令竞争
+        // 4图翻转每个窗口内部有4个子图串行处理（每个子图安全间隔：200ms聚焦等待 + 50ms按键延迟 + 250ms静默 = 500ms，总共约2000ms），
+        // 为了确保不同 WebView 窗口之间完全不冲突不卡顿，我们将窗口间隔排队延时调整为 2600ms。
         val stepDelay = when (action) {
-            "invert4" -> 1400L
+            "invert4" -> 2600L
             else -> 200L
         }
         windowIds.forEachIndexed { index, windowId ->
@@ -718,7 +719,7 @@ object PersistentWebViewPool {
                             target.focus();
                         }
 
-                        // 【安全延迟 110ms】：让 TradingView 内部完完整整地将焦点状态转移至当前 subchart，杜绝按键丢失
+                        // 【安全延迟 220ms】：让 TradingView 内部完完整整地将焦点状态转移至当前 subchart，杜绝按键丢失
                         setTimeout(function() {
                             if (action === 'hide') {
                                 var opts = { key: 'h', code: 'KeyH', keyCode: 72, which: 72, altKey: true, ctrlKey: true, bubbles: true, cancelable: true, composed: true };
@@ -731,7 +732,7 @@ object PersistentWebViewPool {
                                     target.dispatchEvent(ku);
                                     document.dispatchEvent(ku);
                                     window.dispatchEvent(ku);
-                                }, 15);
+                                }, 50);
                             } else if (action.indexOf('timeframe_') === 0) {
                                 var tfVal = action.substring(10);
                                 for (var k = 0; k < tfVal.length; k++) {
@@ -768,7 +769,7 @@ object PersistentWebViewPool {
                                     document.dispatchEvent(ku);
                                     window.dispatchEvent(ku);
 
-                                    // 额外在 40ms 后触发一次左键单击，清除 hover 遗留的十字线，让看盘画面纯净
+                                    // 额外在 100ms 后触发一次左键单击，清除 hover 遗留的十字线，让看盘画面纯净
                                     setTimeout(function() {
                                         var cleanEvt = {
                                             clientX: p.x,
@@ -788,15 +789,15 @@ object PersistentWebViewPool {
                                             target.dispatchEvent(new MouseEvent('mouseup', cleanEvt));
                                             target.dispatchEvent(new MouseEvent('click', cleanEvt));
                                         } catch(e) {}
-                                    }, 40);
-                                }, 15);
+                                    }, 100);
+                                }, 50);
                             }
 
-                            // 【安全延迟 150ms】：处理完毕后，再给浏览器与内核 150ms 的渲染静默空闲，再执行下一个图表，完全打消任何时序冲突！
+                            // 【安全延迟 250ms】：处理完毕后，再给浏览器与内核 250ms 的渲染静默空闲，再执行下一个图表，完全打消任何时序冲突！
                             setTimeout(function() {
                                 processPoint(idx + 1);
-                            }, 150);
-                        }, 110);
+                            }, 250);
+                        }, 220);
                     }
 
                     processPoint(0);
