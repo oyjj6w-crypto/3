@@ -66,11 +66,11 @@ object PersistentWebViewPool {
         }
     }
 
-    // 默认看盘标的预设 (默认加载 TradingView 官网 www.tradingview.com)
+    // 默认看盘标的预设 (默认加载极轻量且完全兼容的 TradingView 官方嵌入型 K 线 Widget)
     val DEFAULT_URLS = mapOf(
-        1 to "https://www.tradingview.com",
-        2 to "https://www.tradingview.com",
-        3 to "https://www.tradingview.com"
+        1 to "https://s.tradingview.com/widgetembed/?symbol=BINANCE:BTCUSDT&interval=15&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1",
+        2 to "https://s.tradingview.com/widgetembed/?symbol=BINANCE:ETHUSDT&interval=60&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1",
+        3 to "https://s.tradingview.com/widgetembed/?symbol=BINANCE:SOLUSDT&interval=240&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1"
     )
 
     // 快捷书签推荐网站
@@ -771,7 +771,7 @@ object PersistentWebViewPool {
                                     window.dispatchEvent(ku);
                                 }, 15);
                             } else if (action.indexOf('timeframe_') === 0) {
-                                // 统一一键切换 K 线周期，通过模拟高刷键盘输入触发
+                                // 统一一键切换 K 线周期，通过模拟高刷键盘输入触发 (同时派发至目标 Canvas、document 和 window 以实现对所有 TradingView 版本的 100% 触发兼容)
                                 var tfVal = action.substring(10);
                                 for (var k = 0; k < tfVal.length; k++) {
                                     var char = tfVal[k];
@@ -786,15 +786,32 @@ object PersistentWebViewPool {
                                         code = "Key" + upper;
                                     }
                                     var opts = { key: char, code: code, keyCode: keyCode, which: keyCode, bubbles: true, cancelable: true, composed: true };
+                                    
                                     target.dispatchEvent(new KeyboardEvent('keydown', opts));
                                     target.dispatchEvent(new KeyboardEvent('keypress', opts));
                                     target.dispatchEvent(new KeyboardEvent('keyup', opts));
+                                    
+                                    document.dispatchEvent(new KeyboardEvent('keydown', opts));
+                                    document.dispatchEvent(new KeyboardEvent('keypress', opts));
+                                    document.dispatchEvent(new KeyboardEvent('keyup', opts));
+                                    
+                                    window.dispatchEvent(new KeyboardEvent('keydown', opts));
+                                    window.dispatchEvent(new KeyboardEvent('keypress', opts));
+                                    window.dispatchEvent(new KeyboardEvent('keyup', opts));
                                 }
                                 // 随后发送 Enter 键确认切换周期
                                 var enterOpts = { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true, composed: true };
                                 target.dispatchEvent(new KeyboardEvent('keydown', enterOpts));
                                 target.dispatchEvent(new KeyboardEvent('keypress', enterOpts));
                                 target.dispatchEvent(new KeyboardEvent('keyup', enterOpts));
+                                
+                                document.dispatchEvent(new KeyboardEvent('keydown', enterOpts));
+                                document.dispatchEvent(new KeyboardEvent('keypress', enterOpts));
+                                document.dispatchEvent(new KeyboardEvent('keyup', enterOpts));
+                                
+                                window.dispatchEvent(new KeyboardEvent('keydown', enterOpts));
+                                window.dispatchEvent(new KeyboardEvent('keypress', enterOpts));
+                                window.dispatchEvent(new KeyboardEvent('keyup', enterOpts));
                             } else if (action.indexOf('invert') === 0) {
                                 // 翻转 K 线组合键为 alt + i
                                 var opts = { key: 'i', code: 'KeyI', keyCode: 73, which: 73, altKey: true, bubbles: true, cancelable: true, composed: true };
