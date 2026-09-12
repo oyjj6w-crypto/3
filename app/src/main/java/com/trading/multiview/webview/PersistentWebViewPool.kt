@@ -26,6 +26,9 @@ object PersistentWebViewPool {
     private val webViewMap = mutableMapOf<Int, WebView>()
     private var isInitialized = false
 
+    // 缓存每个视窗最近一次 resize 的防抖 Runnable 任务，杜绝动画中频繁执行 JS 导致 UI 卡顿
+    private val resizeRunnableMap = java.util.concurrent.ConcurrentHashMap<Int, Runnable>()
+
     // URL 变化监听回调 (windowId, newUrl, pageTitle)
     var onUrlChanged: ((Int, String, String) -> Unit)? = null
     // 网页标题更新回调 (windowId, newTitle) - 独立解耦，避免价格频繁跳动触发 URL 变更重绘
@@ -215,14 +218,7 @@ object PersistentWebViewPool {
                             window.__viewport_observer = obs;
                         }
 
-                        // 仅注入纯深色背景底色防护，防止图表重绘和异步加载时的瞬时白闪
-                        var styleId = '__tv_bg_antiflicker__';
-                        if (!document.getElementById(styleId)) {
-                            var style = document.createElement('style');
-                            style.id = styleId;
-                            style.textContent = 'html, body { background-color: #131722 !important; }';
-                            if (document.head) document.head.appendChild(style);
-                        }
+
 
                         // 模拟 PC 平台标头，但保留真实触屏支持，确保周期切换按钮与下拉菜单流畅交互
                         if (window.navigator) {
@@ -329,17 +325,27 @@ object PersistentWebViewPool {
             // 关键优化 2：强制设置底层背景为行情深黑色 (#131722)，消除 any 图表重绘或缓冲区交换时的瞬时白闪
             setBackgroundColor(android.graphics.Color.parseColor("#131722"))
 
-            // 关键优化 3：动态监听布局尺寸变化，彻底解决最大化/还原、隐藏/显示、横竖屏切换时不会缩放到满屏显示的问题
+            // 关键优化 3：动态监听布局尺寸变化，通过防抖 (Debounce) 彻底消除动画过程中的 JS 注入轰炸，保障满屏自适应瞬间完成！
             addOnLayoutChangeListener { v, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom ->
                 val newWidth = right - left
                 val oldWidth = oldRight - oldLeft
                 val newHeight = bottom - top
                 val oldHeight = oldBottom - oldTop
                 if ((newWidth != oldWidth || newHeight != oldHeight) && newWidth > 0 && newHeight > 0) {
-                    val webView = v as? WebView
-                    webView?.let {
-                        injectDesktopViewport(it, force = true)
+                    val webView = v as? WebView ?: return@addOnLayoutChangeListener
+                    val wId = (webView.tag as? Int) ?: return@addOnLayoutChangeListener
+                    
+                    val oldRunnable = resizeRunnableMap[wId]
+                    if (oldRunnable != null) {
+                        webView.removeCallbacks(oldRunnable)
                     }
+                    val runnable = Runnable {
+                        injectDesktopViewport(webView, force = true)
+                    }
+                    resizeRunnableMap[wId] = runnable
+                    // 延迟 180 毫秒执行。280ms 动画期间产生的频繁布局重排都会被 remove 过滤，
+                    // 仅在动画结束尺寸静止后 180ms 执行一次，彻底释放渲染与 JS IPC 算力！
+                    webView.postDelayed(runnable, 180)
                 }
             }
 
