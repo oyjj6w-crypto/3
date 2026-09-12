@@ -172,12 +172,8 @@ object PersistentWebViewPool {
             (function() {
                 var targetWidth = $targetPixelWidth;
                 var targetScale = '$scaleStr';
-                if (window.__current_applied_fixed_width === targetWidth && window.__current_applied_desktop_scale === targetScale) {
-                    return; // 网页内部视口已生效相同比例，立即返回，防止二次重绘
-                }
-                window.__current_applied_fixed_width = targetWidth;
-                window.__current_applied_desktop_scale = targetScale;
                 var targetContent = 'width=' + targetWidth + ', initial-scale=' + targetScale + ', minimum-scale=0.1, maximum-scale=5.0, user-scalable=yes';
+                
                 function applyDesktop() {
                     try {
                         var metas = document.getElementsByTagName('meta');
@@ -196,6 +192,27 @@ object PersistentWebViewPool {
                             meta.setAttribute('name', 'viewport');
                             meta.setAttribute('content', targetContent);
                             if (document.head) document.head.appendChild(meta);
+                        }
+
+                        // 强效防篡改锁：通过 MutationObserver 实时监听任何单页导航 (SPA) 脚本或延迟框架对 viewport 的篡改并自动修正
+                        if (window.__viewport_observer) {
+                            window.__viewport_observer.disconnect();
+                        }
+                        var obs = new MutationObserver(function(mutations) {
+                            var currentMeta = document.querySelector('meta[name="viewport"]');
+                            if (!currentMeta) {
+                                var newMeta = document.createElement('meta');
+                                newMeta.setAttribute('name', 'viewport');
+                                newMeta.setAttribute('content', targetContent);
+                                if (document.head) document.head.appendChild(newMeta);
+                            } else if (currentMeta.getAttribute('content') !== targetContent) {
+                                currentMeta.setAttribute('content', targetContent);
+                            }
+                        });
+                        
+                        if (document.head) {
+                            obs.observe(document.head, { childList: true, subtree: true, attributes: true, attributeFilter: ['content'] });
+                            window.__viewport_observer = obs;
                         }
 
                         // 仅注入纯深色背景底色防护，防止图表重绘和异步加载时的瞬时白闪

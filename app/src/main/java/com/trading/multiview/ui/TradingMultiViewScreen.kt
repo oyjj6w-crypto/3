@@ -26,6 +26,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
@@ -724,19 +725,22 @@ fun TradingMultiViewScreen(
                         label = "window_weight_${window.id}"
                     )
 
-                    // 仅当权重 > 0.001f 时分配屏幕宽度；当被隐藏或全屏时自动缩为 0
-                    if (animatedWeight > 0.001f) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxHeight()
-                                .weight(animatedWeight)
-                                .border(1.dp, Color(0xFF1E293B))
-                        ) {
-                            SingleTradingWindowView(
-                                windowId = window.id,
-                                zoomPercent = window.zoomPercent
+                    // 通过保留所有 3 个视窗在 Composable 视图树中，彻底根治 WebView 因从视图树中移除重建导致 WebGL 重新初始化缓慢的问题（4-10秒白屏）
+                    // 隐藏或全屏时将其 weight 缩至极小值 0.0001f 并设置 alpha 为 0，不破坏其他可见视窗的拉伸比例，同时保持 WebView 100% 持续热激活
+                    Box(
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .weight(maxOf(animatedWeight, 0.0001f))
+                            .alpha(if (animatedWeight > 0.01f) 1f else 0f)
+                            .border(
+                                width = if (animatedWeight > 0.01f) 1.dp else 0.dp,
+                                color = if (animatedWeight > 0.01f) Color(0xFF1E293B) else Color.Transparent
                             )
-                        }
+                    ) {
+                        SingleTradingWindowView(
+                            windowId = window.id,
+                            zoomPercent = window.zoomPercent
+                        )
                     }
                 }
             }

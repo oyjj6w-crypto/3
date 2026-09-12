@@ -311,12 +311,8 @@ object PersistentWebViewPool {
             (function() {
                 var targetWidth = $targetPixelWidth;
                 var targetScale = '$scaleStr';
-                if (window.__current_applied_fixed_width === targetWidth && window.__current_applied_desktop_scale === targetScale) {
-                    return; // 网页内部视口已生效相同比例，立即返回，防止二次重绘
-                }
-                window.__current_applied_fixed_width = targetWidth;
-                window.__current_applied_desktop_scale = targetScale;
                 var targetContent = 'width=' + targetWidth + ', initial-scale=' + targetScale + ', minimum-scale=0.1, maximum-scale=5.0, user-scalable=yes';
+                
                 function applyDesktop() {
                     try {
                         var metas = document.getElementsByTagName('meta');
@@ -335,6 +331,27 @@ object PersistentWebViewPool {
                             meta.setAttribute('name', 'viewport');
                             meta.setAttribute('content', targetContent);
                             if (document.head) document.head.appendChild(meta);
+                        }
+
+                        // 强效防篡改锁：通过 MutationObserver 实时监听任何单页导航 (SPA) 脚本或延迟框架对 viewport 的篡改并自动修正
+                        if (window.__viewport_observer) {
+                            window.__viewport_observer.disconnect();
+                        }
+                        var obs = new MutationObserver(function(mutations) {
+                            var currentMeta = document.querySelector('meta[name="viewport"]');
+                            if (!currentMeta) {
+                                var newMeta = document.createElement('meta');
+                                newMeta.setAttribute('name', 'viewport');
+                                newMeta.setAttribute('content', targetContent);
+                                if (document.head) document.head.appendChild(newMeta);
+                            } else if (currentMeta.getAttribute('content') !== targetContent) {
+                                currentMeta.setAttribute('content', targetContent);
+                            }
+                        });
+                        
+                        if (document.head) {
+                            obs.observe(document.head, { childList: true, subtree: true, attributes: true, attributeFilter: ['content'] });
+                            window.__viewport_observer = obs;
                         }
 
                         // 仅注入纯深色背景底色防护，防止图表重绘 and 异步加载时的瞬时白闪
@@ -1919,6 +1936,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
@@ -2567,19 +2585,22 @@ fun TradingMultiViewScreen(
                         label = "window_weight_\${window.id}"
                     )
 
-                    // 仅当权重 > 0.001f 时分配屏幕宽度；当被隐藏或全屏时自动缩为 0
-                    if (animatedWeight > 0.001f) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxHeight()
-                                .weight(animatedWeight)
-                                .border(1.dp, Color(0xFF1E293B))
-                        ) {
-                            SingleTradingWindowView(
-                                windowId = window.id,
-                                zoomPercent = window.zoomPercent
+                    // 通过保留所有 3 个视窗在 Composable 视图树中，彻底根治 WebView 因从视图树中移除重建导致 WebGL 重新初始化缓慢的问题（4-10秒白屏）
+                    // 隐藏或全屏时将其 weight 缩至极小值 0.0001f 并设置 alpha 为 0，不破坏其他可见视窗的拉伸比例，同时保持 WebView 100% 持续热激活
+                    Box(
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .weight(maxOf(animatedWeight, 0.0001f))
+                            .alpha(if (animatedWeight > 0.01f) 1f else 0f)
+                            .border(
+                                width = if (animatedWeight > 0.01f) 1.dp else 0.dp,
+                                color = if (animatedWeight > 0.01f) Color(0xFF1E293B) else Color.Transparent
                             )
-                        }
+                    ) {
+                        SingleTradingWindowView(
+                            windowId = window.id,
+                            zoomPercent = window.zoomPercent
+                        )
                     }
                 }
             }
