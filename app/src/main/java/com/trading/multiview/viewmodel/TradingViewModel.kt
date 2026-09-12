@@ -32,9 +32,9 @@ val DEFAULT_TAB_GROUPS = listOf(
         isPreset = false,
         description = "分组 1 (TradingView 官方行情)",
         items = listOf(
-            TabGroupItem("BTC/USDT 15M", "BTCUSDT", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:BTCUSDT&interval=15&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1", "15m"),
-            TabGroupItem("ETH/USDT 1H", "ETHUSDT", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:ETHUSDT&interval=60&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1", "60m"),
-            TabGroupItem("SOL/USDT 4H", "SOLUSDT", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:SOLUSDT&interval=240&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1", "240m")
+            TabGroupItem("TradingView 1", "BTCUSDT", "https://www.tradingview.com", "15m"),
+            TabGroupItem("TradingView 2", "ETHUSDT", "https://www.tradingview.com", "60m"),
+            TabGroupItem("TradingView 3", "SOLUSDT", "https://www.tradingview.com", "240m")
         )
     ),
     TabGroup(
@@ -77,9 +77,9 @@ data class WindowState(
 
 fun createInitialWindows(): List<WindowState> {
     val defaults = listOf(
-        Triple(1, "BTC/USDT 15M" to "BTCUSDT", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:BTCUSDT&interval=15&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1"),
-        Triple(2, "ETH/USDT 1H" to "ETHUSDT", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:ETHUSDT&interval=60&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1"),
-        Triple(3, "SOL/USDT 4H" to "SOLUSDT", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:SOLUSDT&interval=240&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1")
+        Triple(1, "TradingView 1" to "BTCUSDT", "https://www.tradingview.com"),
+        Triple(2, "TradingView 2" to "ETHUSDT", "https://www.tradingview.com"),
+        Triple(3, "TradingView 3" to "SOLUSDT", "https://www.tradingview.com")
     )
     return defaults.map { (id, titleSymbol, defaultUrl) ->
         val savedUrl = PersistentWebViewPool.getSavedWindowUrl(null, id)
@@ -332,19 +332,9 @@ class TradingViewModel : ViewModel() {
                 val savedTitle = prefs.getString("${KEY_WINDOW_TITLE_PREFIX}${win.id}", null)
                 val groupItem = targetGroup?.items?.getOrNull(win.id - 1)
 
-                var targetUrl = savedUrl ?: groupItem?.url?.takeIf { it.isNotBlank() } ?: win.currentUrl
+                val targetUrl = savedUrl ?: groupItem?.url?.takeIf { it.isNotBlank() } ?: win.currentUrl
                 val targetTitle = savedTitle ?: groupItem?.title ?: win.title
                 val targetSymbol = groupItem?.symbol ?: win.symbol
-
-                // 🌟 自动迁移机制：将旧的、太重且容易被拦截的 TradingView 官网首页迁移至极速、专为内嵌定制的官方 Widget 行情图
-                if (PersistentWebViewPool.isSameUrl(targetUrl, "https://www.tradingview.com") || 
-                    PersistentWebViewPool.isSameUrl(targetUrl, "https://www.tradingview.com/")) {
-                    targetUrl = when (win.id) {
-                        1 -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:BTCUSDT&interval=15&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1"
-                        2 -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:ETHUSDT&interval=60&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1"
-                        else -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:SOLUSDT&interval=240&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1"
-                    }
-                }
 
                 // 确保已挂载的底层常驻 WebView 加载目标真实网址
                 val webView = PersistentWebViewPool.getWebView(win.id)
@@ -912,15 +902,6 @@ class TradingViewModel : ViewModel() {
                 }
                 
                 PersistentWebViewPool.saveWindowUrl(win.id, updatedUrl, win.title)
-
-                // 强制触发底层常驻 WebView 重新加载更新了 timeframe 参数后的最新目标 URL，保证对 Widget 的 100% 切换成功率
-                val webView = PersistentWebViewPool.getWebView(win.id)
-                if (webView != null) {
-                    val currentLoaded = webView.url ?: ""
-                    if (!PersistentWebViewPool.isSameUrl(currentLoaded, updatedUrl)) {
-                        PersistentWebViewPool.loadCustomUrl(win.id, updatedUrl)
-                    }
-                }
 
                 win.copy(
                     timeframe = tf,

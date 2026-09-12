@@ -740,6 +740,18 @@ fun TradingMultiViewScreen(
                     }
                 }
             }
+
+            // 底部悬浮恢复托盘：当有窗口被隐藏时显现，支持快速一键恢复
+            if (uiState.hiddenWindows.isNotEmpty()) {
+                HiddenWindowsTray(
+                    hiddenWindows = uiState.hiddenWindows,
+                    onRestore = { id -> viewModel.restoreWindow(id) },
+                    onRestoreAll = { viewModel.restoreAll() },
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 12.dp)
+                )
+            }
         }
     }
 
@@ -863,19 +875,86 @@ fun SingleTradingWindowView(
                 
                 // 当 View 完成排版测量拥有实际像素尺寸后，注入基于实际物理宽度的黄金桌面自适应缩放
                 webView.post {
-                    PersistentWebViewPool.injectDesktopViewport(webView, zoomPercent = zoomPercent)
+                    PersistentWebViewPool.injectDesktopViewport(webView, zoomPercent)
                 }
 
                 webView
             },
             update = { webView ->
-                // 当 Compose 状态发生变化（例如窗口在最大化/还原、显示/隐藏发生重组，或缩放比例变化时），
-                // 强制触发一次自适应缩放注入，确保完美满屏自适应，杜绝手动双指缩放
-                webView.post {
-                    PersistentWebViewPool.injectDesktopViewport(webView, zoomPercent = zoomPercent, force = true)
-                }
+                // WebView 实例在 PersistentWebViewPool 中完全独立常驻并保持单例运行，
+                // 严禁在 Compose 的 update 回调中执行 reload 或 loadUrl，保证图表 WebSocket 持续保活且零重绘闪烁！
             },
             modifier = Modifier.fillMaxSize()
         )
+    }
+}
+
+/**
+ * 隐藏窗口快速恢复浮动托盘
+ */
+@Composable
+fun HiddenWindowsTray(
+    hiddenWindows: List<WindowState>,
+    onRestore: (Int) -> Unit,
+    onRestoreAll: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(24.dp),
+        color = Color(0xFF1E293B).copy(alpha = 0.95f),
+        tonalElevation = 8.dp,
+        border = BorderStroke(1.dp, Color(0xFF334155))
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(
+                text = "已隐藏窗口:",
+                color = Color(0xFF94A3B8),
+                fontSize = 11.sp
+            )
+
+            hiddenWindows.forEach { win ->
+                AssistChip(
+                    onClick = { onRestore(win.id) },
+                    label = {
+                        Text(
+                            text = "恢复 ${win.title}",
+                            fontSize = 11.sp,
+                            color = Color(0xFF38BDF8)
+                        )
+                    },
+                    leadingIcon = {
+                        Icon(
+                            Icons.Default.Add,
+                            contentDescription = null,
+                            tint = Color(0xFF38BDF8),
+                            modifier = Modifier.size(12.dp)
+                        )
+                    },
+                    colors = AssistChipDefaults.assistChipColors(
+                        containerColor = Color(0xFF0F172A)
+                    ),
+                    border = BorderStroke(1.dp, Color(0xFF38BDF8).copy(alpha = 0.4f)),
+                    shape = RoundedCornerShape(16.dp)
+                )
+            }
+
+            if (hiddenWindows.size > 1) {
+                TextButton(
+                    onClick = onRestoreAll,
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                ) {
+                    Text(
+                        text = "全部恢复 (1:1:1)",
+                        fontSize = 11.sp,
+                        color = Color(0xFF10B981)
+                    )
+                }
+            }
+        }
     }
 }

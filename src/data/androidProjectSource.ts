@@ -311,37 +311,32 @@ object PersistentWebViewPool {
             (function() {
                 var targetWidth = $targetPixelWidth;
                 var targetScale = '$scaleStr';
+                if (window.__current_applied_fixed_width === targetWidth && window.__current_applied_desktop_scale === targetScale) {
+                    return; // 网页内部视口已生效相同比例，立即返回，防止二次重绘
+                }
+                window.__current_applied_fixed_width = targetWidth;
+                window.__current_applied_desktop_scale = targetScale;
                 var targetContent = 'width=' + targetWidth + ', initial-scale=' + targetScale + ', minimum-scale=0.1, maximum-scale=5.0, user-scalable=yes';
-                
                 function applyDesktop() {
                     try {
-                        // 1. 强制移除所有现存的 viewport meta 标签，击穿浏览器缓存
                         var metas = document.getElementsByTagName('meta');
-                        for (var i = metas.length - 1; i >= 0; i--) {
+                        var found = false;
+                        for (var i = 0; i < metas.length; i++) {
                             if (metas[i].getAttribute('name') === 'viewport') {
-                                metas[i].parentNode.removeChild(metas[i]);
+                                if (metas[i].getAttribute('content') !== targetContent) {
+                                    metas[i].setAttribute('content', targetContent);
+                                }
+                                found = true;
+                                break;
                             }
                         }
-                        
-                        // 触发 Reflow
-                        var reflow = document.body ? document.body.offsetHeight : 0;
-                        
-                        // 2. 注入最新精心计算的黄金自适应视口
-                        var meta = document.createElement('meta');
-                        meta.setAttribute('name', 'viewport');
-                        meta.setAttribute('content', targetContent);
-                        if (document.head) {
-                            document.head.appendChild(meta);
-                        } else if (document.body) {
-                            document.body.appendChild(meta);
+                        if (!found) {
+                            var meta = document.createElement('meta');
+                            meta.setAttribute('name', 'viewport');
+                            meta.setAttribute('content', targetContent);
+                            if (document.head) document.head.appendChild(meta);
                         }
-                        
-                        // 3. 锁定 html 和 body 的最小宽度，杜绝任何导航/切换后 K 线折叠或未填满的情况
-                        document.documentElement.style.minWidth = targetWidth + 'px';
-                        if (document.body) {
-                            document.body.style.minWidth = targetWidth + 'px';
-                        }
-                        
+
                         // 仅注入纯深色背景底色防护，防止图表重绘 and 异步加载时的瞬时白闪
                         var styleId = '__tv_bg_antiflicker__';
                         if (!document.getElementById(styleId)) {
@@ -354,93 +349,29 @@ object PersistentWebViewPool {
                         // 模拟 PC 平台标头，但保留真实触屏支持，确保周期切换按钮与下拉菜单流畅交互
                         if (window.navigator) {
                             try {
-                                if (!window.__navigator_overridden__) {
-                                    Object.defineProperty(navigator, 'userAgentData', {
-                                        get: function() {
-                                            return {
-                                                mobile: false,
-                                                platform: 'Windows',
-                                                brands: [
-                                                    { brand: 'Chromium', version: '128' },
-                                                    { brand: 'Google Chrome', version: '128' },
-                                                    { brand: 'Not;A=Brand', version: '24' }
-                                                ]
-                                            };
-                                        },
-                                        configurable: true
-                                    });
-                                    Object.defineProperty(navigator, 'platform', {
-                                        get: function() { return 'Win32'; },
-                                        configurable: true
-                                    });
-                                    window.__navigator_overridden__ = true;
-                                }
+                                Object.defineProperty(navigator, 'userAgentData', {
+                                    get: function() {
+                                        return {
+                                            mobile: false,
+                                            platform: 'Windows',
+                                            brands: [
+                                                { brand: 'Chromium', version: '128' },
+                                                { brand: 'Google Chrome', version: '128' },
+                                                { brand: 'Not;A=Brand', version: '24' }
+                                            ]
+                                        };
+                                    },
+                                    configurable: true
+                                });
+                                Object.defineProperty(navigator, 'platform', {
+                                    get: function() { return 'Win32'; },
+                                    configurable: true
+                                });
                             } catch(e) {}
                         }
                     } catch(e) {}
                 }
 
-                // 核心加固 A：监听 head 节点变更，防止 TradingView 异步脚本重置或删除我们的 viewport
-                try {
-                    if (!window.__viewport_observer__) {
-                        var observer = new MutationObserver(function(mutations) {
-                            var hasExternalChange = false;
-                            for (var i = 0; i < mutations.length; i++) {
-                                var m = mutations[i];
-                                if (m.target.nodeName === 'META' && m.target.getAttribute('name') === 'viewport') {
-                                    if (m.target.getAttribute('content') !== targetContent) {
-                                        hasExternalChange = true;
-                                    }
-                                } else if (m.addedNodes) {
-                                    for (var j = 0; j < m.addedNodes.length; j++) {
-                                        if (m.addedNodes[j].nodeName === 'META' && m.addedNodes[j].getAttribute('name') === 'viewport') {
-                                            hasExternalChange = true;
-                                        }
-                                    }
-                                }
-                            }
-                            if (hasExternalChange) {
-                                applyDesktop();
-                            }
-                        });
-                        if (document.head) {
-                            observer.observe(document.head, { childList: true, subtree: true, attributes: true, attributeFilter: ['content'] });
-                            window.__viewport_observer__ = observer;
-                        }
-                    }
-                } catch(e) {}
-
-                // 核心加固 B：拦截 SPA 前端路由 (History API & hashChange)
-                try {
-                    if (!window.__spa_hooked__) {
-                        var origPush = history.pushState;
-                        if (origPush) {
-                            history.pushState = function() {
-                                origPush.apply(this, arguments);
-                                setTimeout(applyDesktop, 50);
-                                setTimeout(applyDesktop, 300);
-                            };
-                        }
-                        var origReplace = history.replaceState;
-                        if (origReplace) {
-                            history.replaceState = function() {
-                                origReplace.apply(this, arguments);
-                                setTimeout(applyDesktop, 50);
-                                setTimeout(applyDesktop, 300);
-                            };
-                        }
-                        window.addEventListener('popstate', function() {
-                            setTimeout(applyDesktop, 50);
-                            setTimeout(applyDesktop, 300);
-                        });
-                        window.addEventListener('hashchange', function() {
-                            setTimeout(applyDesktop, 50);
-                        });
-                        window.__spa_hooked__ = true;
-                    }
-                } catch(e) {}
-
-                // 执行首次或重绘注入
                 if (document.readyState === 'loading') {
                     document.addEventListener('DOMContentLoaded', applyDesktop, { once: true });
                 } else {
@@ -2652,6 +2583,18 @@ fun TradingMultiViewScreen(
                     }
                 }
             }
+
+            // 底部悬浮恢复托盘：当有窗口被隐藏时显现，支持快速一键恢复
+            if (uiState.hiddenWindows.isNotEmpty()) {
+                HiddenWindowsTray(
+                    hiddenWindows = uiState.hiddenWindows,
+                    onRestore = { id -> viewModel.restoreWindow(id) },
+                    onRestoreAll = { viewModel.restoreAll() },
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 12.dp)
+                )
+            }
         }
     }
 
@@ -2775,20 +2718,87 @@ fun SingleTradingWindowView(
                 
                 // 当 View 完成排版测量拥有实际像素尺寸后，注入基于实际物理宽度的黄金桌面自适应缩放
                 webView.post {
-                    PersistentWebViewPool.injectDesktopViewport(webView, zoomPercent = zoomPercent)
+                    PersistentWebViewPool.injectDesktopViewport(webView, zoomPercent)
                 }
 
                 webView
             },
             update = { webView ->
-                // 当 Compose 状态发生变化（例如窗口在最大化/还原、显示/隐藏发生重组，或缩放比例变化时），
-                // 强制触发一次自适应缩放注入，确保完美满屏自适应，杜绝手动双指缩放
-                webView.post {
-                    PersistentWebViewPool.injectDesktopViewport(webView, zoomPercent = zoomPercent, force = true)
-                }
+                // WebView 实例在 PersistentWebViewPool 中完全独立常驻并保持单例运行，
+                // 严禁在 Compose 的 update 回调中执行 reload 或 loadUrl，保证图表 WebSocket 持续保活且零重绘闪烁！
             },
             modifier = Modifier.fillMaxSize()
         )
+    }
+}
+
+/**
+ * 隐藏窗口快速恢复浮动托盘
+ */
+@Composable
+fun HiddenWindowsTray(
+    hiddenWindows: List<WindowState>,
+    onRestore: (Int) -> Unit,
+    onRestoreAll: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(24.dp),
+        color = Color(0xFF1E293B).copy(alpha = 0.95f),
+        tonalElevation = 8.dp,
+        border = BorderStroke(1.dp, Color(0xFF334155))
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(
+                text = "已隐藏窗口:",
+                color = Color(0xFF94A3B8),
+                fontSize = 11.sp
+            )
+
+            hiddenWindows.forEach { win ->
+                AssistChip(
+                    onClick = { onRestore(win.id) },
+                    label = {
+                        Text(
+                            text = "恢复 \${win.title}",
+                            fontSize = 11.sp,
+                            color = Color(0xFF38BDF8)
+                        )
+                    },
+                    leadingIcon = {
+                        Icon(
+                            Icons.Default.Add,
+                            contentDescription = null,
+                            tint = Color(0xFF38BDF8),
+                            modifier = Modifier.size(12.dp)
+                        )
+                    },
+                    colors = AssistChipDefaults.assistChipColors(
+                        containerColor = Color(0xFF0F172A)
+                    ),
+                    border = BorderStroke(1.dp, Color(0xFF38BDF8).copy(alpha = 0.4f)),
+                    shape = RoundedCornerShape(16.dp)
+                )
+            }
+
+            if (hiddenWindows.size > 1) {
+                TextButton(
+                    onClick = onRestoreAll,
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                ) {
+                    Text(
+                        text = "全部恢复 (1:1:1)",
+                        fontSize = 11.sp,
+                        color = Color(0xFF10B981)
+                    )
+                }
+            }
+        }
     }
 }`
   },

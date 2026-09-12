@@ -66,11 +66,11 @@ object PersistentWebViewPool {
         }
     }
 
-    // 默认看盘标的预设 (默认加载极轻量且完全兼容的 TradingView 官方嵌入型 K 线 Widget)
+    // 默认看盘标的预设 (默认加载 TradingView 官网 www.tradingview.com)
     val DEFAULT_URLS = mapOf(
-        1 to "https://s.tradingview.com/widgetembed/?symbol=BINANCE:BTCUSDT&interval=15&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1",
-        2 to "https://s.tradingview.com/widgetembed/?symbol=BINANCE:ETHUSDT&interval=60&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1",
-        3 to "https://s.tradingview.com/widgetembed/?symbol=BINANCE:SOLUSDT&interval=240&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1"
+        1 to "https://www.tradingview.com",
+        2 to "https://www.tradingview.com",
+        3 to "https://www.tradingview.com"
     )
 
     // 快捷书签推荐网站
@@ -172,37 +172,32 @@ object PersistentWebViewPool {
             (function() {
                 var targetWidth = $targetPixelWidth;
                 var targetScale = '$scaleStr';
+                if (window.__current_applied_fixed_width === targetWidth && window.__current_applied_desktop_scale === targetScale) {
+                    return; // 网页内部视口已生效相同比例，立即返回，防止二次重绘
+                }
+                window.__current_applied_fixed_width = targetWidth;
+                window.__current_applied_desktop_scale = targetScale;
                 var targetContent = 'width=' + targetWidth + ', initial-scale=' + targetScale + ', minimum-scale=0.1, maximum-scale=5.0, user-scalable=yes';
-                
                 function applyDesktop() {
                     try {
-                        // 1. 强制移除所有现存的 viewport meta 标签，击穿浏览器缓存
                         var metas = document.getElementsByTagName('meta');
-                        for (var i = metas.length - 1; i >= 0; i--) {
+                        var found = false;
+                        for (var i = 0; i < metas.length; i++) {
                             if (metas[i].getAttribute('name') === 'viewport') {
-                                metas[i].parentNode.removeChild(metas[i]);
+                                if (metas[i].getAttribute('content') !== targetContent) {
+                                    metas[i].setAttribute('content', targetContent);
+                                }
+                                found = true;
+                                break;
                             }
                         }
-                        
-                        // 触发 Reflow
-                        var reflow = document.body ? document.body.offsetHeight : 0;
-                        
-                        // 2. 注入最新精心计算的黄金自适应视口
-                        var meta = document.createElement('meta');
-                        meta.setAttribute('name', 'viewport');
-                        meta.setAttribute('content', targetContent);
-                        if (document.head) {
-                            document.head.appendChild(meta);
-                        } else if (document.body) {
-                            document.body.appendChild(meta);
+                        if (!found) {
+                            var meta = document.createElement('meta');
+                            meta.setAttribute('name', 'viewport');
+                            meta.setAttribute('content', targetContent);
+                            if (document.head) document.head.appendChild(meta);
                         }
-                        
-                        // 3. 锁定 html 和 body 的最小宽度，杜绝任何导航/切换后 K 线折叠或未填满的情况
-                        document.documentElement.style.minWidth = targetWidth + 'px';
-                        if (document.body) {
-                            document.body.style.minWidth = targetWidth + 'px';
-                        }
-                        
+
                         // 仅注入纯深色背景底色防护，防止图表重绘和异步加载时的瞬时白闪
                         var styleId = '__tv_bg_antiflicker__';
                         if (!document.getElementById(styleId)) {
@@ -215,93 +210,29 @@ object PersistentWebViewPool {
                         // 模拟 PC 平台标头，但保留真实触屏支持，确保周期切换按钮与下拉菜单流畅交互
                         if (window.navigator) {
                             try {
-                                if (!window.__navigator_overridden__) {
-                                    Object.defineProperty(navigator, 'userAgentData', {
-                                        get: function() {
-                                            return {
-                                                mobile: false,
-                                                platform: 'Windows',
-                                                brands: [
-                                                    { brand: 'Chromium', version: '128' },
-                                                    { brand: 'Google Chrome', version: '128' },
-                                                    { brand: 'Not;A=Brand', version: '24' }
-                                                ]
-                                            };
-                                        },
-                                        configurable: true
-                                    });
-                                    Object.defineProperty(navigator, 'platform', {
-                                        get: function() { return 'Win32'; },
-                                        configurable: true
-                                    });
-                                    window.__navigator_overridden__ = true;
-                                }
+                                Object.defineProperty(navigator, 'userAgentData', {
+                                    get: function() {
+                                        return {
+                                            mobile: false,
+                                            platform: 'Windows',
+                                            brands: [
+                                                { brand: 'Chromium', version: '128' },
+                                                { brand: 'Google Chrome', version: '128' },
+                                                { brand: 'Not;A=Brand', version: '24' }
+                                            ]
+                                        };
+                                    },
+                                    configurable: true
+                                });
+                                Object.defineProperty(navigator, 'platform', {
+                                    get: function() { return 'Win32'; },
+                                    configurable: true
+                                });
                             } catch(e) {}
                         }
                     } catch(e) {}
                 }
 
-                // 核心加固 A：监听 head 节点变更，防止 TradingView 异步脚本重置或删除我们的 viewport
-                try {
-                    if (!window.__viewport_observer__) {
-                        var observer = new MutationObserver(function(mutations) {
-                            var hasExternalChange = false;
-                            for (var i = 0; i < mutations.length; i++) {
-                                var m = mutations[i];
-                                if (m.target.nodeName === 'META' && m.target.getAttribute('name') === 'viewport') {
-                                    if (m.target.getAttribute('content') !== targetContent) {
-                                        hasExternalChange = true;
-                                    }
-                                } else if (m.addedNodes) {
-                                    for (var j = 0; j < m.addedNodes.length; j++) {
-                                        if (m.addedNodes[j].nodeName === 'META' && m.addedNodes[j].getAttribute('name') === 'viewport') {
-                                            hasExternalChange = true;
-                                        }
-                                    }
-                                }
-                            }
-                            if (hasExternalChange) {
-                                applyDesktop();
-                            }
-                        });
-                        if (document.head) {
-                            observer.observe(document.head, { childList: true, subtree: true, attributes: true, attributeFilter: ['content'] });
-                            window.__viewport_observer__ = observer;
-                        }
-                    }
-                } catch(e) {}
-
-                // 核心加固 B：拦截 SPA 前端路由 (History API & hashChange)
-                try {
-                    if (!window.__spa_hooked__) {
-                        var origPush = history.pushState;
-                        if (origPush) {
-                            history.pushState = function() {
-                                origPush.apply(this, arguments);
-                                setTimeout(applyDesktop, 50);
-                                setTimeout(applyDesktop, 300);
-                            };
-                        }
-                        var origReplace = history.replaceState;
-                        if (origReplace) {
-                            history.replaceState = function() {
-                                origReplace.apply(this, arguments);
-                                setTimeout(applyDesktop, 50);
-                                setTimeout(applyDesktop, 300);
-                            };
-                        }
-                        window.addEventListener('popstate', function() {
-                            setTimeout(applyDesktop, 50);
-                            setTimeout(applyDesktop, 300);
-                        });
-                        window.addEventListener('hashchange', function() {
-                            setTimeout(applyDesktop, 50);
-                        });
-                        window.__spa_hooked__ = true;
-                    }
-                } catch(e) {}
-
-                // 执行首次或重绘注入
                 if (document.readyState === 'loading') {
                     document.addEventListener('DOMContentLoaded', applyDesktop, { once: true });
                 } else {
@@ -771,7 +702,7 @@ object PersistentWebViewPool {
                                     window.dispatchEvent(ku);
                                 }, 15);
                             } else if (action.indexOf('timeframe_') === 0) {
-                                // 统一一键切换 K 线周期，通过模拟高刷键盘输入触发 (同时派发至目标 Canvas、document 和 window 以实现对所有 TradingView 版本的 100% 触发兼容)
+                                // 统一一键切换 K 线周期，通过模拟高刷键盘输入触发
                                 var tfVal = action.substring(10);
                                 for (var k = 0; k < tfVal.length; k++) {
                                     var char = tfVal[k];
@@ -786,32 +717,15 @@ object PersistentWebViewPool {
                                         code = "Key" + upper;
                                     }
                                     var opts = { key: char, code: code, keyCode: keyCode, which: keyCode, bubbles: true, cancelable: true, composed: true };
-                                    
                                     target.dispatchEvent(new KeyboardEvent('keydown', opts));
                                     target.dispatchEvent(new KeyboardEvent('keypress', opts));
                                     target.dispatchEvent(new KeyboardEvent('keyup', opts));
-                                    
-                                    document.dispatchEvent(new KeyboardEvent('keydown', opts));
-                                    document.dispatchEvent(new KeyboardEvent('keypress', opts));
-                                    document.dispatchEvent(new KeyboardEvent('keyup', opts));
-                                    
-                                    window.dispatchEvent(new KeyboardEvent('keydown', opts));
-                                    window.dispatchEvent(new KeyboardEvent('keypress', opts));
-                                    window.dispatchEvent(new KeyboardEvent('keyup', opts));
                                 }
                                 // 随后发送 Enter 键确认切换周期
                                 var enterOpts = { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true, composed: true };
                                 target.dispatchEvent(new KeyboardEvent('keydown', enterOpts));
                                 target.dispatchEvent(new KeyboardEvent('keypress', enterOpts));
                                 target.dispatchEvent(new KeyboardEvent('keyup', enterOpts));
-                                
-                                document.dispatchEvent(new KeyboardEvent('keydown', enterOpts));
-                                document.dispatchEvent(new KeyboardEvent('keypress', enterOpts));
-                                document.dispatchEvent(new KeyboardEvent('keyup', enterOpts));
-                                
-                                window.dispatchEvent(new KeyboardEvent('keydown', enterOpts));
-                                window.dispatchEvent(new KeyboardEvent('keypress', enterOpts));
-                                window.dispatchEvent(new KeyboardEvent('keyup', enterOpts));
                             } else if (action.indexOf('invert') === 0) {
                                 // 翻转 K 线组合键为 alt + i
                                 var opts = { key: 'i', code: 'KeyI', keyCode: 73, which: 73, altKey: true, bubbles: true, cancelable: true, composed: true };
