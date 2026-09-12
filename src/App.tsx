@@ -366,8 +366,15 @@ export default function App() {
   };
 
   const handleTriggerToggleMagnet = () => {
-    setIsMagnetActive((prev) => !prev);
-    setActionToast(!isMagnetActive ? '已向 3 个窗口开启磁力吸附' : '已向 3 个窗口关闭磁力吸附');
+    const nextVal = !isMagnetActive;
+    setIsMagnetActive(nextVal);
+    setWindows((prev) =>
+      prev.map((win) => ({
+        ...win,
+        isMagnetActive: nextVal,
+      }))
+    );
+    setActionToast(nextVal ? '已同步向全部 3 个窗口开启磁力吸附' : '已同步向全部 3 个窗口关闭磁力吸附');
     setTimeout(() => setActionToast(null), 2500);
   };
 
@@ -384,6 +391,31 @@ export default function App() {
   const handleTriggerInvert8Charts = () => {
     setActionToast('已同步向 3 个窗口触发: 8图布局依次翻转 K 线 (Alt+I)');
     setTimeout(() => setActionToast(null), 3500);
+  };
+
+  // 单个窗口独立控制触发 (方案 C 独享)
+  const handleSingleTriggerHideDrawings = (id: number) => {
+    setActionToast(`已向 窗口 ${id} 单独触发: 隐藏/显示画线 (Ctrl+Alt+H)`);
+    setTimeout(() => setActionToast(null), 2500);
+  };
+
+  const handleSingleTriggerToggleMagnet = (id: number) => {
+    setWindows((prev) =>
+      prev.map((win) => {
+        if (win.id === id) {
+          const nextActive = !win.isMagnetActive;
+          setActionToast(`已向 窗口 ${id} 单独${nextActive ? '开启' : '关闭'}磁力吸附`);
+          setTimeout(() => setActionToast(null), 2500);
+          return { ...win, isMagnetActive: nextActive };
+        }
+        return win;
+      })
+    );
+  };
+
+  const handleSingleTriggerInvert = (id: number) => {
+    setActionToast(`已向 窗口 ${id} 单独触发: 翻转 K 线 (Alt+I)`);
+    setTimeout(() => setActionToast(null), 2500);
   };
 
   // 方式1：就地重命名分组名称 (支持双击或点击重命名图标，回车或失焦确认保存)
@@ -925,32 +957,32 @@ export default function App() {
                         <div className="flex items-center gap-2">
                           <span className="text-[10px] font-mono text-slate-500 bg-[#0c101b] px-1.5 py-0.5 rounded border border-slate-800">{w.symbol}</span>
                           <div className="flex items-center gap-1 bg-[#090d16] border border-slate-800 rounded px-1 py-0.5 shrink-0">
-                            {/* 1. 隐藏画线 (Ctrl+Alt+H) */}
+                            {/* 1. 隐藏画线 (Ctrl+Alt+H) - 独立控制 */}
                             <button
                               type="button"
-                              onClick={handleTriggerHideDrawings}
+                              onClick={() => handleSingleTriggerHideDrawings(w.id)}
                               className="text-sky-400 hover:text-sky-300 p-1 rounded hover:bg-slate-800 transition-colors"
                               title="隐藏/恢复画线 (Ctrl+Alt+H)"
                             >
                               <EyeOff className="w-3.5 h-3.5" />
                             </button>
 
-                            {/* 2. 磁力吸附 (Ctrl) */}
+                            {/* 2. 磁力吸附 (Ctrl) - 独立控制 */}
                             <button
                               type="button"
-                              onClick={handleTriggerToggleMagnet}
+                              onClick={() => handleSingleTriggerToggleMagnet(w.id)}
                               className={`${
-                                isMagnetActive ? 'text-rose-400' : 'text-slate-400 hover:text-slate-300'
+                                w.isMagnetActive ? 'text-rose-400 font-bold' : 'text-slate-400 hover:text-slate-300'
                               } p-1 rounded hover:bg-slate-800 transition-colors`}
                               title="磁力吸附切换 (Ctrl)"
                             >
                               <Magnet className="w-3.5 h-3.5" />
                             </button>
 
-                            {/* 3. 翻转K线 (Alt+I) */}
+                            {/* 3. 翻转K线 (Alt+I) - 独立控制 */}
                             <button
                               type="button"
-                              onClick={handleTriggerInvert4Charts}
+                              onClick={() => handleSingleTriggerInvert(w.id)}
                               className="text-emerald-400 hover:text-emerald-300 p-1 rounded hover:bg-slate-800 transition-colors"
                               title="翻转K线 (Alt+I)"
                             >

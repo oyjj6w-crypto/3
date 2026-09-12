@@ -70,7 +70,8 @@ data class WindowState(
     val isMaximized: Boolean = false,
     val isDesktopMode: Boolean = true, // 默认开启桌面模式，User-Agent 为 PC Chrome
     val zoomPercent: Int = 100, // 网页缩放比例 (50% ~ 200%)
-    val isUrlCollapsed: Boolean = false // 是否折叠网址输入框以放入更多按钮
+    val isUrlCollapsed: Boolean = false, // 是否折叠网址输入框以放入更多按钮
+    val isMagnetActive: Boolean = false // 单独磁力吸附切换状态 (方案 C 独享)
 )
 
 fun createInitialWindows(): List<WindowState> {
@@ -785,7 +786,7 @@ class TradingViewModel : ViewModel() {
     fun triggerHideDrawings(context: Context? = null) {
         PersistentWebViewPool.dispatchTradingViewAction("hide")
         context?.let {
-            android.widget.Toast.makeText(it, "已同步向全部窗口触发: 隐藏/显示画线 (Ctrl+Alt+H)", android.widget.Toast.LENGTH_SHORT).show()
+            android.widget.Toast.makeText(it, "已同步向全部 3 个窗口触发: 隐藏/显示画线 (Ctrl+Alt+H)", android.widget.Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -794,10 +795,15 @@ class TradingViewModel : ViewModel() {
      */
     fun triggerToggleMagnet(context: Context? = null) {
         val nextActive = !_uiState.value.isMagnetActive
-        _uiState.update { it.copy(isMagnetActive = nextActive) }
+        _uiState.update { state ->
+            state.copy(
+                isMagnetActive = nextActive,
+                windows = state.windows.map { it.copy(isMagnetActive = nextActive) }
+            )
+        }
         PersistentWebViewPool.dispatchTradingViewAction("magnet")
         context?.let {
-            val text = if (nextActive) "已向全部窗口开启磁力吸附" else "已向全部窗口关闭磁力吸附"
+            val text = if (nextActive) "已同步向全部 3 个窗口开启磁力吸附" else "已同步向全部 3 个窗口关闭磁力吸附"
             android.widget.Toast.makeText(it, text, android.widget.Toast.LENGTH_SHORT).show()
         }
     }
@@ -808,7 +814,7 @@ class TradingViewModel : ViewModel() {
     fun triggerInvertChart(context: Context? = null) {
         PersistentWebViewPool.dispatchTradingViewAction("invert")
         context?.let {
-            android.widget.Toast.makeText(it, "已同步向全部窗口触发: 翻转K线图 (Alt+I)", android.widget.Toast.LENGTH_SHORT).show()
+            android.widget.Toast.makeText(it, "已同步向全部 3 个窗口触发: 翻转K线图 (Alt+I)", android.widget.Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -829,6 +835,42 @@ class TradingViewModel : ViewModel() {
         PersistentWebViewPool.dispatchTradingViewAction("invert8")
         context?.let {
             android.widget.Toast.makeText(it, "已同步触发 8 图布局依次翻转 K 线 (Alt+I)", android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /**
+     * 单个视窗独立控制 (方案 C 独享)
+     */
+    fun triggerSingleHideDrawings(windowId: Int, context: Context? = null) {
+        PersistentWebViewPool.dispatchSingleTradingViewAction(windowId, "hide")
+        context?.let {
+            android.widget.Toast.makeText(it, "已向窗口 $windowId 单独触发: 隐藏/显示画线 (Ctrl+Alt+H)", android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    fun triggerSingleToggleMagnet(windowId: Int, context: Context? = null) {
+        var isCurrentlyActive = false
+        _uiState.update { state ->
+            state.copy(
+                windows = state.windows.map { win ->
+                    if (win.id == windowId) {
+                        isCurrentlyActive = !win.isMagnetActive
+                        win.copy(isMagnetActive = isCurrentlyActive)
+                    } else win
+                }
+            )
+        }
+        PersistentWebViewPool.dispatchSingleTradingViewAction(windowId, "magnet")
+        context?.let {
+            val text = if (isCurrentlyActive) "已向窗口 $windowId 单独开启磁力吸附" else "已向窗口 $windowId 单独关闭磁力吸附"
+            android.widget.Toast.makeText(it, text, android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    fun triggerSingleInvert(windowId: Int, context: Context? = null) {
+        PersistentWebViewPool.dispatchSingleTradingViewAction(windowId, "invert")
+        context?.let {
+            android.widget.Toast.makeText(it, "已向窗口 $windowId 单独触发: 翻转 K 线 (Alt+I)", android.widget.Toast.LENGTH_SHORT).show()
         }
     }
 }

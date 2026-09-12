@@ -546,6 +546,19 @@ object PersistentWebViewPool {
         }
     }
 
+    /**
+     * 向指定 1 个视窗派发 TradingView 快捷功能 (方案 C 独立控制)
+     * @param windowId 目标窗口 ID (1, 2, 3)
+     * @param action "hide" (隐藏画线), "invert" (翻转K线), "magnet" (磁力吸附)
+     */
+    fun dispatchSingleTradingViewAction(windowId: Int, action: String) {
+        val webView = webViewMap[windowId]
+        if (webView != null) {
+            val script = buildActionExecutionScript(action)
+            webView.evaluateJavascript(script, null)
+        }
+    }
+
     private fun buildActionExecutionScript(action: String): String {
         return """
             (function() {

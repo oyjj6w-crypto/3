@@ -467,34 +467,34 @@ fun TradingMultiViewScreen(
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                                     ) {
-                                        // 隐藏/显示画图快捷键图标 (Ctrl+Alt+H)
+                                        // 隐藏/显示画图快捷键图标 (Ctrl+Alt+H) - 独立控制
                                         Icon(
                                             imageVector = Icons.Default.VisibilityOff,
                                             contentDescription = "隐藏画图 (Ctrl+Alt+H)",
                                             tint = Color(0xFF38BDF8),
                                             modifier = Modifier
                                                 .size(13.dp)
-                                                .clickable { viewModel.triggerHideDrawings(context) }
+                                                .clickable { viewModel.triggerSingleHideDrawings(win.id, context) }
                                         )
 
-                                        // 磁吸快捷键图标 (Ctrl)
+                                        // 磁吸快捷键图标 (Ctrl) - 独立控制
                                         Icon(
                                             imageVector = Icons.Default.CenterFocusStrong,
                                             contentDescription = "磁力吸附切换 (Ctrl)",
-                                            tint = if (uiState.isMagnetActive) Color(0xFFFB7185) else Color(0xFFCBD5E1),
+                                            tint = if (win.isMagnetActive) Color(0xFFFB7185) else Color(0xFFCBD5E1),
                                             modifier = Modifier
                                                 .size(13.dp)
-                                                .clickable { viewModel.triggerToggleMagnet(context) }
+                                                .clickable { viewModel.triggerSingleToggleMagnet(win.id, context) }
                                         )
 
-                                        // 翻转K线快捷键图标 (Alt+I)
+                                        // 翻转K线快捷键图标 (Alt+I) - 独立控制
                                         Icon(
                                             imageVector = Icons.Default.SwapVert,
                                             contentDescription = "翻转 K 线 (Alt+I)",
                                             tint = Color(0xFF34D399),
                                             modifier = Modifier
                                                 .size(13.dp)
-                                                .clickable { viewModel.triggerInvert4Charts(context) }
+                                                .clickable { viewModel.triggerSingleInvert(win.id, context) }
                                         )
 
                                         // 窗口单独刷新
