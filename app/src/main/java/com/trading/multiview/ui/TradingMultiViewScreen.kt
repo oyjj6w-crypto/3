@@ -458,6 +458,28 @@ fun TradingMultiViewScreen(
                             fontFamily = FontFamily.Monospace
                         )
                     }
+
+                    // 5. 网址配置按钮 (从右侧控制区移至此处，尺寸调整为 24.dp 以保持动作组高度一致)
+                    Box(
+                        modifier = Modifier
+                            .size(24.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(if (!uiState.isGlobalUrlCollapsed) Color(0xFF075985) else Color(0xFF1E293B).copy(alpha = 0.7f))
+                            .border(
+                                width = if (!uiState.isGlobalUrlCollapsed) 1.dp else 0.dp,
+                                color = if (!uiState.isGlobalUrlCollapsed) Color(0xFF38BDF8) else Color.Transparent,
+                                shape = RoundedCornerShape(4.dp)
+                            )
+                            .clickable { viewModel.toggleUrlBarCollapse(null) },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = if (!uiState.isGlobalUrlCollapsed) Icons.Default.ExpandLess else Icons.Default.Settings,
+                            contentDescription = "配置网址",
+                            tint = if (!uiState.isGlobalUrlCollapsed) Color.White else Color(0xFF38BDF8),
+                            modifier = Modifier.size(13.dp)
+                        )
+                    }
                 }
 
                 Spacer(modifier = Modifier.width(6.dp))
@@ -500,28 +522,6 @@ fun TradingMultiViewScreen(
                             imageVector = Icons.Default.Refresh,
                             contentDescription = "全局刷新",
                             tint = Color(0xFF38BDF8),
-                            modifier = Modifier.size(15.dp)
-                        )
-                    }
-
-                    // 网址配置抽屉开关按钮：标准 30dp x 30dp 方形，圆角 6dp，与旁边按钮严格一致
-                    Box(
-                        modifier = Modifier
-                            .size(30.dp)
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(if (!uiState.isGlobalUrlCollapsed) Color(0xFF075985) else Color(0xFF1E293B))
-                            .border(
-                                1.dp,
-                                if (!uiState.isGlobalUrlCollapsed) Color(0xFF38BDF8) else Color(0xFF334155),
-                                RoundedCornerShape(6.dp)
-                            )
-                            .clickable { viewModel.toggleUrlBarCollapse(null) },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = if (!uiState.isGlobalUrlCollapsed) Icons.Default.ExpandLess else Icons.Default.Settings,
-                            contentDescription = "配置网址",
-                            tint = if (!uiState.isGlobalUrlCollapsed) Color.White else Color(0xFFCBD5E1),
                             modifier = Modifier.size(15.dp)
                         )
                     }

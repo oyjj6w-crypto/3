@@ -980,13 +980,27 @@ export default function App() {
                   type="button"
                   onClick={handleTriggerInvert8Charts}
                   className="w-7 h-7 flex items-center justify-center rounded bg-slate-800/80 hover:bg-slate-700 text-teal-400 hover:text-teal-300 transition-colors cursor-pointer font-mono font-bold text-xs"
-                  title="全部 3 窗口同步触发：8图双排布局，依次激活并翻转 K 线 (Alt+I)"
+                  title="全部 3 窗口同步触发：8图双排布局，依次激活并翻转 K线 (Alt+I)"
                 >
                   8
                 </button>
+
+                {/* 5. 网址配置按钮 (移动至翻转 K 线 4 和 8 按钮的后面，保持 w-7 h-7 的动作组标准尺寸) */}
+                <button
+                  type="button"
+                  onClick={() => setShowAddressConfigPanel((prev) => !prev)}
+                  className={`w-7 h-7 flex items-center justify-center rounded transition-colors cursor-pointer ${
+                    showAddressConfigPanel
+                      ? 'bg-sky-900 text-white'
+                      : 'bg-slate-800/80 hover:bg-slate-700 text-sky-400 hover:text-sky-300'
+                  }`}
+                  title={showAddressConfigPanel ? '收起 3 窗口网址配置面板' : '展开 3 窗口统一网址配置面板'}
+                >
+                  <SlidersHorizontal className="w-3.5 h-3.5" />
+                </button>
               </div>
 
-              {/* 右侧：全局一键刷新(仅图标) + 3窗口详细网址面板折叠(仅图标)，全部 30px 高度齐平 */}
+              {/* 右侧：全局一键刷新(仅图标)，全部 30px 高度齐平 */}
               <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
                 {/* 全局一键刷新按钮：高度 30px x 30px，与左侧保持严格一致 */}
                 <button
@@ -996,20 +1010,6 @@ export default function App() {
                   title="全局刷新全部 3 个视窗"
                 >
                   <RefreshCw className="w-3.5 h-3.5 text-sky-400" />
-                </button>
-
-                {/* 网址配置开关：标准 30px x 30px 方形，高度齐平 */}
-                <button
-                  type="button"
-                  onClick={() => setShowAddressConfigPanel((prev) => !prev)}
-                  className={`w-[30px] h-[30px] flex items-center justify-center rounded-md border transition-colors cursor-pointer ${
-                    showAddressConfigPanel
-                      ? 'bg-sky-950/90 border-sky-500 text-sky-300 shadow-sm'
-                      : 'bg-slate-900/80 border-slate-700/80 text-slate-300 hover:bg-slate-800 hover:text-white'
-                  }`}
-                  title={showAddressConfigPanel ? '收起 3 窗口地址配置面板' : '展开 3 窗口统一地址配置面板'}
-                >
-                  <SlidersHorizontal className="w-3.5 h-3.5 text-sky-400" />
                 </button>
 
                 {/* 屏幕旋转按钮：标准 30px x 30px 方形，高度齐平，支持在模拟平板中一键横/竖屏切换 */}
