@@ -71,7 +71,8 @@ data class WindowState(
     val isDesktopMode: Boolean = true, // 默认开启桌面模式，User-Agent 为 PC Chrome
     val zoomPercent: Int = 100, // 网页缩放比例 (50% ~ 200%)
     val isUrlCollapsed: Boolean = false, // 是否折叠网址输入框以放入更多按钮
-    val isMagnetActive: Boolean = false // 单独磁力吸附切换状态 (方案 C 独享)
+    val isMagnetActive: Boolean = false, // 单独磁力吸附切换状态 (方案 C 独享)
+    val timeframe: String = "15m"
 )
 
 fun createInitialWindows(): List<WindowState> {
