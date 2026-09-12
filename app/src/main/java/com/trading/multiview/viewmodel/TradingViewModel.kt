@@ -779,13 +779,13 @@ class TradingViewModel : ViewModel() {
     }
 
     /**
-     * 全部视窗同步：隐藏/显示画线 (Alt+H)
+     * 全部视窗同步：隐藏/显示画线 (Ctrl+Alt+H)
      * 先模拟物理点击依次激活每个视窗，再派发快捷键
      */
     fun triggerHideDrawings(context: Context? = null) {
         PersistentWebViewPool.dispatchTradingViewAction("hide")
         context?.let {
-            android.widget.Toast.makeText(it, "已同步向全部窗口触发: 隐藏/显示画线 (Alt+H)", android.widget.Toast.LENGTH_SHORT).show()
+            android.widget.Toast.makeText(it, "已同步向全部窗口触发: 隐藏/显示画线 (Ctrl+Alt+H)", android.widget.Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -803,12 +803,32 @@ class TradingViewModel : ViewModel() {
     }
 
     /**
-     * 全部视窗同步：翻转K线图 (Alt+I)
+     * 全部视窗同步：翻转K线图 - 单图/默认
      */
     fun triggerInvertChart(context: Context? = null) {
         PersistentWebViewPool.dispatchTradingViewAction("invert")
         context?.let {
             android.widget.Toast.makeText(it, "已同步向全部窗口触发: 翻转K线图 (Alt+I)", android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /**
+     * 全部视窗同步：4图布局翻转 K 线图 (纵向 4 图依次激活并翻转)
+     */
+    fun triggerInvert4Charts(context: Context? = null) {
+        PersistentWebViewPool.dispatchTradingViewAction("invert4")
+        context?.let {
+            android.widget.Toast.makeText(it, "已同步触发 4 图布局依次翻转 K 线 (Alt+I)", android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /**
+     * 全部视窗同步：8图布局翻转 K 线图 (双排 8 图依次激活并翻转)
+     */
+    fun triggerInvert8Charts(context: Context? = null) {
+        PersistentWebViewPool.dispatchTradingViewAction("invert8")
+        context?.let {
+            android.widget.Toast.makeText(it, "已同步触发 8 图布局依次翻转 K 线 (Alt+I)", android.widget.Toast.LENGTH_SHORT).show()
         }
     }
 }

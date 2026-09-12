@@ -354,7 +354,7 @@ export default function App() {
 
   // 模拟油猴插件快捷键同步向 3 视窗派发：先模拟激活视窗，再派发对应快捷键
   const handleTriggerHideDrawings = () => {
-    setActionToast('已同步向 3 个窗口触发: 隐藏/显示画线 (Alt+H)');
+    setActionToast('已同步向 3 个窗口触发: 隐藏/显示画线 (Ctrl+Alt+H)');
     setTimeout(() => setActionToast(null), 2500);
   };
 
@@ -367,6 +367,16 @@ export default function App() {
   const handleTriggerInvertChart = () => {
     setActionToast('已同步向 3 个窗口触发: 翻转 K 线图 (Alt+I)');
     setTimeout(() => setActionToast(null), 2500);
+  };
+
+  const handleTriggerInvert4Charts = () => {
+    setActionToast('已同步向 3 个窗口触发: 4图布局依次翻转 K 线 (Alt+I)');
+    setTimeout(() => setActionToast(null), 3000);
+  };
+
+  const handleTriggerInvert8Charts = () => {
+    setActionToast('已同步向 3 个窗口触发: 8图布局依次翻转 K 线 (Alt+I)');
+    setTimeout(() => setActionToast(null), 3500);
   };
 
   // 方式1：就地重命名分组名称 (支持双击或点击重命名图标，回车或失焦确认保存)
@@ -786,13 +796,13 @@ export default function App() {
               </div>
 
               {/* ================= 油猴快捷 3 视窗动作组 (隐藏画线 · 磁力吸附 · 翻转K线) ================= */}
-              <div className="flex items-center gap-1 bg-[#101827] border border-blue-600/40 rounded-md p-0.5 shrink-0">
-                {/* 1. 隐藏/恢复画线 (Alt+H) */}
+              <div className="flex items-center gap-1.5 bg-[#101827] border border-blue-600/40 rounded-md p-1 shrink-0">
+                {/* 1. 隐藏/恢复画线 (Ctrl+Alt+H) */}
                 <button
                   type="button"
                   onClick={handleTriggerHideDrawings}
-                  className="w-6 h-6 flex items-center justify-center rounded bg-slate-800/80 hover:bg-slate-700 text-sky-400 hover:text-sky-300 transition-colors cursor-pointer"
-                  title="全部 3 窗口同步触发：隐藏/恢复画线 (Alt+H)"
+                  className="w-7 h-7 flex items-center justify-center rounded bg-slate-800/80 hover:bg-slate-700 text-sky-400 hover:text-sky-300 transition-colors cursor-pointer"
+                  title="全部 3 窗口同步触发：隐藏/恢复画线 (Ctrl+Alt+H)"
                 >
                   <EyeOff className="w-3.5 h-3.5" />
                 </button>
@@ -801,7 +811,7 @@ export default function App() {
                 <button
                   type="button"
                   onClick={handleTriggerToggleMagnet}
-                  className={`w-6 h-6 flex items-center justify-center rounded transition-colors cursor-pointer ${
+                  className={`w-7 h-7 flex items-center justify-center rounded transition-colors cursor-pointer ${
                     isMagnetActive
                       ? 'bg-rose-950 border border-rose-500 text-rose-300'
                       : 'bg-slate-800/80 hover:bg-slate-700 text-slate-300'
@@ -811,14 +821,26 @@ export default function App() {
                   <Magnet className="w-3.5 h-3.5" />
                 </button>
 
-                {/* 3. 翻转K线 (Alt+I) */}
+                {/* 3. 4图布局依次翻转K线 (Alt+I) */}
                 <button
                   type="button"
-                  onClick={handleTriggerInvertChart}
-                  className="w-6 h-6 flex items-center justify-center rounded bg-slate-800/80 hover:bg-slate-700 text-emerald-400 hover:text-emerald-300 transition-colors cursor-pointer"
-                  title="全部 3 窗口同步触发：翻转K线图 (Alt+I)"
+                  onClick={handleTriggerInvert4Charts}
+                  className="h-7 px-1.5 flex items-center gap-1 rounded bg-slate-800/80 hover:bg-slate-700 text-emerald-400 hover:text-emerald-300 transition-colors cursor-pointer font-mono"
+                  title="全部 3 窗口同步触发：4图纵向布局，依次激活并翻转 K 线 (Alt+I)"
                 >
                   <ArrowUpDown className="w-3.5 h-3.5" />
+                  <span className="text-[10px] font-bold">4图</span>
+                </button>
+
+                {/* 4. 8图布局依次翻转K线 (Alt+I) */}
+                <button
+                  type="button"
+                  onClick={handleTriggerInvert8Charts}
+                  className="h-7 px-1.5 flex items-center gap-1 rounded bg-slate-800/80 hover:bg-slate-700 text-teal-400 hover:text-teal-300 transition-colors cursor-pointer font-mono"
+                  title="全部 3 窗口同步触发：8图双排布局，依次激活并翻转 K 线 (Alt+I)"
+                >
+                  <ArrowUpDown className="w-3.5 h-3.5" />
+                  <span className="text-[10px] font-bold">8图</span>
                 </button>
               </div>
 

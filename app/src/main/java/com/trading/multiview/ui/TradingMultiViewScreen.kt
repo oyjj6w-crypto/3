@@ -247,7 +247,7 @@ fun TradingMultiViewScreen(
                         .padding(horizontal = 3.dp),
                     horizontalArrangement = Arrangement.spacedBy(3.dp)
                 ) {
-                    // 1. 隐藏/恢复画线 (Alt+H)
+                    // 1. 隐藏/恢复画线 (Ctrl+Alt+H)
                     Box(
                         modifier = Modifier
                             .size(24.dp)
@@ -258,7 +258,7 @@ fun TradingMultiViewScreen(
                     ) {
                         Icon(
                             imageVector = Icons.Default.VisibilityOff,
-                            contentDescription = "同步向全部窗口触发: 隐藏/恢复画线 (Alt+H)",
+                            contentDescription = "同步向全部窗口触发: 隐藏/恢复画线 (Ctrl+Alt+H)",
                             tint = Color(0xFF38BDF8),
                             modifier = Modifier.size(15.dp)
                         )
@@ -290,21 +290,64 @@ fun TradingMultiViewScreen(
                         )
                     }
 
-                    // 3. 翻转K线图 (Alt+I)
+                    // 3. 4图翻转 K线 (Alt+I)
                     Box(
                         modifier = Modifier
-                            .size(24.dp)
+                            .height(24.dp)
+                            .padding(horizontal = 2.dp)
                             .clip(RoundedCornerShape(4.dp))
                             .background(Color(0xFF1E293B).copy(alpha = 0.7f))
-                            .clickable { viewModel.triggerInvertChart(context) },
+                            .clickable { viewModel.triggerInvert4Charts(context) },
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.SwapVert,
-                            contentDescription = "同步向全部窗口触发: 翻转K线 (Alt+I)",
-                            tint = Color(0xFF34D399),
-                            modifier = Modifier.size(15.dp)
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(1.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.SwapVert,
+                                contentDescription = "4图布局翻转 K线 (Alt+I)",
+                                tint = Color(0xFF34D399),
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Text(
+                                text = "4图",
+                                color = Color(0xFF34D399),
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+
+                    // 4. 8图翻转 K线 (Alt+I)
+                    Box(
+                        modifier = Modifier
+                            .height(24.dp)
+                            .padding(horizontal = 2.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(Color(0xFF1E293B).copy(alpha = 0.7f))
+                            .clickable { viewModel.triggerInvert8Charts(context) },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(1.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.SwapVert,
+                                contentDescription = "8图布局翻转 K线 (Alt+I)",
+                                tint = Color(0xFF10B981),
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Text(
+                                text = "8图",
+                                color = Color(0xFF10B981),
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     }
                 }
 
