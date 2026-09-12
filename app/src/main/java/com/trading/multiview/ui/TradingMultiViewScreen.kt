@@ -741,6 +741,7 @@ fun TradingMultiViewScreen(
                 }
             }
         }
+    }
 
     if (showSaveDialog) {
         SaveGroupDialog(
