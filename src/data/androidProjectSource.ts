@@ -2775,7 +2775,7 @@ fun SingleTradingWindowView(
                 
                 // 当 View 完成排版测量拥有实际像素尺寸后，注入基于实际物理宽度的黄金桌面自适应缩放
                 webView.post {
-                    PersistentWebViewPool.injectDesktopViewport(webView, zoomPercent)
+                    PersistentWebViewPool.injectDesktopViewport(webView, zoomPercent = zoomPercent)
                 }
 
                 webView
@@ -2784,7 +2784,7 @@ fun SingleTradingWindowView(
                 // 当 Compose 状态发生变化（例如窗口在最大化/还原、显示/隐藏发生重组，或缩放比例变化时），
                 // 强制触发一次自适应缩放注入，确保完美满屏自适应，杜绝手动双指缩放
                 webView.post {
-                    PersistentWebViewPool.injectDesktopViewport(webView, zoomPercent, force = true)
+                    PersistentWebViewPool.injectDesktopViewport(webView, zoomPercent = zoomPercent, force = true)
                 }
             },
             modifier = Modifier.fillMaxSize()
