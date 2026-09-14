@@ -55,6 +55,8 @@ import androidx.compose.ui.text.style.TextAlign
 import com.trading.multiview.viewmodel.TradingViewModel
 import com.trading.multiview.viewmodel.WindowState
 import com.trading.multiview.webview.PersistentWebViewPool
+import com.trading.multiview.vpn.ClashProxyNode
+import com.trading.multiview.vpn.ClashManager
 import android.app.Activity
 import android.content.pm.ActivityInfo
 import android.content.ContextWrapper
