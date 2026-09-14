@@ -1058,7 +1058,7 @@ fun ClashVpnDialog(
                                         onClick = { onUpdateSubscription(inputUrl) },
                                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB)),
                                         modifier = Modifier.height(34.dp),
-                                        contentPadding = PaddingValues(horizontal = 10.dp),
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                                         shape = RoundedCornerShape(4.dp),
                                         enabled = !isDownloadingSub
                                     ) {
