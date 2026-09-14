@@ -27,6 +27,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
@@ -45,6 +46,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.Dialog
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.text.style.TextAlign
 import com.trading.multiview.viewmodel.TradingViewModel
 import com.trading.multiview.viewmodel.WindowState
@@ -74,6 +80,19 @@ fun TradingMultiViewScreen(
     val focusManager = LocalFocusManager.current
     var showSaveDialog by remember { mutableStateOf(false) }
     var showTimeframeDropdown by remember { mutableStateOf(false) }
+    var showVpnDialog by remember { mutableStateOf(false) }
+
+    // Collect Clash VPN 状态流
+    val vpnIsConnected by viewModel.vpnIsConnected.collectAsState()
+    val vpnUploadSpeed by viewModel.vpnUploadSpeed.collectAsState()
+    val vpnDownloadSpeed by viewModel.vpnDownloadSpeed.collectAsState()
+    val vpnActiveNode by viewModel.vpnActiveNode.collectAsState()
+    val vpnNodes by viewModel.vpnNodes.collectAsState()
+    val vpnIsAutoSwitchEnabled by viewModel.vpnIsAutoSwitchEnabled.collectAsState()
+    val vpnIsCheckingHealth by viewModel.vpnIsCheckingHealth.collectAsState()
+    val vpnLogs by viewModel.vpnLogs.collectAsState()
+    val vpnSubscriptionUrl by viewModel.vpnSubscriptionUrl.collectAsState()
+    val vpnIsDownloadingSub by viewModel.vpnIsDownloadingSub.collectAsState()
 
     // 初始化时加载本地存储的自定义分组
     LaunchedEffect(Unit) {
@@ -471,6 +490,54 @@ fun TradingMultiViewScreen(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
+                    // Clash VPN 运行与网速状态胶囊 (Green connected / Orange disconnected)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .height(30.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(if (vpnIsConnected) Color(0xFF064E3B) else Color(0xFF451A03))
+                            .border(
+                                1.dp,
+                                if (vpnIsConnected) Color(0xFF10B981) else Color(0xFFF97316),
+                                RoundedCornerShape(6.dp)
+                            )
+                            .clickable { showVpnDialog = true }
+                            .padding(horizontal = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        // 呼吸点
+                        Box(
+                            modifier = Modifier
+                                .size(6.dp)
+                                .clip(CircleShape)
+                                .background(if (vpnIsConnected) Color(0xFF10B981) else Color(0xFFF97316))
+                        )
+                        Text(
+                            text = "VPN: $vpnActiveNode",
+                            color = Color.White,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.widthIn(max = 100.dp)
+                        )
+                        if (vpnIsConnected) {
+                            val speedText = if (vpnDownloadSpeed >= 1024 * 1024) {
+                                "${vpnDownloadSpeed / (1024 * 1024)} MB/s"
+                            } else {
+                                "${vpnDownloadSpeed / 1024} KB/s"
+                            }
+                            Text(
+                                text = "↓ $speedText",
+                                color = Color(0xFF6EE7B7),
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Medium,
+                                fontFamily = FontFamily.Monospace
+                            )
+                        }
+                    }
+
                     // 顶部栏固定像素快捷胶囊：仅电脑图标，点击在 960 / 1280 / 1440 / 1920 循环切换
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
@@ -749,6 +816,372 @@ fun TradingMultiViewScreen(
                 showSaveDialog = false
             }
         )
+    }
+
+    if (showVpnDialog) {
+        ClashVpnDialog(
+            isConnected = vpnIsConnected,
+            uploadSpeed = vpnUploadSpeed,
+            downloadSpeed = vpnDownloadSpeed,
+            activeNode = vpnActiveNode,
+            nodes = vpnNodes,
+            isAutoSwitchEnabled = vpnIsAutoSwitchEnabled,
+            isCheckingHealth = vpnIsCheckingHealth,
+            logs = vpnLogs,
+            subscriptionUrl = vpnSubscriptionUrl,
+            isDownloadingSub = vpnIsDownloadingSub,
+            onDismiss = { showVpnDialog = false },
+            onToggleVpn = { viewModel.toggleVpn(context) },
+            onToggleAutoSwitch = { viewModel.toggleVpnAutoSwitch(it) },
+            onSelectNode = { viewModel.selectVpnNode(it) },
+            onCheckHealthNow = { viewModel.checkVpnHealthNow(context) },
+            onUpdateSubscription = { url ->
+                viewModel.updateVpnSubscriptionUrl(context, url) { success ->
+                    if (success) {
+                        viewModel.triggerVpnAutoSwitch()
+                    }
+                }
+            }
+        )
+    }
+}
+
+/**
+ * Clash Meta VPN 控制面板对话框
+ */
+@Composable
+fun ClashVpnDialog(
+    isConnected: Boolean,
+    uploadSpeed: Long,
+    downloadSpeed: Long,
+    activeNode: String,
+    nodes: List<ClashProxyNode>,
+    isAutoSwitchEnabled: Boolean,
+    isCheckingHealth: Boolean,
+    logs: String,
+    subscriptionUrl: String,
+    isDownloadingSub: Boolean,
+    onDismiss: () -> Unit,
+    onToggleVpn: () -> Unit,
+    onToggleAutoSwitch: (Boolean) -> Unit,
+    onSelectNode: (String) -> Unit,
+    onCheckHealthNow: () -> Unit,
+    onUpdateSubscription: (String) -> Unit
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth(0.95f)
+                .fillMaxHeight(0.85f),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A)),
+            border = BorderStroke(1.dp, Color(0xFF1E293B)),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(12.dp)
+            ) {
+                // Header
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.Security,
+                            contentDescription = null,
+                            tint = if (isConnected) Color(0xFF10B981) else Color(0xFFF97316),
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Clash Meta VPN 控制台",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                    }
+                    IconButton(
+                        onClick = onDismiss,
+                        modifier = Modifier.size(24.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "关闭",
+                            tint = Color(0xFF94A3B8),
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // Left & Right layout
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    // Left Column (Controls & Speeds & Logs)
+                    Column(
+                        modifier = Modifier
+                            .weight(1.2f)
+                            .fillMaxHeight(),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        // Core Control Box
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B).copy(alpha = 0.5f)),
+                            border = BorderStroke(0.5.dp, Color(0xFF334155))
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                // VPN Switch
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Column {
+                                        Text("VPN 网络网道", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                        Text(if (isConnected) "核心运行中 (TUN模式)" else "未运行", color = Color(0xFF94A3B8), fontSize = 9.sp)
+                                    }
+                                    Switch(
+                                        checked = isConnected,
+                                        onCheckedChange = { onToggleVpn() },
+                                        modifier = Modifier.scale(0.75f)
+                                    )
+                                }
+
+                                // Auto-Switch Switch
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Column {
+                                        Text("故障自动切节点", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                        Text("检测当前网络卡死自动切换最快节点", color = Color(0xFF94A3B8), fontSize = 9.sp)
+                                    }
+                                    Switch(
+                                        checked = isAutoSwitchEnabled,
+                                        onCheckedChange = { onToggleAutoSwitch(it) },
+                                        modifier = Modifier.scale(0.75f)
+                                    )
+                                }
+
+                                // Health Check manual button
+                                Button(
+                                    onClick = onCheckHealthNow,
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = if (isCheckingHealth) Color(0xFF1E293B) else Color(0xFF2563EB)
+                                    ),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(28.dp),
+                                    contentPadding = PaddingValues(0.dp),
+                                    shape = RoundedCornerShape(4.dp),
+                                    enabled = !isCheckingHealth
+                                ) {
+                                    Text(
+                                        text = if (isCheckingHealth) "正在深度连通性检测..." else "🔍 立即触发深度健康检测",
+                                        color = Color.White,
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
+
+                        // Speeds Box
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B).copy(alpha = 0.5f)),
+                            border = BorderStroke(0.5.dp, Color(0xFF334155))
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(8.dp),
+                                horizontalArrangement = Arrangement.SpaceEvenly
+                            ) {
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Text("实时上行", color = Color(0xFF94A3B8), fontSize = 9.sp)
+                                    val upText = if (uploadSpeed >= 1024 * 1024) "${uploadSpeed / (1024 * 1024)} MB/s" else "${uploadSpeed / 1024} KB/s"
+                                    Text(upText, color = Color(0xFF34D399), fontSize = 12.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
+                                }
+                                Box(modifier = Modifier.width(1.dp).height(24.dp).background(Color(0xFF334155)))
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Text("实时下行", color = Color(0xFF94A3B8), fontSize = 9.sp)
+                                    val downText = if (downloadSpeed >= 1024 * 1024) "${downloadSpeed / (1024 * 1024)} MB/s" else "${downloadSpeed / 1024} KB/s"
+                                    Text(downText, color = Color(0xFF38BDF8), fontSize = 12.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
+                                }
+                            }
+                        }
+
+                        // Subscription Config Box
+                        var inputUrl by remember { mutableStateOf(subscriptionUrl) }
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B).copy(alpha = 0.5f)),
+                            border = BorderStroke(0.5.dp, Color(0xFF334155))
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Text("VPN 订阅链接 (Clash YAML / Base64)", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    OutlinedTextField(
+                                        value = inputUrl,
+                                        onValueChange = { inputUrl = it },
+                                        placeholder = { Text("粘贴自用 VPN 订阅链接", fontSize = 10.sp, color = Color(0xFF64748B)) },
+                                        singleLine = true,
+                                        textStyle = TextStyle(fontSize = 10.sp, color = Color.White),
+                                        modifier = Modifier.weight(1f).height(46.dp),
+                                        shape = RoundedCornerShape(4.dp)
+                                    )
+                                    Button(
+                                        onClick = { onUpdateSubscription(inputUrl) },
+                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB)),
+                                        modifier = Modifier.height(34.dp),
+                                        contentPadding = PaddingValues(horizontal = 10.dp),
+                                        shape = RoundedCornerShape(4.dp),
+                                        enabled = !isDownloadingSub
+                                    ) {
+                                        Text(
+                                            text = if (isDownloadingSub) "同步中" else "保存并拉取",
+                                            fontSize = 9.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color.White
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        // Terminal Logs Box (Black monospace console)
+                        Text("系统实时运行日志 (Clash Engine Console)", color = Color(0xFF94A3B8), fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f)
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(Color(0xFF020617))
+                                .border(0.5.dp, Color(0xFF334155), RoundedCornerShape(4.dp))
+                                .padding(6.dp)
+                        ) {
+                            val scrollState = rememberScrollState()
+                            LaunchedEffect(logs) {
+                                scrollState.scrollTo(scrollState.maxValue)
+                            }
+                            Text(
+                                text = logs,
+                                color = Color(0xFF34D399),
+                                fontSize = 8.sp,
+                                fontFamily = FontFamily.Monospace,
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .verticalScroll(scrollState)
+                            )
+                        }
+                    }
+
+                    // Right Column (Nodes Grid List)
+                    Column(
+                        modifier = Modifier
+                            .weight(1.5f)
+                            .fillMaxHeight()
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text("多区域极速代理节点列表", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            TextButton(
+                                onClick = { ClashManager.triggerAutoSwitchNode() },
+                                contentPadding = PaddingValues(0.dp)
+                            ) {
+                                Text("⚡ 重新测速", color = Color(0xFF38BDF8), fontSize = 10.sp)
+                            }
+                        }
+
+                        LazyVerticalGrid(
+                            columns = GridCells.Fixed(2),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.fillMaxSize()
+                        ) {
+                            items(nodes) { node ->
+                                val isSelected = node.name == activeNode
+                                Card(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable { onSelectNode(node.name) },
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = if (isSelected) Color(0xFF047857).copy(alpha = 0.35f) else Color(0xFF1E293B)
+                                    ),
+                                    border = BorderStroke(
+                                        0.5.dp,
+                                        if (isSelected) Color(0xFF10B981) else Color(0xFF334155)
+                                    )
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(6.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = node.name,
+                                                color = if (isSelected) Color.White else Color(0xFFCBD5E1),
+                                                fontSize = 9.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                            Text(
+                                                text = node.type,
+                                                color = Color(0xFF94A3B8),
+                                                fontSize = 8.sp
+                                            )
+                                        }
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        // Latency Text
+                                        Text(
+                                            text = if (node.delay < 0) "超时" else "${node.delay}ms",
+                                            color = when {
+                                                node.delay < 0 -> Color(0xFFEF4444)
+                                                node.delay < 80 -> Color(0xFF10B981)
+                                                node.delay < 150 -> Color(0xFFF59E0B)
+                                                else -> Color(0xFFEF4444)
+                                            },
+                                            fontSize = 8.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            fontFamily = FontFamily.Monospace
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 

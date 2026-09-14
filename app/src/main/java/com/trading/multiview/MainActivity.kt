@@ -18,6 +18,7 @@ import com.trading.multiview.ui.TradingMultiViewScreen
 import com.trading.multiview.ui.theme.TradingMultiViewTheme
 import com.trading.multiview.viewmodel.TradingViewModel
 import com.trading.multiview.webview.PersistentWebViewPool
+import com.trading.multiview.vpn.ClashManager
 
 class MainActivity : ComponentActivity() {
 
@@ -42,6 +43,11 @@ class MainActivity : ComponentActivity() {
         // 初始化常驻单例 WebView 池（与 Activity 实例解耦，绝不反复销毁）
         PersistentWebViewPool.init(applicationContext)
 
+        // 初始化 Clash VPN 管理器
+        ClashManager.init(applicationContext)
+        // 做到打开浏览器app，就自动连接vpn
+        ClashManager.startVpn(this)
+
         // 恢复持久化配置（上次输入的网址、历史分组及分辨率）
         viewModel.loadSavedGroupsFromPrefs(applicationContext)
 
@@ -54,6 +60,20 @@ class MainActivity : ComponentActivity() {
                     TradingMultiViewScreen(viewModel = viewModel)
                 }
             }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // 每次浏览器app被打开时，判断当前vpn连接是否有效，没有数据传输就自动切换节点
+        ClashManager.checkVpnHealthAndAutoSwitch(applicationContext)
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == 0x1024 && resultCode == RESULT_OK) {
+            // 用户在系统弹窗中同意了 VPN 权限，再次启动 VPN 网道
+            ClashManager.startVpn(applicationContext)
         }
     }
 
