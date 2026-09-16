@@ -138,6 +138,7 @@ export default function App() {
   const [newGroupName, setNewGroupName] = useState<string>('');
   const [isMagnetActive, setIsMagnetActive] = useState<boolean>(false);
   const [showTimeframeMenu, setShowTimeframeMenu] = useState<boolean>(false);
+  const [customTfInput, setCustomTfInput] = useState<string>('');
   const [actionToast, setActionToast] = useState<string | null>(null);
 
   // 方式1重命名分组状态：双击或点击编辑进入内联修改
@@ -883,11 +884,58 @@ export default function App() {
                   </button>
 
                   {showTimeframeMenu && (
-                    <div className="absolute top-9 left-0 z-50 w-64 bg-[#111827] border border-slate-700 rounded-lg shadow-2xl p-2 flex flex-col gap-2">
-                      {/* Row 1: 3m, 5m, 10m, 15m, 30m */}
+                    <div className="absolute top-9 left-0 z-50 w-72 bg-[#111827] border border-slate-700 rounded-lg shadow-2xl p-3 flex flex-col gap-2.5 font-sans">
+                      {/* 标题与关闭按钮 */}
+                      <div className="flex items-center justify-between pb-1 border-b border-slate-800">
+                        <span className="text-xs font-semibold text-slate-200">⏱️ 同步切换周期 (全部 3 窗口)</span>
+                        <button
+                          type="button"
+                          onClick={() => setShowTimeframeMenu(false)}
+                          className="text-slate-400 hover:text-white text-base leading-none px-1"
+                        >
+                          &times;
+                        </button>
+                      </div>
+
+                      {/* 自定义周期分钟输入框 */}
+                      <div className="flex items-center gap-1.5">
+                        <input
+                          type="text"
+                          placeholder="输入周期分钟数 (如 7, 12, 15, 60, D...)"
+                          value={customTfInput}
+                          onChange={(e) => setCustomTfInput(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' && customTfInput.trim()) {
+                              handleTriggerGlobalTimeframe(customTfInput.trim());
+                              setShowTimeframeMenu(false);
+                              setCustomTfInput('');
+                            }
+                          }}
+                          autoFocus
+                          className="flex-1 bg-slate-900 border border-slate-700 focus:border-blue-500 rounded px-2.5 py-1 text-xs text-white placeholder:text-slate-500 outline-none font-mono"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (customTfInput.trim()) {
+                              handleTriggerGlobalTimeframe(customTfInput.trim());
+                              setShowTimeframeMenu(false);
+                              setCustomTfInput('');
+                            }
+                          }}
+                          className="bg-blue-600 hover:bg-blue-500 text-white font-semibold px-3 py-1 text-xs rounded transition-colors whitespace-nowrap cursor-pointer shadow-sm"
+                        >
+                          同步
+                        </button>
+                      </div>
+
+                      {/* 快捷推荐周期 */}
+                      <div className="text-[11px] text-slate-400">常用周期快捷切换：</div>
+
+                      {/* 分钟快捷行 */}
                       <div className="flex items-center gap-1">
-                        <span className="w-10 text-[10px] text-slate-400 font-bold text-right shrink-0">分钟:</span>
-                        {['3m', '5m', '10m', '15m', '30m'].map((tf) => (
+                        <span className="w-9 text-[10px] text-slate-400 font-bold text-right shrink-0">分钟:</span>
+                        {['1m', '3m', '5m', '7m', '15m', '30m', '45m'].map((tf) => (
                           <button
                             key={tf}
                             type="button"
@@ -895,16 +943,16 @@ export default function App() {
                               handleTriggerGlobalTimeframe(tf);
                               setShowTimeframeMenu(false);
                             }}
-                            className="flex-1 h-6 text-[10px] bg-slate-800 hover:bg-slate-700 text-white rounded transition-colors cursor-pointer"
+                            className="flex-1 h-6 text-[10px] bg-slate-800 hover:bg-blue-600 hover:text-white text-slate-200 rounded transition-colors cursor-pointer font-mono"
                           >
                             {tf}
                           </button>
                         ))}
                       </div>
 
-                      {/* Row 2: 1h, 2h, 3h, 4h, 6h, 12h */}
+                      {/* 小时快捷行 */}
                       <div className="flex items-center gap-1">
-                        <span className="w-10 text-[10px] text-slate-400 font-bold text-right shrink-0">小时:</span>
+                        <span className="w-9 text-[10px] text-slate-400 font-bold text-right shrink-0">小时:</span>
                         {['1h', '2h', '3h', '4h', '6h', '12h'].map((tf) => (
                           <button
                             key={tf}
@@ -913,16 +961,16 @@ export default function App() {
                               handleTriggerGlobalTimeframe(tf);
                               setShowTimeframeMenu(false);
                             }}
-                            className="flex-1 h-6 text-[10px] bg-slate-800 hover:bg-slate-700 text-white rounded transition-colors cursor-pointer"
+                            className="flex-1 h-6 text-[10px] bg-slate-800 hover:bg-blue-600 hover:text-white text-slate-200 rounded transition-colors cursor-pointer font-mono"
                           >
                             {tf}
                           </button>
                         ))}
                       </div>
 
-                      {/* Row 3: 1D, 2D, 3D, 1W, 1M */}
+                      {/* 日/周快捷行 */}
                       <div className="flex items-center gap-1">
-                        <span className="w-10 text-[10px] text-slate-400 font-bold text-right shrink-0">日/周:</span>
+                        <span className="w-9 text-[10px] text-slate-400 font-bold text-right shrink-0">日/周:</span>
                         {['1D', '2D', '3D', '1W', '1M'].map((tf) => (
                           <button
                             key={tf}
@@ -931,7 +979,7 @@ export default function App() {
                               handleTriggerGlobalTimeframe(tf);
                               setShowTimeframeMenu(false);
                             }}
-                            className="flex-1 h-6 text-[10px] bg-slate-800 hover:bg-slate-700 text-white rounded transition-colors cursor-pointer"
+                            className="flex-1 h-6 text-[10px] bg-slate-800 hover:bg-blue-600 hover:text-white text-slate-200 rounded transition-colors cursor-pointer font-mono"
                           >
                             {tf}
                           </button>
