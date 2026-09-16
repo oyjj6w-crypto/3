@@ -132,6 +132,7 @@ export const TradingViewSimulator: React.FC<TradingViewSimulatorProps> = ({
   const [globalMagnetState, setGlobalMagnetState] = useState(false);
   const [currentStepInfo, setCurrentStepInfo] = useState<string | null>(null);
   const [activeWindowPointer, setActiveWindowPointer] = useState<{ id: number; x: number; y: number } | null>(null);
+  const [showSimTfMenu, setShowSimTfMenu] = useState(false);
 
   const logsEndRef = useRef<HTMLDivElement>(null);
 
@@ -163,7 +164,7 @@ export const TradingViewSimulator: React.FC<TradingViewSimulatorProps> = ({
   };
 
   // 顺序执行向全部 3 个窗口激活 + 派发快捷键的核心调度函数
-  const triggerMultiWindowAction = async (action: 'hide' | 'magnet' | 'invert') => {
+  const triggerMultiWindowAction = async (action: 'hide' | 'magnet' | 'invert' | 'timeframe', tfVal?: string) => {
     if (isExecuting) return;
     setIsExecuting(true);
 
@@ -172,7 +173,9 @@ export const TradingViewSimulator: React.FC<TradingViewSimulatorProps> = ({
         ? `隐藏/恢复画线 (${scriptOptions.hideShortcut})`
         : action === 'invert'
         ? `翻转K线 (${scriptOptions.invertShortcut})`
-        : `磁力吸附切换 (Ctrl/Alt+M)`;
+        : action === 'magnet'
+        ? `磁力吸附切换 (Ctrl/Alt+M)`
+        : `同步切换 K 线周期为 ${tfVal || '15m'}`;
 
     addLog('info', `▶ 开始执行全局动作：「${actionName}」- 准备依次对 3 个窗口进行物理激活与快捷键派发`);
 
@@ -227,6 +230,14 @@ export const TradingViewSimulator: React.FC<TradingViewSimulatorProps> = ({
         setWindows(prev =>
           prev.map(w =>
             w.id === winId ? { ...w, isMagnetOn: newMagnet } : w
+          )
+        );
+      } else if (action === 'timeframe' && tfVal) {
+        const keysToType = tfVal.replace('m', '').replace('h', '').replace('1D', 'D');
+        addLog('key', `[第 ${winId} 窗口] 模拟按键键入："${keysToType}" ➔ 发送 [Enter] 确定键 ➔ 周期变更为 ${tfVal}`);
+        setWindows(prev =>
+          prev.map(w =>
+            w.id === winId ? { ...w, interval: tfVal } : w
           )
         );
       }
@@ -338,6 +349,50 @@ export const TradingViewSimulator: React.FC<TradingViewSimulatorProps> = ({
                 >
                   <ArrowUpDown className="w-4 h-4" />
                 </button>
+
+                {/* 4. 周期选择 (T字按钮) */}
+                <div className="relative">
+                  <button
+                    id="tv_btn_timeframe"
+                    type="button"
+                    disabled={isExecuting}
+                    onClick={() => setShowSimTfMenu(!showSimTfMenu)}
+                    className={`flex items-center justify-center w-8 h-8 rounded transition-all font-bold text-xs ${
+                      showSimTfMenu
+                        ? 'bg-blue-500/20 text-blue-400 border border-blue-500/40'
+                        : 'hover:bg-[#2a2e39] hover:text-[#2962ff] text-gray-300 border border-transparent'
+                    }`}
+                    title="全部窗口：同步切换 K 线周期"
+                  >
+                    T
+                  </button>
+
+                  {showSimTfMenu && (
+                    <div className="absolute top-9 left-0 z-50 w-36 bg-[#1e222d] border border-[#2a2e39] rounded-lg shadow-2xl p-1 flex flex-col gap-0.5">
+                      {[
+                        { label: '3分钟', value: '3m' },
+                        { label: '5分钟', value: '5m' },
+                        { label: '15分钟', value: '15m' },
+                        { label: '30分钟', value: '30m' },
+                        { label: '1小时', value: '1h' },
+                        { label: '4小时', value: '4h' },
+                        { label: '日线', value: '1D' }
+                      ].map((tf) => (
+                        <button
+                          key={tf.value}
+                          type="button"
+                          onClick={() => {
+                            triggerMultiWindowAction('timeframe', tf.value);
+                            setShowSimTfMenu(false);
+                          }}
+                          className="w-full text-left px-2 py-1 text-[11px] text-gray-300 hover:text-white hover:bg-[#2962ff] rounded transition-colors font-mono"
+                        >
+                          {tf.label} ({tf.value})
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
 
               {/* 脚本注入标志小标签 */}

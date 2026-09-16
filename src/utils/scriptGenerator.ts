@@ -260,6 +260,88 @@ export function generateUserScript(options: Partial<ScriptOptions> = {}): string
         });
     }
 
+    // 模拟依次按键键入周期数值，最后按下 Enter 键
+    function sendTimeframe(targetElement, interval) {
+        const target = targetElement.querySelector('canvas') || targetElement || document.activeElement || document;
+        const chars = interval.split('');
+        
+        const dispatchKey = (char, keyCode, code) => {
+            const down = new KeyboardEvent('keydown', {
+                key: char,
+                code: code,
+                keyCode: keyCode,
+                which: keyCode,
+                bubbles: true,
+                cancelable: true,
+                composed: true,
+                view: window
+            });
+            target.dispatchEvent(down);
+            document.dispatchEvent(down);
+            window.dispatchEvent(down);
+
+            const press = new KeyboardEvent('keypress', {
+                key: char,
+                code: code,
+                keyCode: keyCode,
+                which: keyCode,
+                bubbles: true,
+                cancelable: true,
+                composed: true,
+                view: window
+            });
+            target.dispatchEvent(press);
+            document.dispatchEvent(press);
+            window.dispatchEvent(press);
+
+            const up = new KeyboardEvent('keyup', {
+                key: char,
+                code: code,
+                keyCode: keyCode,
+                which: keyCode,
+                bubbles: true,
+                cancelable: true,
+                composed: true,
+                view: window
+            });
+            target.dispatchEvent(up);
+            document.dispatchEvent(up);
+            window.dispatchEvent(up);
+        };
+
+        chars.forEach(char => {
+            let keyCode = char.charCodeAt(0);
+            let code = "Key" + char.toUpperCase();
+            if (char >= '0' && char <= '9') {
+                keyCode = 48 + parseInt(char);
+                code = "Digit" + char;
+            }
+            dispatchKey(char, keyCode, code);
+        });
+
+        setTimeout(() => {
+            const enterEvent = {
+                key: 'Enter',
+                code: 'Enter',
+                keyCode: 13,
+                which: 13,
+                bubbles: true,
+                cancelable: true,
+                composed: true,
+                view: window
+            };
+            const ed = new KeyboardEvent('keydown', enterEvent);
+            target.dispatchEvent(ed);
+            document.dispatchEvent(ed);
+            window.dispatchEvent(ed);
+
+            const eu = new KeyboardEvent('keyup', enterEvent);
+            target.dispatchEvent(eu);
+            document.dispatchEvent(eu);
+            window.dispatchEvent(eu);
+        }, 80);
+    }
+
     // 3. 磁力功能 (切换 Ctrl 吸附状态 / 或触发左侧磁吸工具)
     function handleTriggerMagnet(btnElement) {
         isMagnetActive = !isMagnetActive;
@@ -410,9 +492,97 @@ export function generateUserScript(options: Partial<ScriptOptions> = {}): string
             handleTriggerInvert();
         });
 
+        // 4. 周期同步选择按钮与下拉菜单
+        const tContainer = document.createElement('div');
+        tContainer.id = 'tv_enhancer_t_container';
+        tContainer.style.cssText = \`
+            position: relative;
+            display: inline-block;
+        \`;
+
+        const tBtn = createIconButton('tv_enhancer_timeframe', '全部窗口：同步切换周期 (T)', '<span style="font-weight:bold;font-size:13px;font-family:sans-serif;">T</span>', () => {
+            const menu = document.getElementById('tv_enhancer_tf_menu');
+            if (menu) {
+                menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
+            }
+        });
+
+        const tfMenu = document.createElement('div');
+        tfMenu.id = 'tv_enhancer_tf_menu';
+        tfMenu.style.cssText = \`
+            display: none;
+            position: absolute;
+            top: 36px;
+            left: 2px;
+            z-index: 100010;
+            background: #1c2030;
+            border: 1px solid #363a45;
+            border-radius: 6px;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+            padding: 4px;
+            width: 130px;
+        \`;
+
+        const periods = [
+            { label: '3分钟', value: '3' },
+            { label: '5分钟', value: '5' },
+            { label: '15分钟', value: '15' },
+            { label: '30分钟', value: '30' },
+            { label: '1小时', value: '60' },
+            { label: '4小时', value: '240' },
+            { label: '日线', value: 'D' }
+        ];
+
+        periods.forEach(p => {
+            const item = document.createElement('button');
+            item.type = 'button';
+            item.innerText = p.label;
+            item.style.cssText = \`
+                display: block;
+                width: 100%;
+                background: transparent;
+                border: none;
+                color: #d1d4dc;
+                text-align: left;
+                padding: 6px 10px;
+                font-size: 11px;
+                cursor: pointer;
+                border-radius: 4px;
+                font-family: sans-serif;
+            \`;
+            item.onmouseenter = () => {
+                item.style.background = '#2962ff';
+                item.style.color = '#fff';
+            };
+            item.onmouseleave = () => {
+                item.style.background = 'transparent';
+                item.style.color = '#d1d4dc';
+            };
+            item.onclick = (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                tfMenu.style.display = 'none';
+                dispatchToAllWindows('切换周期为 ' + p.label, (widget) => {
+                    sendTimeframe(widget, p.value);
+                });
+            };
+            tfMenu.appendChild(item);
+        });
+
+        tContainer.appendChild(tBtn);
+        tContainer.appendChild(tfMenu);
+
+        // 点击外部收起菜单
+        document.addEventListener('click', (e) => {
+            if (!tContainer.contains(e.target)) {
+                tfMenu.style.display = 'none';
+            }
+        });
+
         group.appendChild(hideBtn);
         group.appendChild(magnetBtn);
         group.appendChild(invertBtn);
+        group.appendChild(tContainer);
 
         if (targetContainer) {
             // 注入到标签栏中

@@ -3,8 +3,6 @@ package com.trading.multiview.viewmodel
 import android.content.Context
 import androidx.lifecycle.ViewModel
 import com.trading.multiview.webview.PersistentWebViewPool
-import com.trading.multiview.vpn.ClashManager
-import com.trading.multiview.vpn.ClashProxyNode
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -136,46 +134,6 @@ class TradingViewModel : ViewModel() {
 
     private val _uiState = MutableStateFlow(MultiViewUiState())
     val uiState: StateFlow<MultiViewUiState> = _uiState.asStateFlow()
-
-    // Clash VPN 状态流暴露给 Compose 界面层
-    val vpnIsConnected: StateFlow<Boolean> = ClashManager.isConnected
-    val vpnUploadSpeed: StateFlow<Long> = ClashManager.uploadSpeed
-    val vpnDownloadSpeed: StateFlow<Long> = ClashManager.downloadSpeed
-    val vpnActiveNode: StateFlow<String> = ClashManager.activeNode
-    val vpnNodes: StateFlow<List<ClashProxyNode>> = ClashManager.nodes
-    val vpnIsAutoSwitchEnabled: StateFlow<Boolean> = ClashManager.isAutoSwitchEnabled
-    val vpnIsCheckingHealth: StateFlow<Boolean> = ClashManager.isCheckingHealth
-    val vpnLogs: StateFlow<String> = ClashManager.logFlow
-    val vpnSubscriptionUrl: StateFlow<String> = ClashManager.subscriptionUrl
-    val vpnIsDownloadingSub: StateFlow<Boolean> = ClashManager.isDownloadingSub
-
-    fun toggleVpn(context: Context) {
-        if (vpnIsConnected.value) {
-            ClashManager.stopVpn(context)
-        } else {
-            ClashManager.startVpn(context)
-        }
-    }
-
-    fun triggerVpnAutoSwitch() {
-        ClashManager.triggerAutoSwitchNode()
-    }
-
-    fun selectVpnNode(nodeName: String) {
-        ClashManager.selectNodeManually(nodeName)
-    }
-
-    fun toggleVpnAutoSwitch(enabled: Boolean) {
-        ClashManager.toggleAutoSwitch(enabled)
-    }
-
-    fun checkVpnHealthNow(context: Context) {
-        ClashManager.checkVpnHealthAndAutoSwitch(context)
-    }
-
-    fun updateVpnSubscriptionUrl(context: Context, url: String, onComplete: (Boolean) -> Unit) {
-        ClashManager.updateAndFetchSubscription(context, url, onComplete)
-    }
 
     companion object {
         private const val PREFS_NAME = "trading_multiview_prefs"
