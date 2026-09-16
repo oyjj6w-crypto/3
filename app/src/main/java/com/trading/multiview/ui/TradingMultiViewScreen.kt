@@ -831,9 +831,9 @@ fun TimeframeSyncDialog(
                     }
                 }
 
-                // 常用快捷分钟周期
+                // 常用快捷周期
                 Text(
-                    text = "分钟周期：",
+                    text = "分钟级别：",
                     color = Color(0xFF9CA3AF),
                     fontSize = 10.sp
                 )
@@ -843,7 +843,7 @@ fun TimeframeSyncDialog(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    listOf("1m", "3m", "5m", "7m", "10m", "15m", "30m", "45m").forEach { tf ->
+                    listOf("3m", "5m", "10m", "15m", "30m").forEach { tf ->
                         Box(
                             modifier = Modifier
                                 .weight(1f)
@@ -859,9 +859,8 @@ fun TimeframeSyncDialog(
                     }
                 }
 
-                // 常用快捷小时与日线周期
                 Text(
-                    text = "小时 / 日周月：",
+                    text = "小时级别：",
                     color = Color(0xFF9CA3AF),
                     fontSize = 10.sp
                 )
@@ -871,7 +870,34 @@ fun TimeframeSyncDialog(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    listOf("1h", "2h", "3h", "4h", "6h", "12h", "1D", "1W").forEach { tf ->
+                    listOf("1h", "2h", "3h", "4h", "6h", "12h").forEach { tf ->
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(26.dp)
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(Color(0xFF1F2937))
+                                .border(0.5.dp, Color(0xFF374151), RoundedCornerShape(4.dp))
+                                .clickable { onSelectTimeframe(tf, selectedWindows) },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(text = tf, color = Color(0xFFE2E8F0), fontSize = 10.sp, fontWeight = FontWeight.Medium)
+                        }
+                    }
+                }
+
+                Text(
+                    text = "日线 / 周月：",
+                    color = Color(0xFF9CA3AF),
+                    fontSize = 10.sp
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    listOf("1D", "2D", "3D", "1W", "1M").forEach { tf ->
                         Box(
                             modifier = Modifier
                                 .weight(1f)
