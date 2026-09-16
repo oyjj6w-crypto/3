@@ -879,12 +879,27 @@ class TradingViewModel : ViewModel() {
      * 一键全局切换 3 个视窗的 K 线周期
      */
     fun triggerGlobalTimeframe(tf: String, context: Context? = null) {
+        val clean = tf.trim()
         val mapping = mapOf(
-            "3m" to "3", "5m" to "5", "10m" to "10", "15m" to "15", "30m" to "30",
+            "1m" to "1", "3m" to "3", "5m" to "5", "7m" to "7", "10m" to "10", "15m" to "15", "30m" to "30", "45m" to "45",
             "1h" to "60", "2h" to "120", "3h" to "180", "4h" to "240", "6h" to "360", "12h" to "720",
             "1D" to "D", "2D" to "2D", "3D" to "3D", "1W" to "W", "1M" to "M"
         )
-        val tvVal = mapping[tf] ?: tf
+        val tvVal = mapping[clean] ?: run {
+            if (clean.endsWith("m", ignoreCase = true)) {
+                clean.dropLast(1)
+            } else if (clean.endsWith("分")) {
+                clean.dropLast(1)
+            } else if (clean.equals("日", ignoreCase = true) || clean.equals("日线", ignoreCase = true)) {
+                "D"
+            } else if (clean.equals("周", ignoreCase = true) || clean.equals("周线", ignoreCase = true)) {
+                "W"
+            } else if (clean.equals("月", ignoreCase = true) || clean.equals("月线", ignoreCase = true)) {
+                "M"
+            } else {
+                clean
+            }
+        }
 
         _uiState.update { state ->
             val updatedWindows = state.windows.map { win ->

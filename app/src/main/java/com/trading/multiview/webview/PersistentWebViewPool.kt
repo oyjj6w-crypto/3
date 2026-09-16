@@ -567,8 +567,9 @@ object PersistentWebViewPool {
         val windowIds = listOf(1, 2, 3)
         // 4图翻转每个窗口内部有4个子图串行处理（每个子图安全间隔：200ms聚焦等待 + 50ms按键延迟 + 250ms静默 = 500ms，总共约2000ms），
         // 为了确保不同 WebView 窗口之间完全不冲突不卡顿，我们将窗口间隔排队延时调整为 2600ms。
-        val stepDelay = when (action) {
-            "invert4" -> 2600L
+        val stepDelay = when {
+            action == "invert4" -> 2600L
+            action.startsWith("timeframe_") -> 600L
             else -> 200L
         }
         windowIds.forEachIndexed { index, windowId ->
@@ -620,6 +621,8 @@ object PersistentWebViewPool {
                     var layoutCount = 1;
                     if (action === 'invert4') {
                         layoutCount = 4;
+                    } else if (action.indexOf('timeframe_') === 0) {
+                        layoutCount = widgets.length > 0 ? widgets.length : 1;
                     }
 
                     // 2. 收集每个K线图子区域
@@ -735,27 +738,59 @@ object PersistentWebViewPool {
                                 }, 50);
                             } else if (action.indexOf('timeframe_') === 0) {
                                 var tfVal = action.substring(10);
-                                for (var k = 0; k < tfVal.length; k++) {
-                                    var char = tfVal[k];
-                                    var keyCode = 0;
-                                    var code = "";
-                                    if (char >= '0' && char <= '9') {
-                                        keyCode = 48 + (char.charCodeAt(0) - 48);
-                                        code = "Digit" + char;
+                                var charIdx = 0;
+                                function typeNextChar() {
+                                    if (charIdx < tfVal.length) {
+                                        var char = tfVal[charIdx];
+                                        var keyCode = 0;
+                                        var code = "";
+                                        if (char >= '0' && char <= '9') {
+                                            keyCode = 48 + (char.charCodeAt(0) - 48);
+                                            code = "Digit" + char;
+                                        } else {
+                                            var upper = char.toUpperCase();
+                                            keyCode = upper.charCodeAt(0);
+                                            code = "Key" + upper;
+                                        }
+                                        var opts = { key: char, code: code, keyCode: keyCode, which: keyCode, bubbles: true, cancelable: true, composed: true, view: window };
+                                        var curTarget = document.activeElement || target || document;
+                                        curTarget.dispatchEvent(new KeyboardEvent('keydown', opts));
+                                        window.dispatchEvent(new KeyboardEvent('keydown', opts));
+                                        document.dispatchEvent(new KeyboardEvent('keydown', opts));
+
+                                        curTarget.dispatchEvent(new KeyboardEvent('keypress', opts));
+                                        window.dispatchEvent(new KeyboardEvent('keypress', opts));
+
+                                        curTarget.dispatchEvent(new KeyboardEvent('keyup', opts));
+                                        window.dispatchEvent(new KeyboardEvent('keyup', opts));
+                                        document.dispatchEvent(new KeyboardEvent('keyup', opts));
+
+                                        charIdx++;
+                                        setTimeout(typeNextChar, 50);
                                     } else {
-                                        var upper = char.toUpperCase();
-                                        keyCode = upper.charCodeAt(0);
-                                        code = "Key" + upper;
+                                        // 全部字符键入完成，延迟 70ms 触发 Enter 确认键
+                                        setTimeout(function() {
+                                            var enterTarget = document.activeElement || target || document;
+                                            var enterOpts = { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true, composed: true, view: window };
+                                            enterTarget.dispatchEvent(new KeyboardEvent('keydown', enterOpts));
+                                            window.dispatchEvent(new KeyboardEvent('keydown', enterOpts));
+                                            document.dispatchEvent(new KeyboardEvent('keydown', enterOpts));
+
+                                            enterTarget.dispatchEvent(new KeyboardEvent('keypress', enterOpts));
+                                            window.dispatchEvent(new KeyboardEvent('keypress', enterOpts));
+
+                                            enterTarget.dispatchEvent(new KeyboardEvent('keyup', enterOpts));
+                                            window.dispatchEvent(new KeyboardEvent('keyup', enterOpts));
+                                            document.dispatchEvent(new KeyboardEvent('keyup', enterOpts));
+
+                                            setTimeout(function() {
+                                                processPoint(idx + 1);
+                                            }, 200);
+                                        }, 70);
                                     }
-                                    var opts = { key: char, code: code, keyCode: keyCode, which: keyCode, bubbles: true, cancelable: true, composed: true };
-                                    target.dispatchEvent(new KeyboardEvent('keydown', opts));
-                                    target.dispatchEvent(new KeyboardEvent('keypress', opts));
-                                    target.dispatchEvent(new KeyboardEvent('keyup', opts));
                                 }
-                                var enterOpts = { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true, composed: true };
-                                target.dispatchEvent(new KeyboardEvent('keydown', enterOpts));
-                                target.dispatchEvent(new KeyboardEvent('keypress', enterOpts));
-                                target.dispatchEvent(new KeyboardEvent('keyup', enterOpts));
+                                typeNextChar();
+                                return;
                             } else if (action.indexOf('invert') === 0) {
                                 // 翻转 K 线组合键为 alt + i
                                 var opts = { key: 'i', code: 'KeyI', keyCode: 73, which: 73, altKey: true, bubbles: true, cancelable: true, composed: true };

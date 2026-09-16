@@ -74,6 +74,7 @@ fun TradingMultiViewScreen(
     val focusManager = LocalFocusManager.current
     var showSaveDialog by remember { mutableStateOf(false) }
     var showTimeframeDropdown by remember { mutableStateOf(false) }
+    var customTfInput by remember { mutableStateOf("") }
 
     // 初始化时加载本地存储的自定义分组
     LaunchedEffect(Unit) {
@@ -276,26 +277,124 @@ fun TradingMultiViewScreen(
                                     shape = RoundedCornerShape(8.dp),
                                     modifier = Modifier
                                         .padding(top = 34.dp)
-                                        .width(260.dp)
+                                        .width(280.dp)
                                 ) {
                                     Column(
-                                        modifier = Modifier.padding(8.dp),
+                                        modifier = Modifier.padding(10.dp),
                                         verticalArrangement = Arrangement.spacedBy(8.dp)
                                     ) {
-                                        // 第一行 3m, 5m, 10m, 15m, 30m
+                                        // 顶部标题与关闭
                                         Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
                                         ) {
                                             Text(
-                                                text = "分钟:",
-                                                color = Color(0xFF9CA3AF),
-                                                fontSize = 10.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                modifier = Modifier.width(36.dp),
-                                                textAlign = TextAlign.End
+                                                text = "⏱️ 同步周期 (全部窗口)",
+                                                color = Color(0xFFF3F4F6),
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold
                                             )
-                                            listOf("3m", "5m", "10m", "15m", "30m").forEach { tf ->
+                                            Text(
+                                                text = "✕",
+                                                color = Color(0xFF9CA3AF),
+                                                fontSize = 12.sp,
+                                                modifier = Modifier
+                                                    .clip(CircleShape)
+                                                    .clickable { showTimeframeDropdown = false }
+                                                    .padding(2.dp)
+                                            )
+                                        }
+
+                                        // 自定义周期分钟输入框行
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .weight(1f)
+                                                    .height(30.dp)
+                                                    .clip(RoundedCornerShape(4.dp))
+                                                    .background(Color(0xFF1F2937))
+                                                    .border(1.dp, Color(0xFF374151), RoundedCornerShape(4.dp))
+                                                    .padding(horizontal = 8.dp),
+                                                contentAlignment = Alignment.CenterStart
+                                            ) {
+                                                if (customTfInput.isEmpty()) {
+                                                    Text(
+                                                        text = "输入周期 (如 7, 12, 15, 60...)",
+                                                        color = Color(0xFF6B7280),
+                                                        fontSize = 10.sp,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis
+                                                    )
+                                                }
+                                                BasicTextField(
+                                                    value = customTfInput,
+                                                    onValueChange = { customTfInput = it },
+                                                    textStyle = TextStyle(
+                                                        color = Color.White,
+                                                        fontSize = 11.sp,
+                                                        fontFamily = FontFamily.Monospace
+                                                    ),
+                                                    singleLine = true,
+                                                    cursorBrush = SolidColor(Color(0xFF38BDF8)),
+                                                    keyboardOptions = KeyboardOptions(
+                                                        keyboardType = KeyboardType.Text,
+                                                        imeAction = ImeAction.Done
+                                                    ),
+                                                    keyboardActions = KeyboardActions(
+                                                        onDone = {
+                                                            if (customTfInput.isNotBlank()) {
+                                                                viewModel.triggerGlobalTimeframe(customTfInput.trim(), context)
+                                                                showTimeframeDropdown = false
+                                                                customTfInput = ""
+                                                            }
+                                                        }
+                                                    ),
+                                                    modifier = Modifier.fillMaxWidth()
+                                                )
+                                            }
+
+                                            Box(
+                                                modifier = Modifier
+                                                    .height(30.dp)
+                                                    .clip(RoundedCornerShape(4.dp))
+                                                    .background(Color(0xFF2563EB))
+                                                    .clickable {
+                                                        if (customTfInput.isNotBlank()) {
+                                                            viewModel.triggerGlobalTimeframe(customTfInput.trim(), context)
+                                                            showTimeframeDropdown = false
+                                                            customTfInput = ""
+                                                        }
+                                                    }
+                                                    .padding(horizontal = 10.dp),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Text(
+                                                    text = "同步",
+                                                    color = Color.White,
+                                                    fontSize = 11.sp,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            }
+                                        }
+
+                                        // 常用快捷周期
+                                        Text(
+                                            text = "常用快捷周期：",
+                                            color = Color(0xFF9CA3AF),
+                                            fontSize = 10.sp
+                                        )
+
+                                        // 第一行 分钟快捷项
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(3.dp)
+                                        ) {
+                                            listOf("1m", "3m", "5m", "7m", "10m", "15m", "30m", "45m").forEach { tf ->
                                                 Box(
                                                     modifier = Modifier
                                                         .weight(1f)
@@ -308,25 +407,17 @@ fun TradingMultiViewScreen(
                                                         },
                                                     contentAlignment = Alignment.Center
                                                 ) {
-                                                    Text(text = tf, color = Color.White, fontSize = 10.sp)
+                                                    Text(text = tf, color = Color.White, fontSize = 9.sp)
                                                 }
                                             }
                                         }
 
-                                        // 第二行 1h, 2h, 3h, 4h, 6h, 12h
+                                        // 第二行 小时与日线快捷项
                                         Row(
                                             verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                            horizontalArrangement = Arrangement.spacedBy(3.dp)
                                         ) {
-                                            Text(
-                                                text = "小时:",
-                                                color = Color(0xFF9CA3AF),
-                                                fontSize = 10.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                modifier = Modifier.width(36.dp),
-                                                textAlign = TextAlign.End
-                                            )
-                                            listOf("1h", "2h", "3h", "4h", "6h", "12h").forEach { tf ->
+                                            listOf("1h", "2h", "3h", "4h", "6h", "12h", "1D", "1W").forEach { tf ->
                                                 Box(
                                                     modifier = Modifier
                                                         .weight(1f)
@@ -339,38 +430,7 @@ fun TradingMultiViewScreen(
                                                         },
                                                     contentAlignment = Alignment.Center
                                                 ) {
-                                                    Text(text = tf, color = Color.White, fontSize = 10.sp)
-                                                }
-                                            }
-                                        }
-
-                                        // 第三行 1D, 2D, 3D, 1W, 1M
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                        ) {
-                                            Text(
-                                                text = "日/周:",
-                                                color = Color(0xFF9CA3AF),
-                                                fontSize = 10.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                modifier = Modifier.width(36.dp),
-                                                textAlign = TextAlign.End
-                                            )
-                                            listOf("1D", "2D", "3D", "1W", "1M").forEach { tf ->
-                                                Box(
-                                                    modifier = Modifier
-                                                        .weight(1f)
-                                                        .height(24.dp)
-                                                        .clip(RoundedCornerShape(4.dp))
-                                                        .background(Color(0xFF1F2937))
-                                                        .clickable {
-                                                            viewModel.triggerGlobalTimeframe(tf, context)
-                                                            showTimeframeDropdown = false
-                                                        },
-                                                    contentAlignment = Alignment.Center
-                                                ) {
-                                                    Text(text = tf, color = Color.White, fontSize = 10.sp)
+                                                    Text(text = tf, color = Color.White, fontSize = 9.sp)
                                                 }
                                             }
                                         }

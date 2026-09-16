@@ -354,90 +354,10 @@ export function generateUserScript(options: Partial<ScriptOptions> = {}): string
         });
     }
 
-    // 综合多策略切换单个图表窗口周期 (API -> 顶栏原生周期按钮/下拉 -> 键盘输入兜底)
+    // 切换图表窗口周期：核心采用模拟鼠标左键点击 K 线图然后键入数字周期再回车 (TradingView 最可靠的原生快捷切换方式)
     async function applyTimeframeToWindow(widget, interval, idx) {
-        let success = false;
         const cleanTf = String(interval).trim().toUpperCase();
-
-        // 策略 1: TradingView 官方 API (window.tvWidget / unsafeWindow.tvWidget)
-        try {
-            const win = (typeof unsafeWindow !== 'undefined' ? unsafeWindow : window);
-            if (win.tvWidget) {
-                if (typeof win.tvWidget.chart === 'function') {
-                    const c = win.tvWidget.chart(idx);
-                    if (c && typeof c.setResolution === 'function') {
-                        c.setResolution(cleanTf);
-                        success = true;
-                    }
-                } else if (typeof win.tvWidget.activeChart === 'function') {
-                    const ac = win.tvWidget.activeChart();
-                    if (ac && typeof ac.setResolution === 'function') {
-                        ac.setResolution(cleanTf);
-                        success = true;
-                    }
-                }
-            }
-        } catch (e) {
-            console.warn('[TV-Enhancer] TV API setResolution error:', e);
-        }
-
-        // 策略 2: 顶栏 TradingView 原生周期按钮 / 下拉菜单精准点击
-        if (!success) {
-            try {
-                const intervalBar = document.querySelector('#header-toolbar-intervals') || 
-                                    document.querySelector('[data-name="header-toolbar-intervals"]') ||
-                                    document.querySelector('div[id*="header-toolbar-intervals"]');
-                if (intervalBar) {
-                    // 2a. 查找顶栏是否存在已收藏的快捷周期按钮 (如 1m, 3m, 5m, 15m, 1h, 4h, 1D, D)
-                    const buttons = Array.from(intervalBar.querySelectorAll('button, [role="button"]'));
-                    const directBtn = buttons.find(b => {
-                        const txt = (b.innerText || b.getAttribute('aria-label') || '').trim().toUpperCase();
-                        return txt === cleanTf || 
-                               txt === (cleanTf + 'M') || 
-                               txt === (cleanTf + '分') || 
-                               (cleanTf === '60' && (txt === '1H' || txt === '1小时' || txt === '60')) ||
-                               (cleanTf === '240' && (txt === '4H' || txt === '4小时' || txt === '240')) ||
-                               ((cleanTf === 'D' || cleanTf === '1D') && (txt === '1D' || txt === '日线' || txt === 'D'));
-                    });
-
-                    if (directBtn) {
-                        directBtn.click();
-                        success = true;
-                    } else {
-                        // 2b. 点击展开周期下拉菜单并在弹出列表中选取对应项
-                        const trigger = intervalBar.querySelector('button') || intervalBar;
-                        trigger.click();
-                        await delay(80);
-
-                        const items = Array.from(document.querySelectorAll('[data-role="menuitem"], [role="menuitem"], [class*="item-"]'));
-                        const menuItem = items.find(it => {
-                            const txt = (it.innerText || '').trim().toUpperCase();
-                            return txt === cleanTf || 
-                                   txt.includes(cleanTf + 'M') || 
-                                   txt.includes(cleanTf + '分') || 
-                                   (cleanTf === '60' && (txt.includes('1小时') || txt.includes('1H'))) ||
-                                   (cleanTf === '240' && (txt.includes('4小时') || txt.includes('4H'))) ||
-                                   ((cleanTf === 'D' || cleanTf === '1D') && (txt.includes('日线') || txt.includes('1D') || txt === 'D'));
-                        });
-
-                        if (menuItem) {
-                            menuItem.click();
-                            success = true;
-                        } else {
-                            // 关闭打开的菜单
-                            document.body.click();
-                        }
-                    }
-                }
-            } catch (e) {
-                console.warn('[TV-Enhancer] Toolbar interval click error:', e);
-            }
-        }
-
-        // 策略 3: 键盘输入流模拟（作为兜底尝试）
-        if (!success) {
-            await sendTimeframe(widget, cleanTf);
-        }
+        await sendTimeframe(widget, cleanTf);
     }
 
     // 3. 磁力功能 (切换 Ctrl 吸附状态 / 或触发左侧磁吸工具)
