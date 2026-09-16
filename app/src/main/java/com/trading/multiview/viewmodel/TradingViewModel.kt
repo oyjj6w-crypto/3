@@ -876,16 +876,18 @@ class TradingViewModel : ViewModel() {
     }
 
     /**
-     * 一键全局切换 3 个视窗的 K 线周期
+     * 同步切换指定选中的 1 个或多个视窗的 K 线周期
      */
-    fun triggerGlobalTimeframe(tf: String, context: Context? = null) {
+    fun triggerGlobalTimeframe(tf: String, selectedWindowIds: Set<Int> = setOf(1, 2, 3), context: Context? = null) {
         val clean = tf.trim()
+        
+        // 1. URL 对应的 interval 值 (tvVal) 保持不变，保证 TradingView 初始化 URL 能够正确识别
         val mapping = mapOf(
             "1m" to "1", "3m" to "3", "5m" to "5", "7m" to "7", "10m" to "10", "15m" to "15", "30m" to "30", "45m" to "45",
             "1h" to "60", "2h" to "120", "3h" to "180", "4h" to "240", "6h" to "360", "12h" to "720",
-            "1D" to "D", "2D" to "2D", "3D" to "3D", "1W" to "W", "1M" to "M"
+            "1d" to "D", "2d" to "2D", "3d" to "3D", "1w" to "W", "1m" to "M"
         )
-        val tvVal = mapping[clean] ?: run {
+        val tvVal = mapping[clean.lowercase()] ?: run {
             if (clean.endsWith("m", ignoreCase = true)) {
                 clean.dropLast(1)
             } else if (clean.endsWith("分")) {
@@ -901,27 +903,49 @@ class TradingViewModel : ViewModel() {
             }
         }
 
+        // 2. 将用户输入的自然语言或混合格式，转成符合要求的 TV 快捷键盘模拟输入指令 (keystrokeVal)
+        // 规则：触发 60 分钟以下级别用纯阿拉伯数字，触发小时级用数字加h，触发日线用数字加d，周线、月线同理。
+        val keystrokeVal = when {
+            clean.equals("1M") || clean.equals("M") || clean.equals("月") || clean.equals("月线") -> "1m"
+            clean.equals("1W") || clean.equals("W") || clean.equals("周") || clean.equals("周线") -> "1w"
+            clean.equals("1D", ignoreCase = true) || clean.equals("D", ignoreCase = true) || clean.equals("日") || clean.equals("日线") -> "1d"
+            clean.endsWith("h", ignoreCase = true) -> clean.lowercase()
+            clean.endsWith("m", ignoreCase = true) -> clean.dropLast(1)
+            else -> {
+                val num = clean.toIntOrNull()
+                if (num != null && num < 60) {
+                    num.toString()
+                } else {
+                    clean.lowercase()
+                }
+            }
+        }
+
         _uiState.update { state ->
             val updatedWindows = state.windows.map { win ->
-                var updatedUrl = win.currentUrl
-                try {
-                    updatedUrl = if (updatedUrl.contains("interval=")) {
-                        updatedUrl.replace(Regex("interval=[^&]+"), "interval=$tvVal")
-                    } else if (updatedUrl.contains("?")) {
-                        "$updatedUrl&interval=$tvVal"
-                    } else {
-                        "$updatedUrl?interval=$tvVal"
+                if (win.id in selectedWindowIds) {
+                    var updatedUrl = win.currentUrl
+                    try {
+                        updatedUrl = if (updatedUrl.contains("interval=")) {
+                            updatedUrl.replace(Regex("interval=[^&]+"), "interval=$tvVal")
+                        } else if (updatedUrl.contains("?")) {
+                            "$updatedUrl&interval=$tvVal"
+                        } else {
+                            "$updatedUrl?interval=$tvVal"
+                        }
+                    } catch (e: Exception) {
+                        // ignore
                     }
-                } catch (e: Exception) {
-                    // ignore
-                }
-                
-                PersistentWebViewPool.saveWindowUrl(win.id, updatedUrl, win.title)
+                    
+                    PersistentWebViewPool.saveWindowUrl(win.id, updatedUrl, win.title)
 
-                win.copy(
-                    timeframe = tf,
-                    currentUrl = updatedUrl
-                )
+                    win.copy(
+                        timeframe = tf,
+                        currentUrl = updatedUrl
+                    )
+                } else {
+                    win
+                }
             }
 
             val activeId = state.activeGroupId
@@ -930,7 +954,7 @@ class TradingViewModel : ViewModel() {
                     group.copy(
                         items = group.items.mapIndexed { index, item ->
                             val win = updatedWindows.find { it.id == index + 1 }
-                            if (win != null) {
+                            if (win != null && (index + 1) in selectedWindowIds) {
                                 item.copy(
                                     url = win.currentUrl,
                                     timeframe = tf
@@ -949,10 +973,12 @@ class TradingViewModel : ViewModel() {
             )
         }
 
-        PersistentWebViewPool.dispatchTradingViewAction("timeframe_$tvVal")
+        // 3. 异步排队向选中的 WebView 发送原生 Keycode 序列
+        PersistentWebViewPool.dispatchTradingViewAction("timeframe_$keystrokeVal", selectedWindowIds)
 
         context?.let {
-            android.widget.Toast.makeText(it, "已同步触发 K 线周期切换为 $tf", android.widget.Toast.LENGTH_SHORT).show()
+            val winsText = selectedWindowIds.sorted().joinToString(", ") { "窗口 $it" }
+            android.widget.Toast.makeText(it, "已在 $winsText 触发 K 线周期切换为 $tf", android.widget.Toast.LENGTH_SHORT).show()
         }
     }
 }

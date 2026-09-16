@@ -638,8 +638,8 @@ fun TradingMultiViewScreen(
     if (showTimeframeDialog) {
         TimeframeSyncDialog(
             onDismiss = { showTimeframeDialog = false },
-            onSelectTimeframe = { tf ->
-                viewModel.triggerGlobalTimeframe(tf, context)
+            onSelectTimeframe = { tf, targets ->
+                viewModel.triggerGlobalTimeframe(tf, targets, context)
                 showTimeframeDialog = false
             }
         )
@@ -652,9 +652,10 @@ fun TradingMultiViewScreen(
 @Composable
 fun TimeframeSyncDialog(
     onDismiss: () -> Unit,
-    onSelectTimeframe: (String) -> Unit
+    onSelectTimeframe: (String, Set<Int>) -> Unit
 ) {
     var customTfInput by remember { mutableStateOf("") }
+    var selectedWindows by remember { mutableStateOf(setOf(1, 2, 3)) }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -685,12 +686,6 @@ fun TimeframeSyncDialog(
                             fontSize = 13.sp,
                             fontWeight = FontWeight.Bold
                         )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            text = "(全窗口)",
-                            color = Color(0xFF38BDF8),
-                            fontSize = 11.sp
-                        )
                     }
                     Text(
                         text = "✕",
@@ -702,6 +697,68 @@ fun TimeframeSyncDialog(
                             .padding(4.dp)
                     )
                 }
+
+                // 窗口目标选择 UI
+                Text(
+                    text = "选择要生效的窗口：",
+                    color = Color(0xFF9CA3AF),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    (1..3).forEach { winId ->
+                        val isSelected = selectedWindows.contains(winId)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(if (isSelected) Color(0xFF1E293B) else Color(0xFF1F2937))
+                                .border(1.dp, if (isSelected) Color(0xFF2563EB) else Color(0xFF374151), RoundedCornerShape(6.dp))
+                                .clickable {
+                                    selectedWindows = if (isSelected) {
+                                        if (selectedWindows.size > 1) selectedWindows - winId else selectedWindows
+                                    } else {
+                                        selectedWindows + winId
+                                    }
+                                }
+                                .padding(vertical = 6.dp),
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(12.dp)
+                                    .clip(RoundedCornerShape(3.dp))
+                                    .background(if (isSelected) Color(0xFF2563EB) else Color(0xFF4B5563))
+                                    .border(1.dp, if (isSelected) Color(0xFF2563EB) else Color(0xFF6B7280), RoundedCornerShape(3.dp)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (isSelected) {
+                                    Text(
+                                        text = "✓",
+                                        color = Color.White,
+                                        fontSize = 8.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "窗口 $winId",
+                                color = if (isSelected) Color.White else Color(0xFF9CA3AF),
+                                fontSize = 10.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(2.dp))
 
                 // 自定义周期输入框行
                 Row(
@@ -721,7 +778,7 @@ fun TimeframeSyncDialog(
                     ) {
                         if (customTfInput.isEmpty()) {
                             Text(
-                                text = "输入周期 (如 7, 12, 15, 60, D)",
+                                text = "输入周期 (如 15, 60, D)",
                                 color = Color(0xFF9CA3AF),
                                 fontSize = 11.sp,
                                 maxLines = 1,
@@ -746,7 +803,7 @@ fun TimeframeSyncDialog(
                             keyboardActions = KeyboardActions(
                                 onDone = {
                                     if (customTfInput.isNotBlank()) {
-                                        onSelectTimeframe(customTfInput.trim())
+                                        onSelectTimeframe(customTfInput.trim(), selectedWindows)
                                     }
                                 }
                             ),
@@ -757,7 +814,7 @@ fun TimeframeSyncDialog(
                     Button(
                         onClick = {
                             if (customTfInput.isNotBlank()) {
-                                onSelectTimeframe(customTfInput.trim())
+                                onSelectTimeframe(customTfInput.trim(), selectedWindows)
                             }
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB)),
@@ -794,7 +851,7 @@ fun TimeframeSyncDialog(
                                 .clip(RoundedCornerShape(4.dp))
                                 .background(Color(0xFF1F2937))
                                 .border(0.5.dp, Color(0xFF374151), RoundedCornerShape(4.dp))
-                                .clickable { onSelectTimeframe(tf) },
+                                .clickable { onSelectTimeframe(tf, selectedWindows) },
                             contentAlignment = Alignment.Center
                         ) {
                             Text(text = tf, color = Color(0xFFE2E8F0), fontSize = 10.sp, fontWeight = FontWeight.Medium)
@@ -822,7 +879,7 @@ fun TimeframeSyncDialog(
                                 .clip(RoundedCornerShape(4.dp))
                                 .background(Color(0xFF1F2937))
                                 .border(0.5.dp, Color(0xFF374151), RoundedCornerShape(4.dp))
-                                .clickable { onSelectTimeframe(tf) },
+                                .clickable { onSelectTimeframe(tf, selectedWindows) },
                             contentAlignment = Alignment.Center
                         ) {
                             Text(text = tf, color = Color(0xFFE2E8F0), fontSize = 10.sp, fontWeight = FontWeight.Medium)

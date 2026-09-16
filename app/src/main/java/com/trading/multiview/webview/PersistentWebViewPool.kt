@@ -560,22 +560,29 @@ object PersistentWebViewPool {
     }
 
     /**
-     * 向所有 3 个视窗按序派发 TradingView 快捷功能
+     * 向所有或指定的选中的视窗按序派发 TradingView 快捷功能
      * 关键流程：
-     * 1. 遍历当前 3 个视窗，依次派发
+     * 1. 遍历当前选中的视窗，依次派发
      * 2. 必须先通过模拟物理点击 (pointerdown / mousedown / click / focus) 激活聚焦该视窗
      * 3. 延时等待让 TradingView 内部完成焦点切换并按序处理
      * @param action "hide" (隐藏画线), "invert" / "invert4" (翻转4图K线), "invert8" (翻转8图K线), "magnet" (磁力吸附)
+     * @param selectedWindowIds 需要生效的窗口 ID 集合 (默认包含 1, 2, 3)
      */
-    fun dispatchTradingViewAction(action: String, onProgress: ((Int, Int) -> Unit)? = null) {
+    fun dispatchTradingViewAction(
+        action: String,
+        selectedWindowIds: Set<Int> = setOf(1, 2, 3),
+        onProgress: ((Int, Int) -> Unit)? = null
+    ) {
         val handler = Handler(Looper.getMainLooper())
-        val windowIds = listOf(1, 2, 3)
+        // 保证按窗口 1 -> 2 -> 3 顺序推进，且只执行用户选中的窗口
+        val windowIds = selectedWindowIds.toList().filter { it in 1..3 }.sorted()
         // 4图翻转每个窗口内部有4个子图串行处理（每个子图安全间隔：200ms聚焦等待 + 50ms按键延迟 + 250ms静默 = 500ms，总共约2000ms），
         // 为了确保不同 WebView 窗口之间完全不冲突不卡顿，我们将窗口间隔排队延时调整为 2600ms。
+        // 周期切换（timeframe_）窗口间隔设为 1000ms。其余通用延迟根据用户要求升级为 400ms (原为 200ms)。
         val stepDelay = when {
             action == "invert4" -> 2600L
             action.startsWith("timeframe_") -> 1000L
-            else -> 200L
+            else -> 400L
         }
         windowIds.forEachIndexed { index, windowId ->
             handler.postDelayed({
@@ -613,32 +620,15 @@ object PersistentWebViewPool {
     /**
      * 原生硬件按键级周期切换引擎 (Android OS 管道 KeyEvent，isTrusted=true)
      * 解决 TradingView 内部拒绝未授权 JavaScript 合成按键 (isTrusted: false) 的痛点
+     * 注意：为了完美配合只在用户当前手指激活的高亮子图上生效，我们在 Native 层直接将 requestFocus 传递给 WebView，
+     * 而不再进行屏幕绝对中心的触控模拟，防止破坏 JS 段定位到的当前手指高亮选中的子图。
      */
     private fun dispatchNativeTimeframe(webView: WebView, tfVal: String) {
         val handler = Handler(Looper.getMainLooper())
         webView.requestFocus()
 
-        // 1. 模拟原生触摸点击 K 线图画布中心，确保 Chromium 核心聚焦该元素
-        val w = webView.width.toFloat().coerceAtLeast(300f)
-        val h = webView.height.toFloat().coerceAtLeast(300f)
-        val cx = w / 2f
-        val cy = h / 2f
-        val now = SystemClock.uptimeMillis()
-
-        try {
-            val downEvent = MotionEvent.obtain(now, now, MotionEvent.ACTION_DOWN, cx, cy, 0)
-            webView.dispatchTouchEvent(downEvent)
-            downEvent.recycle()
-
-            val upEvent = MotionEvent.obtain(now, now + 30, MotionEvent.ACTION_UP, cx, cy, 0)
-            webView.dispatchTouchEvent(upEvent)
-            upEvent.recycle()
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-
-        // 2. 延迟 180ms 等待聚焦生效后，逐字符发送原生 KeyEvent (isTrusted = true)
-        var currentDelay = 180L
+        // 延迟 120ms 等待 WebView 系统焦点激活，然后逐字符发送原生 KeyEvent (isTrusted = true)
+        var currentDelay = 120L
         for (char in tfVal) {
             val keyCode = when (char) {
                 in '0'..'9' -> KeyEvent.KEYCODE_0 + (char - '0')
@@ -659,7 +649,7 @@ object PersistentWebViewPool {
             }
         }
 
-        // 3. 全部字符键入完毕后，延迟 100ms 发送真实的 Enter 回车确认键
+        // 全部字符键入完毕后，延迟 100ms 发送真实的 Enter 回车确认键
         handler.postDelayed({
             val t = SystemClock.uptimeMillis()
             webView.dispatchKeyEvent(KeyEvent(t, t, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER, 0))
@@ -719,44 +709,39 @@ object PersistentWebViewPool {
                     });
 
                     var points = [];
+                    var activeWidget = null;
                     if (widgets.length > 0) {
-                        // 如果页面有 DOM K线节点，直接基于高可靠排序结果依次进行焦点与键事件定位
-                        var limit = Math.min(widgets.length, layoutCount);
-                        for (var i = 0; i < limit; i++) {
-                            var wRect = widgets[i].getBoundingClientRect();
-                            points.push({
-                                x: wRect.left + wRect.width / 2,
-                                y: wRect.top + wRect.height / 2,
-                                element: widgets[i].querySelector('canvas.interactive-graphics-layer') || 
-                                         widgets[i].querySelector('canvas') || 
-                                         widgets[i]
-                            });
+                        // 1. 尝试定位当前高亮/激活/选中的子图 widget (包含 class 中有 active, selected 关键字，或 data-active="true" 的)
+                        for (var wi = 0; wi < widgets.length; wi++) {
+                            var cls = widgets[wi].className || "";
+                            if (cls.indexOf("active") !== -1 || cls.indexOf("selected") !== -1 || widgets[wi].getAttribute("data-active") === "true") {
+                                activeWidget = widgets[wi];
+                                break;
+                            }
                         }
+                        // 2. 如果没有显式的手指激活高亮，默认回退到第一个子图
+                        if (!activeWidget) {
+                            activeWidget = widgets[0];
+                        }
+                        
+                        var wRect = activeWidget.getBoundingClientRect();
+                        points.push({
+                            x: wRect.left + wRect.width / 2,
+                            y: wRect.top + wRect.height / 2,
+                            element: activeWidget.querySelector('canvas.interactive-graphics-layer') || 
+                                     activeWidget.querySelector('canvas') || 
+                                     activeWidget
+                        });
                     } else {
                         // 如果未完全初始化或框架改变，使用纯几何坐标 fallback
                         var container = document.querySelector('.layout__area--center') || 
                                         document.querySelector('.chart-container') || 
                                         document.body;
                         var rect = container.getBoundingClientRect();
-                        var relativePoints = [];
-                        
-                        if (layoutCount === 4) {
-                            relativePoints = [
-                                { rx: 0.5, ry: 0.125 },
-                                { rx: 0.5, ry: 0.375 },
-                                { rx: 0.5, ry: 0.625 },
-                                { rx: 0.5, ry: 0.875 }
-                            ];
-                        } else {
-                            relativePoints = [{ rx: 0.5, ry: 0.5 }];
-                        }
-
-                        for (var j = 0; j < Math.min(relativePoints.length, layoutCount); j++) {
-                            var px = rect.left + rect.width * relativePoints[j].rx;
-                            var py = rect.top + rect.height * relativePoints[j].ry;
-                            var el = document.elementFromPoint(px, py) || container;
-                            points.push({ x: px, y: py, element: el });
-                        }
+                        var px = rect.left + rect.width / 2;
+                        var py = rect.top + rect.height / 2;
+                        var el = document.elementFromPoint(px, py) || container;
+                        points.push({ x: px, y: py, element: el });
                     }
 
                     // 3. 串行延迟循环调度队列，每一次触发包含：模拟物理轻触、物理聚焦、稍作停顿、再发键盘指令
@@ -792,7 +777,7 @@ object PersistentWebViewPool {
                             target.focus();
                         }
 
-                        // 【安全延迟 220ms】：让 TradingView 内部完完整整地将焦点状态转移至当前 subchart，杜绝按键丢失
+                        // 【安全延迟 400ms】：让 TradingView 内部完完整整地将焦点状态转移至当前 active 子图
                         setTimeout(function() {
                             if (action === 'hide') {
                                 var opts = { key: 'h', code: 'KeyH', keyCode: 72, which: 72, altKey: true, ctrlKey: true, bubbles: true, cancelable: true, composed: true };
@@ -829,7 +814,7 @@ object PersistentWebViewPool {
                                         var v = (b.getAttribute('data-value') || b.textContent || '').trim().toLowerCase();
                                         if (v === tfVal.toLowerCase() || v === (tfVal + 'm').toLowerCase()) {
                                             b.click();
-                                            setTimeout(function() { processPoint(idx + 1); }, 150);
+                                            setTimeout(function() { processPoint(idx + 1); }, 400);
                                             return;
                                         }
                                     }
@@ -845,7 +830,7 @@ object PersistentWebViewPool {
                                         inputEl.value = tfVal;
                                         inputEl.dispatchEvent(new Event('input', { bubbles: true }));
                                         inputEl.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
-                                        setTimeout(function() { processPoint(idx + 1); }, 150);
+                                        setTimeout(function() { processPoint(idx + 1); }, 400);
                                         return;
                                     }
                                 } catch(e) {}
@@ -898,7 +883,7 @@ object PersistentWebViewPool {
 
                                             setTimeout(function() {
                                                 processPoint(idx + 1);
-                                            }, 200);
+                                            }, 400);
                                         }, 70);
                                     }
                                 }
@@ -941,11 +926,11 @@ object PersistentWebViewPool {
                                 }, 50);
                             }
 
-                            // 【安全延迟 250ms】：处理完毕后，再给浏览器与内核 250ms 的渲染静默空闲，再执行下一个图表，完全打消任何时序冲突！
+                            // 【安全延迟 400ms】：处理完毕后，再给浏览器与内核 400ms 的渲染静默空闲
                             setTimeout(function() {
                                 processPoint(idx + 1);
-                            }, 250);
-                        }, 220);
+                            }, 400);
+                        }, 400);
                     }
 
                     processPoint(0);
