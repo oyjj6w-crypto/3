@@ -226,7 +226,7 @@ export function generateUserScript(options: Partial<ScriptOptions> = {}): string
             // 兜底单图表情况
             activateWindow(document.body);
             await delay(CONFIG.activationDelay);
-            onSingleChart(document.body, 0);
+            await onSingleChart(document.body, 0);
         } else {
             for (let i = 0; i < widgets.length; i++) {
                 const widget = widgets[i];
@@ -235,7 +235,7 @@ export function generateUserScript(options: Partial<ScriptOptions> = {}): string
                 await delay(CONFIG.activationDelay);
 
                 // 2. 发送具体功能快捷键
-                onSingleChart(widget, i);
+                await onSingleChart(widget, i);
 
                 // 3. 间隔防并发防丢包
                 await delay(CONFIG.stepDelay);
@@ -262,84 +262,99 @@ export function generateUserScript(options: Partial<ScriptOptions> = {}): string
 
     // 模拟依次按键键入周期数值，最后按下 Enter 键
     function sendTimeframe(targetElement, interval) {
-        const target = targetElement.querySelector('canvas') || targetElement || document.activeElement || document;
-        const chars = interval.split('');
-        
-        const dispatchKey = (char, keyCode, code) => {
-            const down = new KeyboardEvent('keydown', {
-                key: char,
-                code: code,
-                keyCode: keyCode,
-                which: keyCode,
-                bubbles: true,
-                cancelable: true,
-                composed: true,
-                view: window
-            });
-            target.dispatchEvent(down);
-            document.dispatchEvent(down);
-            window.dispatchEvent(down);
-
-            const press = new KeyboardEvent('keypress', {
-                key: char,
-                code: code,
-                keyCode: keyCode,
-                which: keyCode,
-                bubbles: true,
-                cancelable: true,
-                composed: true,
-                view: window
-            });
-            target.dispatchEvent(press);
-            document.dispatchEvent(press);
-            window.dispatchEvent(press);
-
-            const up = new KeyboardEvent('keyup', {
-                key: char,
-                code: code,
-                keyCode: keyCode,
-                which: keyCode,
-                bubbles: true,
-                cancelable: true,
-                composed: true,
-                view: window
-            });
-            target.dispatchEvent(up);
-            document.dispatchEvent(up);
-            window.dispatchEvent(up);
-        };
-
-        chars.forEach(char => {
-            let keyCode = char.charCodeAt(0);
-            let code = "Key" + char.toUpperCase();
-            if (char >= '0' && char <= '9') {
-                keyCode = 48 + parseInt(char);
-                code = "Digit" + char;
+        return new Promise((resolve) => {
+            const canvas = targetElement.querySelector('canvas') || targetElement;
+            
+            // 1. 强行对画布设置 tabindex 并让其获取物理焦点（非常关键！TradingView 的全局监听器只有在焦点在其区域内时才捕获键盘事件）
+            if (canvas) {
+                canvas.setAttribute('tabindex', '-1');
+                canvas.focus();
             }
-            dispatchKey(char, keyCode, code);
+
+            const chars = interval.split('');
+            let idx = 0;
+
+            function typeNext() {
+                if (idx < chars.length) {
+                    const char = chars[idx];
+                    let keyCode = char.charCodeAt(0);
+                    let code = "Key" + char.toUpperCase();
+                    if (char >= '0' && char <= '9') {
+                        keyCode = 48 + parseInt(char);
+                        code = "Digit" + char;
+                    }
+
+                    // 关键所在：第一下敲击是针对 canvas 或者是 activeElement（唤起输入框）
+                    // 唤起输入框后，焦点的 activeElement 将自动切换为输入框本身的 input
+                    // 后续字符必须自动投递到当前的焦点元素 (activeElement) 上，否则字符无法键入到输入框中！
+                    const activeEl = document.activeElement || canvas || document;
+
+                    const down = new KeyboardEvent('keydown', {
+                        key: char,
+                        code: code,
+                        keyCode: keyCode,
+                        which: keyCode,
+                        bubbles: true,
+                        cancelable: true,
+                        composed: true,
+                        view: window
+                    });
+                    activeEl.dispatchEvent(down);
+
+                    const press = new KeyboardEvent('keypress', {
+                        key: char,
+                        code: code,
+                        keyCode: keyCode,
+                        which: keyCode,
+                        bubbles: true,
+                        cancelable: true,
+                        composed: true,
+                        view: window
+                    });
+                    activeEl.dispatchEvent(press);
+
+                    const up = new KeyboardEvent('keyup', {
+                        key: char,
+                        code: code,
+                        keyCode: keyCode,
+                        which: keyCode,
+                        bubbles: true,
+                        cancelable: true,
+                        composed: true,
+                        view: window
+                    });
+                    activeEl.dispatchEvent(up);
+
+                    idx++;
+                    // 延迟 60 毫秒输入下一个字符（给 TradingView 的 React 输入弹框留出充足的加载与承接时间）
+                    setTimeout(typeNext, 60);
+                } else {
+                    // 字符输入结束，延迟 100 毫秒发送 Enter 确定键完成周期变更
+                    setTimeout(() => {
+                        const activeEl = document.activeElement || canvas || document;
+                        const enterEvent = {
+                            key: 'Enter',
+                            code: 'Enter',
+                            keyCode: 13,
+                            which: 13,
+                            bubbles: true,
+                            cancelable: true,
+                            composed: true,
+                            view: window
+                        };
+                        activeEl.dispatchEvent(new KeyboardEvent('keydown', enterEvent));
+                        activeEl.dispatchEvent(new KeyboardEvent('keypress', enterEvent));
+                        activeEl.dispatchEvent(new KeyboardEvent('keyup', enterEvent));
+                        
+                        // 结束当前窗口操作，释放 promise
+                        setTimeout(resolve, 50);
+                    }, 100);
+                }
+            }
+
+            // 启动字符键入队列
+            typeNext();
         });
-
-        setTimeout(() => {
-            const enterEvent = {
-                key: 'Enter',
-                code: 'Enter',
-                keyCode: 13,
-                which: 13,
-                bubbles: true,
-                cancelable: true,
-                composed: true,
-                view: window
-            };
-            const ed = new KeyboardEvent('keydown', enterEvent);
-            target.dispatchEvent(ed);
-            document.dispatchEvent(ed);
-            window.dispatchEvent(ed);
-
-            const eu = new KeyboardEvent('keyup', enterEvent);
-            target.dispatchEvent(eu);
-            document.dispatchEvent(eu);
-            window.dispatchEvent(eu);
-        }, 80);
     }
 
     // 3. 磁力功能 (切换 Ctrl 吸附状态 / 或触发左侧磁吸工具)
