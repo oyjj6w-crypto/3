@@ -133,6 +133,7 @@ export const TradingViewSimulator: React.FC<TradingViewSimulatorProps> = ({
   const [currentStepInfo, setCurrentStepInfo] = useState<string | null>(null);
   const [activeWindowPointer, setActiveWindowPointer] = useState<{ id: number; x: number; y: number } | null>(null);
   const [showSimTfMenu, setShowSimTfMenu] = useState(false);
+  const [customTfInput, setCustomTfInput] = useState('');
 
   const logsEndRef = useRef<HTMLDivElement>(null);
 
@@ -350,7 +351,7 @@ export const TradingViewSimulator: React.FC<TradingViewSimulatorProps> = ({
                   <ArrowUpDown className="w-4 h-4" />
                 </button>
 
-                {/* 4. 周期选择 (T字按钮) */}
+                {/* 4. 周期选择 (T字按钮与全局浮窗) */}
                 <div className="relative">
                   <button
                     id="tv_btn_timeframe"
@@ -368,28 +369,74 @@ export const TradingViewSimulator: React.FC<TradingViewSimulatorProps> = ({
                   </button>
 
                   {showSimTfMenu && (
-                    <div className="absolute top-9 left-0 z-50 w-36 bg-[#1e222d] border border-[#2a2e39] rounded-lg shadow-2xl p-1 flex flex-col gap-0.5">
-                      {[
-                        { label: '3分钟', value: '3m' },
-                        { label: '5分钟', value: '5m' },
-                        { label: '15分钟', value: '15m' },
-                        { label: '30分钟', value: '30m' },
-                        { label: '1小时', value: '1h' },
-                        { label: '4小时', value: '4h' },
-                        { label: '日线', value: '1D' }
-                      ].map((tf) => (
+                    <div className="fixed sm:absolute top-12 left-4 sm:left-0 z-50 w-64 bg-[#1e222d] border border-[#363a45] rounded-lg shadow-2xl p-3 flex flex-col gap-2 font-sans">
+                      <div className="flex items-center justify-between pb-1 border-b border-[#2a2e39]">
+                        <span className="text-xs font-semibold text-gray-200">⏱️ 同步切换周期 (全部窗口)</span>
                         <button
-                          key={tf.value}
+                          type="button"
+                          onClick={() => setShowSimTfMenu(false)}
+                          className="text-gray-400 hover:text-white text-base leading-none"
+                        >
+                          &times;
+                        </button>
+                      </div>
+
+                      {/* 自定义周期输入行 */}
+                      <div className="flex gap-1.5">
+                        <input
+                          type="text"
+                          placeholder="输入周期 (如 15, 60, D...)"
+                          value={customTfInput}
+                          onChange={(e) => setCustomTfInput(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' && customTfInput.trim()) {
+                              triggerMultiWindowAction('timeframe', customTfInput.trim());
+                              setShowSimTfMenu(false);
+                              setCustomTfInput('');
+                            }
+                          }}
+                          className="flex-1 bg-[#131722] border border-[#363a45] focus:border-[#2962ff] rounded px-2 py-1 text-xs text-white outline-none"
+                        />
+                        <button
                           type="button"
                           onClick={() => {
-                            triggerMultiWindowAction('timeframe', tf.value);
-                            setShowSimTfMenu(false);
+                            if (customTfInput.trim()) {
+                              triggerMultiWindowAction('timeframe', customTfInput.trim());
+                              setShowSimTfMenu(false);
+                              setCustomTfInput('');
+                            }
                           }}
-                          className="w-full text-left px-2 py-1 text-[11px] text-gray-300 hover:text-white hover:bg-[#2962ff] rounded transition-colors font-mono"
+                          className="bg-[#2962ff] hover:bg-blue-600 text-white font-semibold px-2.5 py-1 text-xs rounded transition-colors whitespace-nowrap"
                         >
-                          {tf.label} ({tf.value})
+                          同步
                         </button>
-                      ))}
+                      </div>
+
+                      <div className="text-[11px] text-gray-400 mt-1">常用快捷周期：</div>
+                      <div className="grid grid-cols-4 gap-1">
+                        {[
+                          { label: '1分', value: '1m' },
+                          { label: '3分', value: '3m' },
+                          { label: '5分', value: '5m' },
+                          { label: '15分', value: '15m' },
+                          { label: '30分', value: '30m' },
+                          { label: '1小时', value: '1h' },
+                          { label: '4小时', value: '4h' },
+                          { label: '日线', value: '1D' }
+                        ].map((tf) => (
+                          <button
+                            key={tf.value}
+                            type="button"
+                            onClick={() => {
+                              triggerMultiWindowAction('timeframe', tf.value);
+                              setShowSimTfMenu(false);
+                            }}
+                            className="text-center py-1 text-[11px] text-gray-300 hover:text-white bg-[#2a2e39] hover:bg-[#2962ff] rounded transition-colors font-mono"
+                          >
+                            {tf.label}
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   )}
                 </div>

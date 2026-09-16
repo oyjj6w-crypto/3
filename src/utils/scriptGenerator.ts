@@ -265,13 +265,13 @@ export function generateUserScript(options: Partial<ScriptOptions> = {}): string
         return new Promise((resolve) => {
             const canvas = targetElement.querySelector('canvas') || targetElement;
             
-            // 1. 强行对画布设置 tabindex 并让其获取物理焦点（非常关键！TradingView 的全局监听器只有在焦点在其区域内时才捕获键盘事件）
+            // 1. 强行对画布设置 tabindex 并让其获取物理焦点
             if (canvas) {
                 canvas.setAttribute('tabindex', '-1');
                 canvas.focus();
             }
 
-            const chars = interval.split('');
+            const chars = String(interval).split('');
             let idx = 0;
 
             function typeNext() {
@@ -284,9 +284,6 @@ export function generateUserScript(options: Partial<ScriptOptions> = {}): string
                         code = "Digit" + char;
                     }
 
-                    // 关键所在：第一下敲击是针对 canvas 或者是 activeElement（唤起输入框）
-                    // 唤起输入框后，焦点的 activeElement 将自动切换为输入框本身的 input
-                    // 后续字符必须自动投递到当前的焦点元素 (activeElement) 上，否则字符无法键入到输入框中！
                     const activeEl = document.activeElement || canvas || document;
 
                     const down = new KeyboardEvent('keydown', {
@@ -300,6 +297,7 @@ export function generateUserScript(options: Partial<ScriptOptions> = {}): string
                         view: window
                     });
                     activeEl.dispatchEvent(down);
+                    window.dispatchEvent(down);
 
                     const press = new KeyboardEvent('keypress', {
                         key: char,
@@ -326,10 +324,10 @@ export function generateUserScript(options: Partial<ScriptOptions> = {}): string
                     activeEl.dispatchEvent(up);
 
                     idx++;
-                    // 延迟 60 毫秒输入下一个字符（给 TradingView 的 React 输入弹框留出充足的加载与承接时间）
-                    setTimeout(typeNext, 60);
+                    // 间隔 40 毫秒输入下一个字符
+                    setTimeout(typeNext, 40);
                 } else {
-                    // 字符输入结束，延迟 100 毫秒发送 Enter 确定键完成周期变更
+                    // 字符输入结束，延迟发送 Enter 确定键完成周期变更
                     setTimeout(() => {
                         const activeEl = document.activeElement || canvas || document;
                         const enterEvent = {
@@ -343,18 +341,103 @@ export function generateUserScript(options: Partial<ScriptOptions> = {}): string
                             view: window
                         };
                         activeEl.dispatchEvent(new KeyboardEvent('keydown', enterEvent));
+                        window.dispatchEvent(new KeyboardEvent('keydown', enterEvent));
                         activeEl.dispatchEvent(new KeyboardEvent('keypress', enterEvent));
                         activeEl.dispatchEvent(new KeyboardEvent('keyup', enterEvent));
                         
-                        // 结束当前窗口操作，释放 promise
                         setTimeout(resolve, 50);
-                    }, 100);
+                    }, 60);
                 }
             }
 
-            // 启动字符键入队列
             typeNext();
         });
+    }
+
+    // 综合多策略切换单个图表窗口周期 (API -> 顶栏原生周期按钮/下拉 -> 键盘输入兜底)
+    async function applyTimeframeToWindow(widget, interval, idx) {
+        let success = false;
+        const cleanTf = String(interval).trim().toUpperCase();
+
+        // 策略 1: TradingView 官方 API (window.tvWidget / unsafeWindow.tvWidget)
+        try {
+            const win = (typeof unsafeWindow !== 'undefined' ? unsafeWindow : window);
+            if (win.tvWidget) {
+                if (typeof win.tvWidget.chart === 'function') {
+                    const c = win.tvWidget.chart(idx);
+                    if (c && typeof c.setResolution === 'function') {
+                        c.setResolution(cleanTf);
+                        success = true;
+                    }
+                } else if (typeof win.tvWidget.activeChart === 'function') {
+                    const ac = win.tvWidget.activeChart();
+                    if (ac && typeof ac.setResolution === 'function') {
+                        ac.setResolution(cleanTf);
+                        success = true;
+                    }
+                }
+            }
+        } catch (e) {
+            console.warn('[TV-Enhancer] TV API setResolution error:', e);
+        }
+
+        // 策略 2: 顶栏 TradingView 原生周期按钮 / 下拉菜单精准点击
+        if (!success) {
+            try {
+                const intervalBar = document.querySelector('#header-toolbar-intervals') || 
+                                    document.querySelector('[data-name="header-toolbar-intervals"]') ||
+                                    document.querySelector('div[id*="header-toolbar-intervals"]');
+                if (intervalBar) {
+                    // 2a. 查找顶栏是否存在已收藏的快捷周期按钮 (如 1m, 3m, 5m, 15m, 1h, 4h, 1D, D)
+                    const buttons = Array.from(intervalBar.querySelectorAll('button, [role="button"]'));
+                    const directBtn = buttons.find(b => {
+                        const txt = (b.innerText || b.getAttribute('aria-label') || '').trim().toUpperCase();
+                        return txt === cleanTf || 
+                               txt === (cleanTf + 'M') || 
+                               txt === (cleanTf + '分') || 
+                               (cleanTf === '60' && (txt === '1H' || txt === '1小时' || txt === '60')) ||
+                               (cleanTf === '240' && (txt === '4H' || txt === '4小时' || txt === '240')) ||
+                               ((cleanTf === 'D' || cleanTf === '1D') && (txt === '1D' || txt === '日线' || txt === 'D'));
+                    });
+
+                    if (directBtn) {
+                        directBtn.click();
+                        success = true;
+                    } else {
+                        // 2b. 点击展开周期下拉菜单并在弹出列表中选取对应项
+                        const trigger = intervalBar.querySelector('button') || intervalBar;
+                        trigger.click();
+                        await delay(80);
+
+                        const items = Array.from(document.querySelectorAll('[data-role="menuitem"], [role="menuitem"], [class*="item-"]'));
+                        const menuItem = items.find(it => {
+                            const txt = (it.innerText || '').trim().toUpperCase();
+                            return txt === cleanTf || 
+                                   txt.includes(cleanTf + 'M') || 
+                                   txt.includes(cleanTf + '分') || 
+                                   (cleanTf === '60' && (txt.includes('1小时') || txt.includes('1H'))) ||
+                                   (cleanTf === '240' && (txt.includes('4小时') || txt.includes('4H'))) ||
+                                   ((cleanTf === 'D' || cleanTf === '1D') && (txt.includes('日线') || txt.includes('1D') || txt === 'D'));
+                        });
+
+                        if (menuItem) {
+                            menuItem.click();
+                            success = true;
+                        } else {
+                            // 关闭打开的菜单
+                            document.body.click();
+                        }
+                    }
+                }
+            } catch (e) {
+                console.warn('[TV-Enhancer] Toolbar interval click error:', e);
+            }
+        }
+
+        // 策略 3: 键盘输入流模拟（作为兜底尝试）
+        if (!success) {
+            await sendTimeframe(widget, cleanTf);
+        }
     }
 
     // 3. 磁力功能 (切换 Ctrl 吸附状态 / 或触发左侧磁吸工具)
@@ -507,97 +590,171 @@ export function generateUserScript(options: Partial<ScriptOptions> = {}): string
             handleTriggerInvert();
         });
 
-        // 4. 周期同步选择按钮与下拉菜单
-        const tContainer = document.createElement('div');
-        tContainer.id = 'tv_enhancer_t_container';
-        tContainer.style.cssText = \`
-            position: relative;
-            display: inline-block;
-        \`;
-
-        const tBtn = createIconButton('tv_enhancer_timeframe', '全部窗口：同步切换周期 (T)', '<span style="font-weight:bold;font-size:13px;font-family:sans-serif;">T</span>', () => {
-            const menu = document.getElementById('tv_enhancer_tf_menu');
-            if (menu) {
-                menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
-            }
-        });
-
-        const tfMenu = document.createElement('div');
-        tfMenu.id = 'tv_enhancer_tf_menu';
-        tfMenu.style.cssText = \`
-            display: none;
-            position: absolute;
-            top: 36px;
-            left: 2px;
-            z-index: 100010;
-            background: #1c2030;
-            border: 1px solid #363a45;
-            border-radius: 6px;
-            box-shadow: 0 4px 16px rgba(0,0,0,0.5);
-            padding: 4px;
-            width: 130px;
-        \`;
-
-        const periods = [
-            { label: '3分钟', value: '3' },
-            { label: '5分钟', value: '5' },
-            { label: '15分钟', value: '15' },
-            { label: '30分钟', value: '30' },
-            { label: '1小时', value: '60' },
-            { label: '4小时', value: '240' },
-            { label: '日线', value: 'D' }
-        ];
-
-        periods.forEach(p => {
-            const item = document.createElement('button');
-            item.type = 'button';
-            item.innerText = p.label;
-            item.style.cssText = \`
-                display: block;
-                width: 100%;
-                background: transparent;
-                border: none;
+        // 4. 周期同步切换浮窗与交互逻辑 (直接挂载在 document.body，彻底规避 TradingView 顶栏 overflow:hidden 截断)
+        let tfModal = document.getElementById('tv_enhancer_tf_modal');
+        if (!tfModal) {
+            tfModal = document.createElement('div');
+            tfModal.id = 'tv_enhancer_tf_modal';
+            tfModal.style.cssText = \`
+                display: none;
+                position: fixed;
+                z-index: 2147483647;
+                background: #1e222d;
+                border: 1px solid #363a45;
+                border-radius: 8px;
+                box-shadow: 0 8px 32px rgba(0, 0, 0, 0.75);
+                padding: 12px;
+                width: 250px;
+                font-family: -apple-system, BlinkMacSystemFont, 'Trebuchet MS', Roboto, Ubuntu, sans-serif;
                 color: #d1d4dc;
-                text-align: left;
-                padding: 6px 10px;
-                font-size: 11px;
-                cursor: pointer;
-                border-radius: 4px;
-                font-family: sans-serif;
+                box-sizing: border-box;
             \`;
-            item.onmouseenter = () => {
-                item.style.background = '#2962ff';
-                item.style.color = '#fff';
-            };
-            item.onmouseleave = () => {
-                item.style.background = 'transparent';
-                item.style.color = '#d1d4dc';
-            };
-            item.onclick = (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                tfMenu.style.display = 'none';
-                dispatchToAllWindows('切换周期为 ' + p.label, (widget) => {
-                    sendTimeframe(widget, p.value);
+
+            // 头部标题与关闭
+            const header = document.createElement('div');
+            header.style.cssText = 'display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;';
+            header.innerHTML = \`
+                <span style="font-weight:600; font-size:12px; color:#f0f3fa;">⏱️ 同步切换周期 (全部窗口)</span>
+                <span id="tv_tf_close" style="font-size:16px; cursor:pointer; color:#787b86; line-height:1; padding:2px;">&times;</span>
+            \`;
+            tfModal.appendChild(header);
+
+            // 自定义周期输入框行
+            const inputRow = document.createElement('div');
+            inputRow.style.cssText = 'display:flex; gap:6px; margin-bottom:10px;';
+            inputRow.innerHTML = \`
+                <input id="tv_tf_custom_input" type="text" placeholder="输入周期 (如 15, 60, D...)" style="flex:1; min-width:0; background:#131722; border:1px solid #363a45; border-radius:4px; padding:6px 8px; font-size:12px; color:#fff; outline:none;" />
+                <button id="tv_tf_sync_btn" type="button" style="background:#2962ff; color:#fff; border:none; border-radius:4px; padding:6px 10px; font-size:12px; font-weight:600; cursor:pointer; white-space:nowrap;">同步</button>
+            \`;
+            tfModal.appendChild(inputRow);
+
+            // 快捷周期提示
+            const tip = document.createElement('div');
+            tip.style.cssText = 'font-size:11px; color:#787b86; margin-bottom:6px;';
+            tip.innerText = '常用快捷周期：';
+            tfModal.appendChild(tip);
+
+            // 快捷周期网格
+            const grid = document.createElement('div');
+            grid.style.cssText = 'display:grid; grid-template-columns: repeat(4, 1fr); gap:4px;';
+
+            const periods = [
+                { label: '1分', val: '1' },
+                { label: '3分', val: '3' },
+                { label: '5分', val: '5' },
+                { label: '15分', val: '15' },
+                { label: '30分', val: '30' },
+                { label: '1小时', val: '60' },
+                { label: '4小时', val: '240' },
+                { label: '日线', val: 'D' }
+            ];
+
+            function doSync(val, label) {
+                if (!val) return;
+                tfModal.style.display = 'none';
+                dispatchToAllWindows('切换周期为 ' + (label || val), async (widget, i) => {
+                    return await applyTimeframeToWindow(widget, val, i);
                 });
-            };
-            tfMenu.appendChild(item);
-        });
+            }
 
-        tContainer.appendChild(tBtn);
-        tContainer.appendChild(tfMenu);
+            periods.forEach(p => {
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.innerText = p.label;
+                btn.style.cssText = \`
+                    background: #2a2e39;
+                    border: 1px solid transparent;
+                    color: #d1d4dc;
+                    border-radius: 4px;
+                    padding: 5px 0;
+                    font-size: 11px;
+                    cursor: pointer;
+                    text-align: center;
+                    transition: all 0.15s;
+                \`;
+                btn.onmouseenter = () => {
+                    btn.style.background = '#2962ff';
+                    btn.style.color = '#fff';
+                };
+                btn.onmouseleave = () => {
+                    btn.style.background = '#2a2e39';
+                    btn.style.color = '#d1d4dc';
+                };
+                btn.onclick = (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    doSync(p.val, p.label);
+                };
+                grid.appendChild(btn);
+            });
+            tfModal.appendChild(grid);
 
-        // 点击外部收起菜单
-        document.addEventListener('click', (e) => {
-            if (!tContainer.contains(e.target)) {
-                tfMenu.style.display = 'none';
+            document.body.appendChild(tfModal);
+
+            // 绑定关闭按钮
+            const closeBtn = tfModal.querySelector('#tv_tf_close');
+            if (closeBtn) {
+                closeBtn.onclick = (e) => {
+                    e.stopPropagation();
+                    tfModal.style.display = 'none';
+                };
+            }
+
+            // 绑定输入框回车与确定按钮
+            const syncBtn = tfModal.querySelector('#tv_tf_sync_btn');
+            const customInput = tfModal.querySelector('#tv_tf_custom_input');
+
+            if (syncBtn && customInput) {
+                syncBtn.onclick = (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const v = customInput.value.trim();
+                    if (v) doSync(v, v);
+                };
+
+                customInput.onkeydown = (e) => {
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        const v = customInput.value.trim();
+                        if (v) doSync(v, v);
+                    }
+                };
+            }
+
+            // 点击页面空白处收起
+            document.addEventListener('mousedown', (e) => {
+                const triggerBtn = document.getElementById('tv_enhancer_timeframe');
+                if (tfModal.style.display !== 'none' && !tfModal.contains(e.target) && (!triggerBtn || !triggerBtn.contains(e.target))) {
+                    tfModal.style.display = 'none';
+                }
+            });
+        }
+
+        // T 按钮触发器
+        const tBtn = createIconButton('tv_enhancer_timeframe', '全部窗口：同步切换周期 (T)', '<span style="font-weight:bold;font-size:13px;font-family:sans-serif;">T</span>', () => {
+            const modal = document.getElementById('tv_enhancer_tf_modal');
+            if (modal) {
+                if (modal.style.display === 'none' || !modal.style.display) {
+                    const rect = tBtn.getBoundingClientRect();
+                    modal.style.top = Math.max(10, rect.bottom + 6) + 'px';
+                    modal.style.left = Math.max(10, Math.min(window.innerWidth - 265, rect.left - 80)) + 'px';
+                    modal.style.display = 'block';
+                    const inp = modal.querySelector('#tv_tf_custom_input');
+                    if (inp) {
+                        inp.value = '';
+                        setTimeout(() => inp.focus(), 50);
+                    }
+                } else {
+                    modal.style.display = 'none';
+                }
             }
         });
 
         group.appendChild(hideBtn);
         group.appendChild(magnetBtn);
         group.appendChild(invertBtn);
-        group.appendChild(tContainer);
+        group.appendChild(tBtn);
 
         if (targetContainer) {
             // 注入到标签栏中
