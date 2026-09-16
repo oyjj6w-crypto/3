@@ -43,6 +43,8 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.text.style.TextAlign
@@ -73,8 +75,7 @@ fun TradingMultiViewScreen(
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
     var showSaveDialog by remember { mutableStateOf(false) }
-    var showTimeframeDropdown by remember { mutableStateOf(false) }
-    var customTfInput by remember { mutableStateOf("") }
+    var showTimeframeDialog by remember { mutableStateOf(false) }
 
     // 初始化时加载本地存储的自定义分组
     LaunchedEffect(Unit) {
@@ -244,200 +245,23 @@ fun TradingMultiViewScreen(
                     horizontalArrangement = Arrangement.spacedBy(3.dp)
                 ) {
                     // T. 周期选择 (T字按钮)
-                    Box {
-                        Box(
-                            modifier = Modifier
-                                .size(24.dp)
-                                .clip(RoundedCornerShape(4.dp))
-                                .background(
-                                    if (showTimeframeDropdown) Color(0xFF2563EB)
-                                    else Color(0xFF1E293B).copy(alpha = 0.7f)
-                                )
-                                .clickable { showTimeframeDropdown = !showTimeframeDropdown },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = "T",
-                                color = if (showTimeframeDropdown) Color.White else Color(0xFF38BDF8),
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold
+                    Box(
+                        modifier = Modifier
+                            .size(24.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(
+                                if (showTimeframeDialog) Color(0xFF2563EB)
+                                else Color(0xFF1E293B).copy(alpha = 0.7f)
                             )
-                        }
-
-                        if (showTimeframeDropdown) {
-                            Popup(
-                                alignment = Alignment.TopStart,
-                                onDismissRequest = { showTimeframeDropdown = false }
-                            ) {
-                                Card(
-                                    colors = CardDefaults.cardColors(
-                                        containerColor = Color(0xFF111827)
-                                    ),
-                                    border = BorderStroke(1.dp, Color(0xFF374151)),
-                                    shape = RoundedCornerShape(8.dp),
-                                    modifier = Modifier
-                                        .padding(top = 34.dp)
-                                        .width(280.dp)
-                                ) {
-                                    Column(
-                                        modifier = Modifier.padding(10.dp),
-                                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                                    ) {
-                                        // 顶部标题与关闭
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.SpaceBetween,
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Text(
-                                                text = "⏱️ 同步周期 (全部窗口)",
-                                                color = Color(0xFFF3F4F6),
-                                                fontSize = 11.sp,
-                                                fontWeight = FontWeight.Bold
-                                            )
-                                            Text(
-                                                text = "✕",
-                                                color = Color(0xFF9CA3AF),
-                                                fontSize = 12.sp,
-                                                modifier = Modifier
-                                                    .clip(CircleShape)
-                                                    .clickable { showTimeframeDropdown = false }
-                                                    .padding(2.dp)
-                                            )
-                                        }
-
-                                        // 自定义周期分钟输入框行
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                        ) {
-                                            Box(
-                                                modifier = Modifier
-                                                    .weight(1f)
-                                                    .height(30.dp)
-                                                    .clip(RoundedCornerShape(4.dp))
-                                                    .background(Color(0xFF1F2937))
-                                                    .border(1.dp, Color(0xFF374151), RoundedCornerShape(4.dp))
-                                                    .padding(horizontal = 8.dp),
-                                                contentAlignment = Alignment.CenterStart
-                                            ) {
-                                                if (customTfInput.isEmpty()) {
-                                                    Text(
-                                                        text = "输入周期 (如 7, 12, 15, 60...)",
-                                                        color = Color(0xFF6B7280),
-                                                        fontSize = 10.sp,
-                                                        maxLines = 1,
-                                                        overflow = TextOverflow.Ellipsis
-                                                    )
-                                                }
-                                                BasicTextField(
-                                                    value = customTfInput,
-                                                    onValueChange = { customTfInput = it },
-                                                    textStyle = TextStyle(
-                                                        color = Color.White,
-                                                        fontSize = 11.sp,
-                                                        fontFamily = FontFamily.Monospace
-                                                    ),
-                                                    singleLine = true,
-                                                    cursorBrush = SolidColor(Color(0xFF38BDF8)),
-                                                    keyboardOptions = KeyboardOptions(
-                                                        keyboardType = KeyboardType.Text,
-                                                        imeAction = ImeAction.Done
-                                                    ),
-                                                    keyboardActions = KeyboardActions(
-                                                        onDone = {
-                                                            if (customTfInput.isNotBlank()) {
-                                                                viewModel.triggerGlobalTimeframe(customTfInput.trim(), context)
-                                                                showTimeframeDropdown = false
-                                                                customTfInput = ""
-                                                            }
-                                                        }
-                                                    ),
-                                                    modifier = Modifier.fillMaxWidth()
-                                                )
-                                            }
-
-                                            Box(
-                                                modifier = Modifier
-                                                    .height(30.dp)
-                                                    .clip(RoundedCornerShape(4.dp))
-                                                    .background(Color(0xFF2563EB))
-                                                    .clickable {
-                                                        if (customTfInput.isNotBlank()) {
-                                                            viewModel.triggerGlobalTimeframe(customTfInput.trim(), context)
-                                                            showTimeframeDropdown = false
-                                                            customTfInput = ""
-                                                        }
-                                                    }
-                                                    .padding(horizontal = 10.dp),
-                                                contentAlignment = Alignment.Center
-                                            ) {
-                                                Text(
-                                                    text = "同步",
-                                                    color = Color.White,
-                                                    fontSize = 11.sp,
-                                                    fontWeight = FontWeight.Bold
-                                                )
-                                            }
-                                        }
-
-                                        // 常用快捷周期
-                                        Text(
-                                            text = "常用快捷周期：",
-                                            color = Color(0xFF9CA3AF),
-                                            fontSize = 10.sp
-                                        )
-
-                                        // 第一行 分钟快捷项
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(3.dp)
-                                        ) {
-                                            listOf("1m", "3m", "5m", "7m", "10m", "15m", "30m", "45m").forEach { tf ->
-                                                Box(
-                                                    modifier = Modifier
-                                                        .weight(1f)
-                                                        .height(24.dp)
-                                                        .clip(RoundedCornerShape(4.dp))
-                                                        .background(Color(0xFF1F2937))
-                                                        .clickable {
-                                                            viewModel.triggerGlobalTimeframe(tf, context)
-                                                            showTimeframeDropdown = false
-                                                        },
-                                                    contentAlignment = Alignment.Center
-                                                ) {
-                                                    Text(text = tf, color = Color.White, fontSize = 9.sp)
-                                                }
-                                            }
-                                        }
-
-                                        // 第二行 小时与日线快捷项
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(3.dp)
-                                        ) {
-                                            listOf("1h", "2h", "3h", "4h", "6h", "12h", "1D", "1W").forEach { tf ->
-                                                Box(
-                                                    modifier = Modifier
-                                                        .weight(1f)
-                                                        .height(24.dp)
-                                                        .clip(RoundedCornerShape(4.dp))
-                                                        .background(Color(0xFF1F2937))
-                                                        .clickable {
-                                                            viewModel.triggerGlobalTimeframe(tf, context)
-                                                            showTimeframeDropdown = false
-                                                        },
-                                                    contentAlignment = Alignment.Center
-                                                ) {
-                                                    Text(text = tf, color = Color.White, fontSize = 9.sp)
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                            .clickable { showTimeframeDialog = true },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "T",
+                            color = if (showTimeframeDialog) Color.White else Color(0xFF38BDF8),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
                     }
 
                     // 1. 隐藏/恢复画线 (Ctrl+Alt+H)
@@ -809,6 +633,204 @@ fun TradingMultiViewScreen(
                 showSaveDialog = false
             }
         )
+    }
+
+    if (showTimeframeDialog) {
+        TimeframeSyncDialog(
+            onDismiss = { showTimeframeDialog = false },
+            onSelectTimeframe = { tf ->
+                viewModel.triggerGlobalTimeframe(tf, context)
+                showTimeframeDialog = false
+            }
+        )
+    }
+}
+
+/**
+ * 同步 K 线周期对话框 (独立顶层窗口，防截断、支持软键盘)
+ */
+@Composable
+fun TimeframeSyncDialog(
+    onDismiss: () -> Unit,
+    onSelectTimeframe: (String) -> Unit
+) {
+    var customTfInput by remember { mutableStateOf("") }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Card(
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF111827)),
+            border = BorderStroke(1.dp, Color(0xFF374151)),
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier
+                .width(320.dp)
+                .padding(16.dp)
+        ) {
+            Column(
+                modifier = Modifier.padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                // 顶部标题与关闭
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = "⏱️ 同步 K 线周期",
+                            color = Color(0xFFF3F4F6),
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = "(全窗口)",
+                            color = Color(0xFF38BDF8),
+                            fontSize = 11.sp
+                        )
+                    }
+                    Text(
+                        text = "✕",
+                        color = Color(0xFF9CA3AF),
+                        fontSize = 14.sp,
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .clickable { onDismiss() }
+                            .padding(4.dp)
+                    )
+                }
+
+                // 自定义周期输入框行
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(34.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(Color(0xFF1F2937))
+                            .border(1.dp, Color(0xFF4B5563), RoundedCornerShape(6.dp))
+                            .padding(horizontal = 8.dp),
+                        contentAlignment = Alignment.CenterStart
+                    ) {
+                        if (customTfInput.isEmpty()) {
+                            Text(
+                                text = "输入周期 (如 7, 12, 15, 60, D)",
+                                color = Color(0xFF9CA3AF),
+                                fontSize = 11.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        BasicTextField(
+                            value = customTfInput,
+                            onValueChange = { customTfInput = it },
+                            textStyle = TextStyle(
+                                color = Color.White,
+                                fontSize = 12.sp,
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.SemiBold
+                            ),
+                            singleLine = true,
+                            cursorBrush = SolidColor(Color(0xFF38BDF8)),
+                            keyboardOptions = KeyboardOptions(
+                                keyboardType = KeyboardType.Text,
+                                imeAction = ImeAction.Done
+                            ),
+                            keyboardActions = KeyboardActions(
+                                onDone = {
+                                    if (customTfInput.isNotBlank()) {
+                                        onSelectTimeframe(customTfInput.trim())
+                                    }
+                                }
+                            ),
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+
+                    Button(
+                        onClick = {
+                            if (customTfInput.isNotBlank()) {
+                                onSelectTimeframe(customTfInput.trim())
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB)),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+                        shape = RoundedCornerShape(6.dp),
+                        modifier = Modifier.height(34.dp)
+                    ) {
+                        Text(
+                            text = "同步",
+                            color = Color.White,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+
+                // 常用快捷分钟周期
+                Text(
+                    text = "分钟周期：",
+                    color = Color(0xFF9CA3AF),
+                    fontSize = 10.sp
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    listOf("1m", "3m", "5m", "7m", "10m", "15m", "30m", "45m").forEach { tf ->
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(26.dp)
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(Color(0xFF1F2937))
+                                .border(0.5.dp, Color(0xFF374151), RoundedCornerShape(4.dp))
+                                .clickable { onSelectTimeframe(tf) },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(text = tf, color = Color(0xFFE2E8F0), fontSize = 10.sp, fontWeight = FontWeight.Medium)
+                        }
+                    }
+                }
+
+                // 常用快捷小时与日线周期
+                Text(
+                    text = "小时 / 日周月：",
+                    color = Color(0xFF9CA3AF),
+                    fontSize = 10.sp
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    listOf("1h", "2h", "3h", "4h", "6h", "12h", "1D", "1W").forEach { tf ->
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(26.dp)
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(Color(0xFF1F2937))
+                                .border(0.5.dp, Color(0xFF374151), RoundedCornerShape(4.dp))
+                                .clickable { onSelectTimeframe(tf) },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(text = tf, color = Color(0xFFE2E8F0), fontSize = 10.sp, fontWeight = FontWeight.Medium)
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 

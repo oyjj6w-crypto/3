@@ -3,6 +3,11 @@ package com.trading.multiview.webview
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Bitmap
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
+import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.*
@@ -563,13 +568,13 @@ object PersistentWebViewPool {
      * @param action "hide" (隐藏画线), "invert" / "invert4" (翻转4图K线), "invert8" (翻转8图K线), "magnet" (磁力吸附)
      */
     fun dispatchTradingViewAction(action: String, onProgress: ((Int, Int) -> Unit)? = null) {
-        val handler = android.os.Handler(android.os.Looper.getMainLooper())
+        val handler = Handler(Looper.getMainLooper())
         val windowIds = listOf(1, 2, 3)
         // 4图翻转每个窗口内部有4个子图串行处理（每个子图安全间隔：200ms聚焦等待 + 50ms按键延迟 + 250ms静默 = 500ms，总共约2000ms），
         // 为了确保不同 WebView 窗口之间完全不冲突不卡顿，我们将窗口间隔排队延时调整为 2600ms。
         val stepDelay = when {
             action == "invert4" -> 2600L
-            action.startsWith("timeframe_") -> 600L
+            action.startsWith("timeframe_") -> 1000L
             else -> 200L
         }
         windowIds.forEachIndexed { index, windowId ->
@@ -578,6 +583,10 @@ object PersistentWebViewPool {
                 if (webView != null) {
                     val script = buildActionExecutionScript(action)
                     webView.evaluateJavascript(script, null)
+                    if (action.startsWith("timeframe_")) {
+                        val tfVal = action.removePrefix("timeframe_")
+                        dispatchNativeTimeframe(webView, tfVal)
+                    }
                     onProgress?.invoke(windowId, windowIds.size)
                 }
             }, (index * stepDelay))
@@ -594,7 +603,68 @@ object PersistentWebViewPool {
         if (webView != null) {
             val script = buildActionExecutionScript(action)
             webView.evaluateJavascript(script, null)
+            if (action.startsWith("timeframe_")) {
+                val tfVal = action.removePrefix("timeframe_")
+                dispatchNativeTimeframe(webView, tfVal)
+            }
         }
+    }
+
+    /**
+     * 原生硬件按键级周期切换引擎 (Android OS 管道 KeyEvent，isTrusted=true)
+     * 解决 TradingView 内部拒绝未授权 JavaScript 合成按键 (isTrusted: false) 的痛点
+     */
+    private fun dispatchNativeTimeframe(webView: WebView, tfVal: String) {
+        val handler = Handler(Looper.getMainLooper())
+        webView.requestFocus()
+
+        // 1. 模拟原生触摸点击 K 线图画布中心，确保 Chromium 核心聚焦该元素
+        val w = webView.width.toFloat().coerceAtLeast(300f)
+        val h = webView.height.toFloat().coerceAtLeast(300f)
+        val cx = w / 2f
+        val cy = h / 2f
+        val now = SystemClock.uptimeMillis()
+
+        try {
+            val downEvent = MotionEvent.obtain(now, now, MotionEvent.ACTION_DOWN, cx, cy, 0)
+            webView.dispatchTouchEvent(downEvent)
+            downEvent.recycle()
+
+            val upEvent = MotionEvent.obtain(now, now + 30, MotionEvent.ACTION_UP, cx, cy, 0)
+            webView.dispatchTouchEvent(upEvent)
+            upEvent.recycle()
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+
+        // 2. 延迟 180ms 等待聚焦生效后，逐字符发送原生 KeyEvent (isTrusted = true)
+        var currentDelay = 180L
+        for (char in tfVal) {
+            val keyCode = when (char) {
+                in '0'..'9' -> KeyEvent.KEYCODE_0 + (char - '0')
+                'D', 'd' -> KeyEvent.KEYCODE_D
+                'W', 'w' -> KeyEvent.KEYCODE_W
+                'M', 'm' -> KeyEvent.KEYCODE_M
+                'H', 'h' -> KeyEvent.KEYCODE_H
+                'S', 's' -> KeyEvent.KEYCODE_S
+                else -> 0
+            }
+            if (keyCode != 0) {
+                handler.postDelayed({
+                    val t = SystemClock.uptimeMillis()
+                    webView.dispatchKeyEvent(KeyEvent(t, t, KeyEvent.ACTION_DOWN, keyCode, 0))
+                    webView.dispatchKeyEvent(KeyEvent(t, t + 25, KeyEvent.ACTION_UP, keyCode, 0))
+                }, currentDelay)
+                currentDelay += 60L
+            }
+        }
+
+        // 3. 全部字符键入完毕后，延迟 100ms 发送真实的 Enter 回车确认键
+        handler.postDelayed({
+            val t = SystemClock.uptimeMillis()
+            webView.dispatchKeyEvent(KeyEvent(t, t, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER, 0))
+            webView.dispatchKeyEvent(KeyEvent(t, t + 25, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER, 0))
+        }, currentDelay + 100L)
     }
 
     private fun buildActionExecutionScript(action: String): String {
@@ -738,6 +808,49 @@ object PersistentWebViewPool {
                                 }, 50);
                             } else if (action.indexOf('timeframe_') === 0) {
                                 var tfVal = action.substring(10);
+
+                                // 策略 1: 尝试 TradingView 原生 API (若已暴露)
+                                try {
+                                    if (window.tvWidget && typeof window.tvWidget.chart === 'function') {
+                                        window.tvWidget.chart().setResolution(tfVal);
+                                        return;
+                                    }
+                                    if (window.TradingView && typeof window.TradingView.activeChart === 'function') {
+                                        window.TradingView.activeChart().setResolution(tfVal);
+                                        return;
+                                    }
+                                } catch(e) {}
+
+                                // 策略 2: 尝试点击 TradingView 顶栏快捷周期按钮
+                                try {
+                                    var tbButtons = document.querySelectorAll('#header-toolbar-intervals button, [data-name="header-toolbar-intervals"] button, button[data-value]');
+                                    for (var bi = 0; bi < tbButtons.length; bi++) {
+                                        var b = tbButtons[bi];
+                                        var v = (b.getAttribute('data-value') || b.textContent || '').trim().toLowerCase();
+                                        if (v === tfVal.toLowerCase() || v === (tfVal + 'm').toLowerCase()) {
+                                            b.click();
+                                            setTimeout(function() { processPoint(idx + 1); }, 150);
+                                            return;
+                                        }
+                                    }
+                                } catch(e) {}
+
+                                // 策略 3: 如果当前已有周期输入框弹出，直接设值并回车
+                                try {
+                                    var inputEl = document.querySelector('[data-dialog-name="Change interval"] input') || 
+                                                  document.querySelector('div[class*="dialog"] input') || 
+                                                  document.querySelector('input[data-role="search"]');
+                                    if (inputEl) {
+                                        inputEl.focus();
+                                        inputEl.value = tfVal;
+                                        inputEl.dispatchEvent(new Event('input', { bubbles: true }));
+                                        inputEl.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+                                        setTimeout(function() { processPoint(idx + 1); }, 150);
+                                        return;
+                                    }
+                                } catch(e) {}
+
+                                // 策略 4: 逐字符向活动元素、目标元素及 window 派发 KeyboardEvent
                                 var charIdx = 0;
                                 function typeNextChar() {
                                     if (charIdx < tfVal.length) {
