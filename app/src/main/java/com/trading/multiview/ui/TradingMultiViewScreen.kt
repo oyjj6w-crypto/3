@@ -654,7 +654,6 @@ fun TimeframeSyncDialog(
     onDismiss: () -> Unit,
     onSelectTimeframe: (String, Set<Int>) -> Unit
 ) {
-    var customTfInput by remember { mutableStateOf("") }
     var selectedWindows by remember { mutableStateOf(setOf(1, 2, 3)) }
 
     Dialog(
@@ -670,42 +669,10 @@ fun TimeframeSyncDialog(
                 .padding(16.dp)
         ) {
             Column(
-                modifier = Modifier.padding(14.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
+                modifier = Modifier.padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                // 顶部标题与关闭
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = "⏱️ 同步 K 线周期",
-                            color = Color(0xFFF3F4F6),
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                    Text(
-                        text = "✕",
-                        color = Color(0xFF9CA3AF),
-                        fontSize = 14.sp,
-                        modifier = Modifier
-                            .clip(CircleShape)
-                            .clickable { onDismiss() }
-                            .padding(4.dp)
-                    )
-                }
-
-                // 窗口目标选择 UI
-                Text(
-                    text = "选择要生效的窗口：",
-                    color = Color(0xFF9CA3AF),
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold
-                )
-
+                // 窗口目标选择按钮
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -758,86 +725,7 @@ fun TimeframeSyncDialog(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(2.dp))
-
-                // 自定义周期输入框行
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(34.dp)
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(Color(0xFF1F2937))
-                            .border(1.dp, Color(0xFF4B5563), RoundedCornerShape(6.dp))
-                            .padding(horizontal = 8.dp),
-                        contentAlignment = Alignment.CenterStart
-                    ) {
-                        if (customTfInput.isEmpty()) {
-                            Text(
-                                text = "输入周期 (如 15, 60, D)",
-                                color = Color(0xFF9CA3AF),
-                                fontSize = 11.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                        BasicTextField(
-                            value = customTfInput,
-                            onValueChange = { customTfInput = it },
-                            textStyle = TextStyle(
-                                color = Color.White,
-                                fontSize = 12.sp,
-                                fontFamily = FontFamily.Monospace,
-                                fontWeight = FontWeight.SemiBold
-                            ),
-                            singleLine = true,
-                            cursorBrush = SolidColor(Color(0xFF38BDF8)),
-                            keyboardOptions = KeyboardOptions(
-                                keyboardType = KeyboardType.Text,
-                                imeAction = ImeAction.Done
-                            ),
-                            keyboardActions = KeyboardActions(
-                                onDone = {
-                                    if (customTfInput.isNotBlank()) {
-                                        onSelectTimeframe(customTfInput.trim(), selectedWindows)
-                                    }
-                                }
-                            ),
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                    }
-
-                    Button(
-                        onClick = {
-                            if (customTfInput.isNotBlank()) {
-                                onSelectTimeframe(customTfInput.trim(), selectedWindows)
-                            }
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB)),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
-                        shape = RoundedCornerShape(6.dp),
-                        modifier = Modifier.height(34.dp)
-                    ) {
-                        Text(
-                            text = "同步",
-                            color = Color.White,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                }
-
-                // 常用快捷周期
-                Text(
-                    text = "分钟级别：",
-                    color = Color(0xFF9CA3AF),
-                    fontSize = 10.sp
-                )
-
+                // 快捷分钟周期行
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -859,12 +747,7 @@ fun TimeframeSyncDialog(
                     }
                 }
 
-                Text(
-                    text = "小时级别：",
-                    color = Color(0xFF9CA3AF),
-                    fontSize = 10.sp
-                )
-
+                // 快捷小时周期行
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -886,12 +769,7 @@ fun TimeframeSyncDialog(
                     }
                 }
 
-                Text(
-                    text = "日线 / 周月：",
-                    color = Color(0xFF9CA3AF),
-                    fontSize = 10.sp
-                )
-
+                // 快捷日线/周月周期行
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
