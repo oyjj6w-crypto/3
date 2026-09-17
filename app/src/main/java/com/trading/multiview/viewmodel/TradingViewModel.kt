@@ -3,6 +3,7 @@ package com.trading.multiview.viewmodel
 import android.content.Context
 import androidx.lifecycle.ViewModel
 import com.trading.multiview.webview.PersistentWebViewPool
+import com.trading.multiview.storage.PersistentSessionManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -1010,6 +1011,56 @@ class TradingViewModel : ViewModel() {
         context?.let {
             val winsText = selectedWindowIds.sorted().joinToString(", ") { "窗口 $it" }
             android.widget.Toast.makeText(it, "已在 $winsText 触发 K 线周期切换为 $tf", android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /**
+     * 手动/主动将当前 TradingView 登录状态及配置持久化到公共目录
+     */
+    fun backupSessionToPublicStorage(context: Context) {
+        PersistentSessionManager.backupCookiesToPublicStorage(context) { success, msg ->
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                if (success) {
+                    PersistentSessionManager.backupPreferencesToPublicStorage(context)
+                    android.widget.Toast.makeText(
+                        context,
+                        "已成功将 TradingView 登录凭证保存至公共目录！即使删除 App 重装也能免登录",
+                        android.widget.Toast.LENGTH_LONG
+                    ).show()
+                } else {
+                    android.widget.Toast.makeText(
+                        context,
+                        "登录备份提示: $msg",
+                        android.widget.Toast.LENGTH_SHORT
+                    ).show()
+                }
+            }
+        }
+    }
+
+    /**
+     * 从公共目录重新载入登录状态与配置
+     */
+    fun restoreSessionFromPublicStorage(context: Context) {
+        PersistentSessionManager.restoreCookiesFromPublicStorage(context) { success, count ->
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                if (success && count > 0) {
+                    PersistentSessionManager.restorePreferencesFromPublicStorageIfNeeded(context)
+                    loadSavedGroupsFromPrefs(context)
+                    reloadAll()
+                    android.widget.Toast.makeText(
+                        context,
+                        "已从公共目录恢复 $count 个域名的登录凭证并刷新！",
+                        android.widget.Toast.LENGTH_SHORT
+                    ).show()
+                } else {
+                    android.widget.Toast.makeText(
+                        context,
+                        "公共目录暂无已备份的有效登录凭证",
+                        android.widget.Toast.LENGTH_SHORT
+                    ).show()
+                }
+            }
         }
     }
 }

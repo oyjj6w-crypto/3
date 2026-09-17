@@ -11,6 +11,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.*
+import com.trading.multiview.storage.PersistentSessionManager
 
 /**
  * 持久化 WebView 池
@@ -298,6 +299,16 @@ object PersistentWebViewPool {
         val appCtx = context.applicationContext
         this.appContext = appCtx
         if (isInitialized) return
+
+        // 1. 全局配置 CookieManager：开启第三方 Cookie 支持与自动同步
+        try {
+            val cookieManager = CookieManager.getInstance()
+            cookieManager.setAcceptCookie(true)
+            // 从外部公共目录（Documents/TradingMultiView/）静默恢复持久化登录凭据（卸载重装免登录）
+            PersistentSessionManager.restoreCookiesFromPublicStorage(appCtx)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
         
         // 为 3 个视窗分别创建专属 WebView 实例
         listOf(1, 2, 3).forEach { windowId ->
@@ -319,6 +330,13 @@ object PersistentWebViewPool {
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
             )
+
+            // 关键：开启 CookieManager 跨源/第三方 Cookie 接收，支持 TradingView Google/Twitter OAuth 登录
+            try {
+                CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
 
             // 关键优化 1：彻底解决 K 线图表在数据更新更正时的周期性闪烁！
             // Android 窗口在 AndroidManifest 中已开启硬件加速，Chromium 原生通过专用 GPU 合成线程渲染 WebGL / Canvas。
@@ -402,6 +420,10 @@ object PersistentWebViewPool {
                         lastReportedUrl = url
                         saveWindowUrl(windowId, url, view?.title ?: "")
                         onUrlChanged?.invoke(windowId, url, view?.title ?: "")
+                    }
+                    // 自动将会话与 Cookie 同步备份到公共目录（防卸载丢失）
+                    if (url != null && (url.contains("tradingview.com") || url.contains("binance.com") || url.contains("okx.com"))) {
+                        appContext?.let { PersistentSessionManager.backupCookiesToPublicStorage(it) }
                     }
                 }
 

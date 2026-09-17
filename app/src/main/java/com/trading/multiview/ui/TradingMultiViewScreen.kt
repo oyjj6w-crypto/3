@@ -79,6 +79,7 @@ fun TradingMultiViewScreen(
     var showInvertDialog by remember { mutableStateOf(false) }
     var showHideDrawingsDialog by remember { mutableStateOf(false) }
     var showMagnetDialog by remember { mutableStateOf(false) }
+    var showSessionDialog by remember { mutableStateOf(false) }
 
     // 初始化时加载本地存储的自定义分组
     LaunchedEffect(Unit) {
@@ -428,6 +429,24 @@ fun TradingMultiViewScreen(
                             modifier = Modifier.size(15.dp)
                         )
                     }
+
+                    // 账号会话与持久化备份（卸载重装免登录）按钮
+                    Box(
+                        modifier = Modifier
+                            .size(30.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(Color(0xFF1E293B))
+                            .border(1.dp, Color(0xFF334155), RoundedCornerShape(6.dp))
+                            .clickable { showSessionDialog = true },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.AccountCircle,
+                            contentDescription = "登录持久化与跨安装备份",
+                            tint = Color(0xFF10B981),
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
                 }
             }
         }
@@ -645,6 +664,14 @@ fun TradingMultiViewScreen(
                 viewModel.triggerInvert4Charts(targets, delayMs, context)
                 showInvertDialog = false
             }
+        )
+    }
+
+    if (showSessionDialog) {
+        SessionPersistenceDialog(
+            viewModel = viewModel,
+            context = context,
+            onDismiss = { showSessionDialog = false }
         )
     }
 }

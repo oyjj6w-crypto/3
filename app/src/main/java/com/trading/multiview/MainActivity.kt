@@ -18,6 +18,7 @@ import com.trading.multiview.ui.TradingMultiViewScreen
 import com.trading.multiview.ui.theme.TradingMultiViewTheme
 import com.trading.multiview.viewmodel.TradingViewModel
 import com.trading.multiview.webview.PersistentWebViewPool
+import com.trading.multiview.storage.PersistentSessionManager
 
 class MainActivity : ComponentActivity() {
 
@@ -25,6 +26,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // 优先尝试从外部公共存储恢复应用配置与分组（如果属于全新重装）
+        PersistentSessionManager.restorePreferencesFromPublicStorageIfNeeded(applicationContext)
 
         // 强制传感器横屏锁定 (Sensor Landscape，支持 180° 正反横屏倒转，禁止误切竖屏，保证 3 窗口最宽可视区)
         requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
@@ -65,6 +69,13 @@ class MainActivity : ComponentActivity() {
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         // 此处可做额外横竖屏 UI 逻辑自适应，WebView 零重载
+    }
+
+    override fun onStop() {
+        super.onStop()
+        // 退入后台或关闭时，自动持久化会话 Cookie 与分组配置至外部公共存储（卸载免重新登录）
+        PersistentSessionManager.backupCookiesToPublicStorage(applicationContext)
+        PersistentSessionManager.backupPreferencesToPublicStorage(applicationContext)
     }
 
     override fun onDestroy() {
