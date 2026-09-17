@@ -486,45 +486,6 @@ fun TradingMultiViewScreen(
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                                     ) {
-                                        // 隐藏/显示画图快捷键图标 (Ctrl+Alt+H) - 独立控制
-                                        Icon(
-                                            imageVector = Icons.Default.VisibilityOff,
-                                            contentDescription = "隐藏画图 (Ctrl+Alt+H)",
-                                            tint = Color(0xFF38BDF8),
-                                            modifier = Modifier
-                                                .size(13.dp)
-                                                .clickable { viewModel.triggerSingleHideDrawings(win.id, context) }
-                                        )
-
-                                        // 磁吸快捷键图标 (Ctrl) - 独立控制
-                                        Icon(
-                                            imageVector = Icons.Default.CenterFocusStrong,
-                                            contentDescription = "磁力吸附切换 (Ctrl)",
-                                            tint = if (win.isMagnetActive) Color(0xFFFB7185) else Color(0xFFCBD5E1),
-                                            modifier = Modifier
-                                                .size(13.dp)
-                                                .clickable { viewModel.triggerSingleToggleMagnet(win.id, context) }
-                                        )
-
-                                        // 翻转K线 - 独立控制当前窗口从上往下4个K线图的翻转 (用阿拉伯数字 4 代替 SwapVert 图标)
-                                        Box(
-                                            modifier = Modifier
-                                                .size(14.dp)
-                                                .clip(RoundedCornerShape(3.dp))
-                                                .background(Color(0xFF1E293B))
-                                                .border(0.5.dp, Color(0xFF34D399), RoundedCornerShape(3.dp))
-                                                .clickable { viewModel.triggerSingleInvert(win.id, context) },
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Text(
-                                                text = "4",
-                                                color = Color(0xFF34D399),
-                                                fontSize = 9.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                fontFamily = FontFamily.Monospace
-                                            )
-                                        }
-
                                         // 窗口单独刷新
                                         Icon(
                                             imageVector = Icons.Default.Refresh,
@@ -680,8 +641,8 @@ fun TradingMultiViewScreen(
     if (showInvertDialog) {
         Invert4SyncDialog(
             onDismiss = { showInvertDialog = false },
-            onConfirm = { targets ->
-                viewModel.triggerInvert4Charts(targets, context)
+            onConfirm = { targets, delayMs ->
+                viewModel.triggerInvert4Charts(targets, delayMs, context)
                 showInvertDialog = false
             }
         )
@@ -1150,14 +1111,15 @@ fun HideDrawingsSyncDialog(
 }
 
 /**
- * 4图翻转 K线选择对话框 (默认 1, 2, 3 全选，支持选择 1 个或 2 个或 3 个)
+ * 4图翻转 K线选择对话框 (默认 1, 2, 3 全选，支持选择 1 个或 2 个或 3 个，支持自定义延迟 ms，默认 200ms 为原默认值的 1/2)
  */
 @Composable
 fun Invert4SyncDialog(
     onDismiss: () -> Unit,
-    onConfirm: (Set<Int>) -> Unit
+    onConfirm: (Set<Int>, Long) -> Unit
 ) {
     var selectedWindows by remember { mutableStateOf(setOf(1, 2, 3)) }
+    var delayText by remember { mutableStateOf("200") }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -1236,6 +1198,108 @@ fun Invert4SyncDialog(
                     }
                 }
 
+                // 自定义延迟 ms 输入框 (默认 200ms，为原默认400ms的二分之一)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(Color(0xFF1E293B))
+                        .border(1.dp, Color(0xFF334155), RoundedCornerShape(6.dp))
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column {
+                        Text(
+                            text = "自定义翻转延迟:",
+                            color = Color(0xFFE2E8F0),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Text(
+                            text = "默认 200ms (原默认值的 1/2)",
+                            color = Color(0xFF64748B),
+                            fontSize = 9.sp
+                        )
+                    }
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .width(64.dp)
+                                .height(26.dp)
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(Color(0xFF0F172A))
+                                .border(1.dp, Color(0xFF34D399), RoundedCornerShape(4.dp))
+                                .padding(horizontal = 4.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            BasicTextField(
+                                value = delayText,
+                                onValueChange = { newText ->
+                                    if (newText.all { it.isDigit() } && newText.length <= 5) {
+                                        delayText = newText
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                singleLine = true,
+                                textStyle = TextStyle(
+                                    color = Color(0xFF34D399),
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = FontFamily.Monospace,
+                                    textAlign = TextAlign.Center
+                                ),
+                                cursorBrush = SolidColor(Color(0xFF34D399)),
+                                keyboardOptions = KeyboardOptions(
+                                    keyboardType = KeyboardType.Number,
+                                    imeAction = ImeAction.Done
+                                )
+                            )
+                        }
+                        Text(
+                            text = "ms",
+                            color = Color(0xFFCBD5E1),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+
+                // 快捷预设按钮
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    listOf(100, 200, 300, 400).forEach { preset ->
+                        val isCurrent = delayText == preset.toString()
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(if (isCurrent) Color(0xFF065F46) else Color(0xFF1F2937))
+                                .border(
+                                    0.5.dp,
+                                    if (isCurrent) Color(0xFF34D399) else Color(0xFF374151),
+                                    RoundedCornerShape(4.dp)
+                                )
+                                .clickable { delayText = preset.toString() }
+                                .padding(vertical = 4.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "${preset}ms",
+                                color = if (isCurrent) Color(0xFF34D399) else Color(0xFF94A3B8),
+                                fontSize = 9.sp,
+                                fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal
+                            )
+                        }
+                    }
+                }
+
                 // 立即执行按钮
                 Box(
                     modifier = Modifier
@@ -1243,7 +1307,10 @@ fun Invert4SyncDialog(
                         .height(36.dp)
                         .clip(RoundedCornerShape(6.dp))
                         .background(Color(0xFF047857))
-                        .clickable { onConfirm(selectedWindows) },
+                        .clickable {
+                            val parsedDelay = delayText.toLongOrNull()?.coerceAtLeast(30L) ?: 200L
+                            onConfirm(selectedWindows, parsedDelay)
+                        },
                     contentAlignment = Alignment.Center
                 ) {
                     Text(

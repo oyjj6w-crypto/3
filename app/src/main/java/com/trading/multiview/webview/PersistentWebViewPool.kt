@@ -571,16 +571,15 @@ object PersistentWebViewPool {
     fun dispatchTradingViewAction(
         action: String,
         selectedWindowIds: Set<Int> = setOf(1, 2, 3),
+        customDelayMs: Long = 200L,
         onProgress: ((Int, Int) -> Unit)? = null
     ) {
         val handler = Handler(Looper.getMainLooper())
         // 保证按窗口 1 -> 2 -> 3 顺序推进，且只执行用户选中的窗口
         val windowIds = selectedWindowIds.toList().filter { it in 1..3 }.sorted()
-        // 4图翻转每个窗口内部有4个子图串行处理（每个子图安全间隔：200ms聚焦等待 + 50ms按键延迟 + 250ms静默 = 500ms，总共约2000ms），
-        // 为了确保不同 WebView 窗口之间完全不冲突不卡顿，我们将窗口间隔排队延时调整为 2600ms。
-        // 周期切换（timeframe_）窗口间隔设为 1000ms。其余通用延迟根据用户要求升级为 400ms (原为 200ms)。
+        // 4图翻转每个窗口内部有4个子图串行处理，根据用户设定的自定义延迟 (默认 200ms，为原默认400ms的二分之一) 动态计算窗口间排队延时
         val stepDelay = when {
-            action == "invert4" -> 3800L
+            action == "invert4" -> (4 * (customDelayMs * 2 + 60) + 100).coerceAtLeast(500L)
             action.startsWith("timeframe_") -> 1000L
             else -> 400L
         }
@@ -588,7 +587,7 @@ object PersistentWebViewPool {
             handler.postDelayed({
                 val webView = webViewMap[windowId]
                 if (webView != null) {
-                    val script = buildActionExecutionScript(action)
+                    val script = buildActionExecutionScript(action, customDelayMs)
                     webView.evaluateJavascript(script, null)
                     if (action.startsWith("timeframe_")) {
                         val tfVal = action.removePrefix("timeframe_")
@@ -605,10 +604,10 @@ object PersistentWebViewPool {
      * @param windowId 目标窗口 ID (1, 2, 3)
      * @param action "hide" (隐藏画线), "invert" (翻转K线), "magnet" (磁力吸附)
      */
-    fun dispatchSingleTradingViewAction(windowId: Int, action: String) {
+    fun dispatchSingleTradingViewAction(windowId: Int, action: String, customDelayMs: Long = 200L) {
         val webView = webViewMap[windowId]
         if (webView != null) {
-            val script = buildActionExecutionScript(action)
+            val script = buildActionExecutionScript(action, customDelayMs)
             webView.evaluateJavascript(script, null)
             if (action.startsWith("timeframe_")) {
                 val tfVal = action.removePrefix("timeframe_")
@@ -657,11 +656,13 @@ object PersistentWebViewPool {
         }, currentDelay + 100L)
     }
 
-    private fun buildActionExecutionScript(action: String): String {
+    private fun buildActionExecutionScript(action: String, customDelayMs: Long = 200L): String {
         return """
             (function() {
                 try {
                     var action = '$action';
+                    var customDelay = $customDelayMs;
+                    var focusDelay = (action.indexOf('invert') === 0) ? customDelay : 400;
                     
                     // 磁吸直接单独触发，不需要遍历所有子K线图
                     if (action === 'magnet') {
@@ -921,23 +922,24 @@ object PersistentWebViewPool {
                                 var opts = { key: 'i', code: 'KeyI', keyCode: 73, which: 73, altKey: true, bubbles: true, cancelable: true, composed: true };
                                 var kd = new KeyboardEvent('keydown', opts);
                                 target.dispatchEvent(kd);
+                                var keyHold = Math.min(60, Math.max(25, Math.floor(customDelay / 4)));
                                 setTimeout(function() {
                                     var ku = new KeyboardEvent('keyup', opts);
                                     target.dispatchEvent(ku);
 
-                                    // 每个子图翻转完毕后，稍候 400ms 推进到下一个子图
+                                    // 每个子图翻转完毕后，稍候自定义延迟 (默认 200ms) 推进到下一个子图
                                     setTimeout(function() {
                                         processPoint(idx + 1);
-                                    }, 400);
-                                }, 80);
+                                    }, customDelay);
+                                }, keyHold);
                                 return;
                             }
 
-                            // 【安全延迟 400ms】：处理完毕后，再给浏览器与内核 400ms 的渲染静默空闲
+                            // 处理完毕后，再给浏览器与内核渲染静默空闲
                             setTimeout(function() {
                                 processPoint(idx + 1);
-                            }, 400);
-                        }, 400);
+                            }, focusDelay);
+                        }, focusDelay);
                     }
 
                     processPoint(0);

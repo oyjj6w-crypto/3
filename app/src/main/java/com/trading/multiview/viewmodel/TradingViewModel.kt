@@ -849,14 +849,14 @@ class TradingViewModel : ViewModel() {
     }
 
     /**
-     * 4图布局翻转 K 线图 (Alt+I)：默认 3 个窗口全部生效，也可由用户选择对其中 1 个或 2 个窗口生效
+     * 4图布局翻转 K 线图 (Alt+I)：默认 3 个窗口全部生效，也可由用户选择对其中 1 个或 2 个窗口生效，支持自定义延迟 (默认 200ms)
      */
-    fun triggerInvert4Charts(targets: Set<Int> = setOf(1, 2, 3), context: Context? = null) {
+    fun triggerInvert4Charts(targets: Set<Int> = setOf(1, 2, 3), delayMs: Long = 200L, context: Context? = null) {
         val validTargets = targets.filter { it in 1..3 }.toSet().ifEmpty { setOf(1, 2, 3) }
-        PersistentWebViewPool.dispatchTradingViewAction("invert4", validTargets)
+        PersistentWebViewPool.dispatchTradingViewAction("invert4", validTargets, customDelayMs = delayMs)
         context?.let {
             val winNames = validTargets.sorted().joinToString(", ") { "窗口$it" }
-            android.widget.Toast.makeText(it, "已向 $winNames 触发 4 布局依次翻转 K 线 (Alt+I)", android.widget.Toast.LENGTH_SHORT).show()
+            android.widget.Toast.makeText(it, "已向 $winNames 触发 4 布局依次翻转 K 线 (延迟 ${delayMs}ms)", android.widget.Toast.LENGTH_SHORT).show()
         }
     }
 
