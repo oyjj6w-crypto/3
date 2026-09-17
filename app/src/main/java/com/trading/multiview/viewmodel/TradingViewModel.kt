@@ -1017,14 +1017,14 @@ class TradingViewModel : ViewModel() {
     /**
      * 手动/主动将当前 TradingView 登录状态及配置持久化到公共目录
      */
-    fun backupSessionToPublicStorage(context: Context) {
-        PersistentSessionManager.backupCookiesToPublicStorage(context) { success, msg ->
+    fun backupSessionToPublicStorage(context: Context, onComplete: ((Boolean, String) -> Unit)? = null) {
+        PersistentSessionManager.backupCookiesToPublicStorage(context, force = true) { success, msg ->
             android.os.Handler(android.os.Looper.getMainLooper()).post {
                 if (success) {
                     PersistentSessionManager.backupPreferencesToPublicStorage(context)
                     android.widget.Toast.makeText(
                         context,
-                        "已成功将 TradingView 登录凭证保存至公共目录！即使删除 App 重装也能免登录",
+                        msg,
                         android.widget.Toast.LENGTH_LONG
                     ).show()
                 } else {
@@ -1034,6 +1034,7 @@ class TradingViewModel : ViewModel() {
                         android.widget.Toast.LENGTH_SHORT
                     ).show()
                 }
+                onComplete?.invoke(success, msg)
             }
         }
     }
@@ -1041,8 +1042,8 @@ class TradingViewModel : ViewModel() {
     /**
      * 从公共目录重新载入登录状态与配置
      */
-    fun restoreSessionFromPublicStorage(context: Context) {
-        PersistentSessionManager.restoreCookiesFromPublicStorage(context) { success, count ->
+    fun restoreSessionFromPublicStorage(context: Context, onComplete: ((Boolean, String) -> Unit)? = null) {
+        PersistentSessionManager.restoreCookiesFromPublicStorage(context) { success, count, msg ->
             android.os.Handler(android.os.Looper.getMainLooper()).post {
                 if (success && count > 0) {
                     PersistentSessionManager.restorePreferencesFromPublicStorageIfNeeded(context)
@@ -1050,17 +1051,47 @@ class TradingViewModel : ViewModel() {
                     reloadAll()
                     android.widget.Toast.makeText(
                         context,
-                        "已从公共目录恢复 $count 个域名的登录凭证并刷新！",
-                        android.widget.Toast.LENGTH_SHORT
+                        msg,
+                        android.widget.Toast.LENGTH_LONG
                     ).show()
                 } else {
                     android.widget.Toast.makeText(
                         context,
-                        "公共目录暂无已备份的有效登录凭证",
-                        android.widget.Toast.LENGTH_SHORT
+                        msg,
+                        android.widget.Toast.LENGTH_LONG
                     ).show()
                 }
+                onComplete?.invoke(success, msg)
             }
         }
+    }
+
+    /**
+     * 将当前凭据导出复制至剪贴板
+     */
+    fun copySessionToClipboard(context: Context) {
+        val (ok, msg) = PersistentSessionManager.exportCookiesToClipboard(context)
+        android.widget.Toast.makeText(
+            context,
+            msg,
+            if (ok) android.widget.Toast.LENGTH_LONG else android.widget.Toast.LENGTH_SHORT
+        ).show()
+    }
+
+    /**
+     * 从剪贴板导入凭据并生效刷新
+     */
+    fun importSessionFromClipboard(context: Context, onComplete: ((Boolean, String) -> Unit)? = null) {
+        val (ok, msg) = PersistentSessionManager.importCookiesFromClipboard(context)
+        if (ok) {
+            loadSavedGroupsFromPrefs(context)
+            reloadAll()
+        }
+        android.widget.Toast.makeText(
+            context,
+            msg,
+            if (ok) android.widget.Toast.LENGTH_LONG else android.widget.Toast.LENGTH_SHORT
+        ).show()
+        onComplete?.invoke(ok, msg)
     }
 }
