@@ -304,8 +304,8 @@ object PersistentWebViewPool {
         try {
             val cookieManager = CookieManager.getInstance()
             cookieManager.setAcceptCookie(true)
-            // 从外部公共目录（Documents/TradingMultiView/）静默恢复持久化登录凭据（卸载重装免登录）
-            PersistentSessionManager.restoreCookiesFromPublicStorage(appCtx)
+            // 关键：在初次加载 URL 之前同步恢复持久化登录凭据，确保首次网络请求即携带已认证 Cookie
+            PersistentSessionManager.restoreCookiesSync(appCtx)
         } catch (e: Exception) {
             e.printStackTrace()
         }
@@ -383,6 +383,10 @@ object PersistentWebViewPool {
                 builtInZoomControls = true
                 displayZoomControls = false
 
+                // 支持弹窗与多窗口（解决 Google/第三方 OAuth 登录点击无反应或空白的问题）
+                setSupportMultipleWindows(true)
+                javaScriptCanOpenWindowsAutomatically = true
+
                 // 混合内容与安全策略配置
                 mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                 cacheMode = WebSettings.LOAD_DEFAULT
@@ -415,6 +419,26 @@ object PersistentWebViewPool {
                     view?.let {
                         injectDesktopViewport(it, force = true)
                         injectTradingViewEnhancer(it, url)
+
+                        // 若已备份 localStorage，进行补齐还原
+                        appContext?.let { ctx ->
+                            val lsBackup = PersistentSessionManager.getLocalStorageBackup(ctx)
+                            if (!lsBackup.isNullOrBlank() && lsBackup != "{}") {
+                                val script = """
+                                    (function() {
+                                        try {
+                                            var d = $lsBackup;
+                                            for (var k in d) {
+                                                if (!localStorage.getItem(k)) {
+                                                    localStorage.setItem(k, d[k]);
+                                                }
+                                            }
+                                        } catch(e) {}
+                                    })();
+                                """.trimIndent()
+                                it.evaluateJavascript(script, null)
+                            }
+                        }
                     }
                     if (url != null && url != lastReportedUrl) {
                         lastReportedUrl = url
@@ -423,7 +447,36 @@ object PersistentWebViewPool {
                     }
                     // 自动将会话与 Cookie 同步备份到公共目录（防卸载丢失）
                     if (url != null && (url.contains("tradingview.com") || url.contains("binance.com") || url.contains("okx.com"))) {
-                        appContext?.let { PersistentSessionManager.backupCookiesToPublicStorage(it) }
+                        appContext?.let { ctx ->
+                            PersistentSessionManager.backupCookiesToPublicStorage(ctx)
+
+                            // 备份 localStorage
+                            if (url.contains("tradingview.com")) {
+                                view?.evaluateJavascript("""
+                                    (function() {
+                                        try {
+                                            var s = {};
+                                            for (var i = 0; i < localStorage.length; i++) {
+                                                var k = localStorage.key(i);
+                                                if (k && (k.indexOf('tradingview') >= 0 || k.indexOf('tv_') >= 0 || k.indexOf('user') >= 0 || k.indexOf('theme') >= 0 || k.indexOf('chart') >= 0)) {
+                                                    s[k] = localStorage.getItem(k);
+                                                }
+                                            }
+                                            return JSON.stringify(s);
+                                        } catch(e) { return "{}"; }
+                                    })();
+                                """.trimIndent()) { jsonStr ->
+                                    if (!jsonStr.isNullOrBlank() && jsonStr != "null" && jsonStr != "\"\"") {
+                                        val clean = if (jsonStr.startsWith("\"") && jsonStr.endsWith("\"") && jsonStr.length > 2) {
+                                            try {
+                                                org.json.JSONTokener(jsonStr).nextValue().toString()
+                                            } catch (e: Exception) { jsonStr }
+                                        } else jsonStr
+                                        PersistentSessionManager.backupLocalStorageToPublicStorage(ctx, clean)
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -455,6 +508,45 @@ object PersistentWebViewPool {
                     }
                 }
 
+                override fun onCreateWindow(
+                    view: WebView?,
+                    isDialog: Boolean,
+                    isUserGesture: Boolean,
+                    resultMsg: android.os.Message?
+                ): Boolean {
+                    if (resultMsg == null || view == null) return false
+                    val transport = resultMsg.obj as? WebView.WebViewTransport ?: return false
+                    // 创建临时轻量级 WebView 承载 Google 或第三方 OAuth 登录弹窗
+                    val popupWebView = WebView(view.context).apply {
+                        settings.javaScriptEnabled = true
+                        settings.domStorageEnabled = true
+                        settings.userAgentString = PC_DESKTOP_USER_AGENT
+                        CookieManager.getInstance().setAcceptCookie(true)
+                        CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+                        webViewClient = object : WebViewClient() {
+                            override fun onPageFinished(popupView: WebView?, url: String?) {
+                                super.onPageFinished(popupView, url)
+                                CookieManager.getInstance().flush()
+                                if (url != null && (url.contains("tradingview.com") || url.contains("accounts.google.com"))) {
+                                    appContext?.let { PersistentSessionManager.backupCookiesToPublicStorage(it) }
+                                }
+                            }
+                            override fun shouldOverrideUrlLoading(popupView: WebView?, req: WebResourceRequest?): Boolean {
+                                val targetUrl = req?.url?.toString() ?: return false
+                                // 授权完成返回主站
+                                if (targetUrl.contains("tradingview.com") && !targetUrl.contains("signin") && !targetUrl.contains("oauth")) {
+                                    view.loadUrl(targetUrl)
+                                    return true
+                                }
+                                return false
+                            }
+                        }
+                    }
+                    transport.webView = popupWebView
+                    resultMsg.sendToTarget()
+                    return true
+                }
+
                 override fun onConsoleMessage(consoleMessage: ConsoleMessage?): Boolean {
                     // 过滤调试日志
                     return true
@@ -467,9 +559,20 @@ object PersistentWebViewPool {
         return webViewMap[windowId]
     }
 
-    fun reloadWindow(windowId: Int) {
+    fun reloadWindow(windowId: Int, forceClean: Boolean = false) {
         appliedScaleMap.remove(windowId)
-        webViewMap[windowId]?.reload()
+        val wv = webViewMap[windowId] ?: return
+        if (forceClean) {
+            wv.clearCache(false)
+            val currentUrl = wv.url ?: (DEFAULT_URLS[windowId] ?: "https://www.tradingview.com")
+            wv.loadUrl(currentUrl)
+        } else {
+            wv.reload()
+        }
+    }
+
+    fun reloadAll(forceClean: Boolean = false) {
+        listOf(1, 2, 3).forEach { reloadWindow(it, forceClean) }
     }
 
     /**

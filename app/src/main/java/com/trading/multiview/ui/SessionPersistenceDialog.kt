@@ -41,6 +41,9 @@ fun SessionPersistenceDialog(
     var backupStatus by remember {
         mutableStateOf(PersistentSessionManager.getBackupStatus(context))
     }
+    var currentSessionInfo by remember {
+        mutableStateOf(PersistentSessionManager.getCurrentWebViewSessionStatus())
+    }
     val publicDir = remember {
         PersistentSessionManager.getPublicStorageDir(context).absolutePath
     }
@@ -49,6 +52,7 @@ fun SessionPersistenceDialog(
     val refreshStatus = {
         hasPerm = PersistentSessionManager.hasStoragePermission(context)
         backupStatus = PersistentSessionManager.getBackupStatus(context)
+        currentSessionInfo = PersistentSessionManager.getCurrentWebViewSessionStatus()
     }
 
     Dialog(
@@ -181,41 +185,53 @@ fun SessionPersistenceDialog(
                     }
                 }
 
-                // 备份机制与存储位置说明
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFF1F2937).copy(alpha = 0.6f)),
-                    shape = RoundedCornerShape(8.dp),
-                    border = BorderStroke(1.dp, Color(0xFF374151))
+                // 1. 当前活跃视窗实时登录状态诊断卡片
+                val currentContainerColor = if (currentSessionInfo.isTradingViewLoggedIn) {
+                    Color(0xFF064E3B).copy(alpha = 0.5f)
+                } else {
+                    Color(0xFF78350F).copy(alpha = 0.4f)
+                }
+                val currentBorderColor = if (currentSessionInfo.isTradingViewLoggedIn) {
+                    Color(0xFF059669)
+                } else {
+                    Color(0xFFD97706)
+                }
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(currentContainerColor)
+                        .border(1.dp, currentBorderColor, RoundedCornerShape(6.dp))
+                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Column(
-                        modifier = Modifier.padding(10.dp),
-                        verticalArrangement = Arrangement.spacedBy(3.dp)
-                    ) {
+                    Column(modifier = Modifier.weight(1f)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                imageVector = Icons.Default.CheckCircle,
-                                contentDescription = null,
-                                tint = Color(0xFF10B981),
-                                modifier = Modifier.size(13.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = "已开启静默同步：登录成功与退出后台时自动备份",
-                                color = Color(0xFFE2E8F0),
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Medium
+                                text = "当前网页状态: ",
+                                color = Color(0xFF94A3B8),
+                                fontSize = 10.sp
+                            )
+                            Text(
+                                text = if (currentSessionInfo.isTradingViewLoggedIn) "🟢 账号已登录 (就绪)" else "🟡 未登录 (仅访客态)",
+                                color = if (currentSessionInfo.isTradingViewLoggedIn) Color(0xFF34D399) else Color(0xFFFBBF24),
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold
                             )
                         }
                         Text(
-                            text = "公共存储路径：$publicDir\n（该目录位于设备外部公共系统区域，应用被彻底卸载时绝不抹除）",
-                            color = Color(0xFF94A3B8),
+                            text = currentSessionInfo.details,
+                            color = Color(0xFFE2E8F0),
                             fontSize = 9.sp,
-                            lineHeight = 12.sp
+                            lineHeight = 12.sp,
+                            modifier = Modifier.padding(top = 2.dp)
                         )
                     }
                 }
 
-                // 当前备份状态卡片 (真实解析检测)
+                // 2. 当前公共目录备份状态卡片 (真实解析检测)
                 val statusContainerColor = when {
                     backupStatus.exists && backupStatus.canRead && backupStatus.hasAuthSession -> Color(0xFF064E3B).copy(alpha = 0.5f)
                     backupStatus.exists && backupStatus.canRead && !backupStatus.hasAuthSession -> Color(0xFF1E3A8A).copy(alpha = 0.5f)
@@ -240,41 +256,79 @@ fun SessionPersistenceDialog(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = "公共目录备份: ",
+                                color = Color(0xFF94A3B8),
+                                fontSize = 10.sp
+                            )
+                            Text(
+                                text = when {
+                                    backupStatus.exists && backupStatus.canRead && backupStatus.hasAuthSession -> "🟢 有效凭证就绪"
+                                    backupStatus.exists && backupStatus.canRead -> "🟡 仅访客数据(无登录态)"
+                                    backupStatus.exists && !backupStatus.canRead -> "🔴 读取受限"
+                                    else -> "⚪ 暂无备份文件"
+                                },
+                                color = when {
+                                    backupStatus.exists && backupStatus.canRead && backupStatus.hasAuthSession -> Color(0xFF34D399)
+                                    backupStatus.exists && backupStatus.canRead -> Color(0xFF60A5FA)
+                                    backupStatus.exists && !backupStatus.canRead -> Color(0xFFFBBF24)
+                                    else -> Color(0xFF94A3B8)
+                                },
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                         Text(
                             text = backupStatus.message,
                             color = Color(0xFFF1F5F9),
-                            fontSize = 11.sp,
-                            lineHeight = 14.sp,
-                            fontWeight = FontWeight.Medium
+                            fontSize = 9.sp,
+                            lineHeight = 12.sp,
+                            modifier = Modifier.padding(top = 2.dp)
                         )
                         if (backupStatus.filePath.isNotBlank()) {
                             Text(
-                                text = "目标文件: ${backupStatus.filePath}",
+                                text = "路径: ${backupStatus.filePath}",
                                 color = Color(0xFF94A3B8),
-                                fontSize = 9.sp,
+                                fontSize = 8.sp,
                                 maxLines = 1
                             )
                         }
                     }
+                }
 
-                    Spacer(modifier = Modifier.width(8.dp))
-
-                    Text(
-                        text = when {
-                            backupStatus.exists && backupStatus.canRead && backupStatus.hasAuthSession -> "凭证就绪"
-                            backupStatus.exists && backupStatus.canRead -> "未检测到账号"
-                            backupStatus.exists && !backupStatus.canRead -> "读取受限"
-                            else -> "待备份"
-                        },
-                        color = when {
-                            backupStatus.exists && backupStatus.canRead && backupStatus.hasAuthSession -> Color(0xFF34D399)
-                            backupStatus.exists && backupStatus.canRead -> Color(0xFF60A5FA)
-                            backupStatus.exists && !backupStatus.canRead -> Color(0xFFFBBF24)
-                            else -> Color(0xFF94A3B8)
-                        },
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold
-                    )
+                // 备份机制与存储位置说明
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF1F2937).copy(alpha = 0.6f)),
+                    shape = RoundedCornerShape(8.dp),
+                    border = BorderStroke(1.dp, Color(0xFF374151))
+                ) {
+                    Column(
+                        modifier = Modifier.padding(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(3.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.CheckCircle,
+                                contentDescription = null,
+                                tint = Color(0xFF10B981),
+                                modifier = Modifier.size(13.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "已开启静默同步：登录成功后会自动写入公共目录",
+                                color = Color(0xFFE2E8F0),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                        Text(
+                            text = "公共存储路径：$publicDir\n（该目录位于设备外部公共系统区域，应用被彻底卸载时绝不抹除）",
+                            color = Color(0xFF94A3B8),
+                            fontSize = 9.sp,
+                            lineHeight = 12.sp
+                        )
+                    }
                 }
 
                 // 核心操作按钮组（公共存储备份 & 恢复）

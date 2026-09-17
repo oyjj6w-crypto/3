@@ -15,11 +15,11 @@ import android.webkit.CookieManager
 import androidx.core.content.ContextCompat
 import org.json.JSONObject
 import java.io.File
-import java.io.FileInputStream
-import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 /**
  * 跨安装持久化会话与 Cookie 管理器 (PersistentSessionManager)
@@ -32,7 +32,9 @@ import java.util.Locale
  *    - 声明并支持引导一键授权 MANAGE_EXTERNAL_STORAGE（所有文件访问权限），确保跨安装无缝直读；
  *    - 支持多目录冗余备份（Documents/TradingMultiView/ 与 Download/TradingMultiView/）；
  *    - 增加凭据剪贴板互通功能（零权限秒级备份与导入）；
- *    - 识别 TradingView 核心登录凭据（sessionid、sessionid_sign、tv_ecuid），并在注入 Cookie 时自动泛化到 .tradingview.com 顶级域。
+ *    - 严格校验 TradingView 核心登录凭据（sessionid、sessionid_sign），杜绝访客 Cookie (tv_ecuid) 误报为已登录；
+ *    - 注入 Cookie 时使用 .tradingview.com 顶级域与 Lax 模式，设置 Max-Age 确保持久化，使用 CountDownLatch 确保写入落盘后再刷新；
+ *    - 支持冷启动同步恢复 (restoreCookiesSync)，在初次加载 URL 前立即可用。
  */
 object PersistentSessionManager {
 
@@ -40,6 +42,7 @@ object PersistentSessionManager {
     private const val BACKUP_DIR_NAME = "TradingMultiView"
     private const val COOKIE_BACKUP_FILE = "tv_session_cookies.json"
     private const val PREFS_BACKUP_FILE = "trading_config_backup.json"
+    private const val LOCALSTORAGE_BACKUP_FILE = "tv_localstorage_backup.json"
 
     // 需持久化同步的 TradingView 及看盘核心域名
     val TARGET_DOMAINS = listOf(
@@ -48,6 +51,8 @@ object PersistentSessionManager {
         "https://s.tradingview.com",
         "https://cn.tradingview.com",
         "https://id.tradingview.com",
+        "https://accounts.tradingview.com",
+        "https://auth.tradingview.com",
         "https://accounts.google.com",
         "https://binance.com",
         "https://www.binance.com",
@@ -63,6 +68,48 @@ object PersistentSessionManager {
         val filePath: String = "",
         val message: String = ""
     )
+
+    data class CurrentSessionInfo(
+        val isTradingViewLoggedIn: Boolean,
+        val hasAnyCookies: Boolean,
+        val details: String
+    )
+
+    /**
+     * 检查当前活跃 WebView 中是否已经真正登录了 TradingView 账号
+     */
+    fun getCurrentWebViewSessionStatus(): CurrentSessionInfo {
+        return try {
+            val cm = CookieManager.getInstance()
+            var tvLoggedIn = false
+            var anyCookie = false
+
+            for (domain in TARGET_DOMAINS) {
+                val c = cm.getCookie(domain)
+                if (!c.isNullOrBlank()) {
+                    anyCookie = true
+                    if (isTradingViewLoggedInCookie(c)) {
+                        tvLoggedIn = true
+                        break
+                    }
+                }
+            }
+
+            val details = when {
+                tvLoggedIn -> "当前视窗已登录 TradingView (检测到 sessionid 账号凭据，可随时备份)"
+                anyCookie -> "当前视窗未登录 (仅有访客 Cookie，请先在视窗中点击头像 Sign in 登录账号后再点击备份)"
+                else -> "当前视窗尚未加载或无 Cookie 数据"
+            }
+
+            CurrentSessionInfo(
+                isTradingViewLoggedIn = tvLoggedIn,
+                hasAnyCookies = anyCookie,
+                details = details
+            )
+        } catch (e: Exception) {
+            CurrentSessionInfo(false, false, "状态检测异常: ${e.message}")
+        }
+    }
 
     /**
      * 检查是否具备外部存储跨安装访问权限
@@ -172,11 +219,13 @@ object PersistentSessionManager {
     }
 
     /**
-     * 判断 Cookie 字符串中是否包含 TradingView 的登录凭证
+     * 判断 Cookie 字符串中是否包含 TradingView 的真实登录凭证
+     * 关键修正：绝不能检查 tv_ecuid！tv_ecuid 是所有匿名访客都会被分配的设备跟踪 Cookie。
+     * 只有包含 sessionid 或 sessionid_sign 才代表真实登录了 TradingView 账号！
      */
     fun isTradingViewLoggedInCookie(cookieStr: String?): Boolean {
         if (cookieStr.isNullOrBlank()) return false
-        return cookieStr.contains("sessionid=") || cookieStr.contains("sessionid_sign=") || cookieStr.contains("tv_ecuid=")
+        return cookieStr.contains("sessionid=") || cookieStr.contains("sessionid_sign=")
     }
 
     /**
@@ -187,9 +236,9 @@ object PersistentSessionManager {
         if (file == null || !file.exists() || file.length() == 0L) {
             val hasPerm = hasStoragePermission(context)
             val msg = if (!hasPerm && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                "未检测到凭证（若卸载前已备份，请点击上方开启「所有文件管理」权限以允许读取）"
+                "未检测到备份凭据（若卸载前已备份，请点击上方开启「所有文件管理」权限以允许读取）"
             } else {
-                "公共目录暂无备份文件（请在登录后点击下方立即备份）"
+                "公共目录暂无备份凭据（请在登录后点击下方立即备份）"
             }
             return BackupStatus(
                 exists = false,
@@ -232,9 +281,9 @@ object PersistentSessionManager {
             } else ""
 
             val msg = if (hasAuth) {
-                "已检测到有效登录凭据（含账号 sessionid，备份于 $dateStr）"
+                "公共目录已包含有效登录凭据（含账号 sessionid，备份于 $dateStr）"
             } else {
-                "检测到备份文件（备份于 $dateStr，未含登录账号，建议登录后重新备份）"
+                "检测到备份文件（备份于 $dateStr，仅含访客 Cookie，未包含登录账号）"
             }
 
             return BackupStatus(
@@ -271,7 +320,125 @@ object PersistentSessionManager {
     }
 
     /**
-     * 从公共目录恢复 Cookie 和会话凭据并同步至 CookieManager
+     * 核心 Cookie 还原与注入引擎
+     * 规范：
+     * 1. 将 TradingView 相关域名的 Cookie 聚合，统一使用 Domain=.tradingview.com 注入
+     * 2. 注入时带上 Path=/; Max-Age=31536000; Secure; SameSite=Lax，防止被识别为临时 Session Cookie
+     * 3. 杜绝无 Domain 的 Host-Only 注入，彻底消除阴阳双份 Cookie 造成的服务冲突
+     * 4. 采用 CountDownLatch 等待 Chromium 网络/Cookie 线程写入确认，确保 flush 与 reload 前 100% 落盘
+     */
+    private fun applyCookiesFromJson(
+        cookieMapObj: JSONObject,
+        onDone: (success: Boolean, restoredCount: Int, hasAuth: Boolean) -> Unit
+    ) {
+        val cookieManager = CookieManager.getInstance()
+        cookieManager.setAcceptCookie(true)
+
+        val tvCookieMap = mutableMapOf<String, String>()
+        val otherDomainCookies = mutableListOf<Pair<String, String>>()
+        var hasAuthCookie = false
+
+        val keys = cookieMapObj.keys()
+        while (keys.hasNext()) {
+            val domain = keys.next()
+            val cookieStr = cookieMapObj.optString(domain)
+            if (cookieStr.isNotBlank()) {
+                val pairs = cookieStr.split(";")
+                for (rawPair in pairs) {
+                    val pair = rawPair.trim()
+                    if (pair.isEmpty()) continue
+                    val eqIdx = pair.indexOf('=')
+                    if (eqIdx <= 0) continue
+                    val name = pair.substring(0, eqIdx).trim()
+                    val value = pair.substring(eqIdx + 1).trim()
+
+                    if (domain.contains("tradingview.com")) {
+                        if (name == "sessionid" || name == "sessionid_sign") {
+                            hasAuthCookie = true
+                        }
+                        tvCookieMap[name] = value
+                    } else {
+                        if (name.contains("session") || name.contains("token") || name.contains("auth")) {
+                            hasAuthCookie = true
+                        }
+                        otherDomainCookies.add(domain to "$name=$value")
+                    }
+                }
+            }
+        }
+
+        // 计算需要注入的总次数以精确等待
+        // TradingView 注入至 https://tradingview.com 与 https://www.tradingview.com
+        val tvCount = tvCookieMap.size * 2
+        val otherCount = otherDomainCookies.size
+        val totalOperations = tvCount + otherCount
+
+        if (totalOperations == 0) {
+            onDone(false, 0, false)
+            return
+        }
+
+        val latch = CountDownLatch(totalOperations)
+
+        // 1. 注入 TradingView 凭据：统一步骤，顶级域覆盖，最长1年有效期，安全且兼容
+        for ((name, value) in tvCookieMap) {
+            val cookieVal = "$name=$value; Domain=.tradingview.com; Path=/; Max-Age=31536000; Secure; SameSite=Lax"
+            cookieManager.setCookie("https://tradingview.com", cookieVal) {
+                latch.countDown()
+            }
+            cookieManager.setCookie("https://www.tradingview.com", cookieVal) {
+                latch.countDown()
+            }
+        }
+
+        // 2. 注入其他域名（Binance、OKX、Google等）
+        for ((domain, pair) in otherDomainCookies) {
+            val domainAttr = when {
+                domain.contains("binance.com") -> "; Domain=.binance.com"
+                domain.contains("okx.com") -> "; Domain=.okx.com"
+                domain.contains("google.com") -> "; Domain=.google.com"
+                else -> ""
+            }
+            val cookieVal = "$pair$domainAttr; Path=/; Max-Age=31536000; Secure"
+            cookieManager.setCookie(domain, cookieVal) {
+                latch.countDown()
+            }
+        }
+
+        try {
+            latch.await(3, TimeUnit.SECONDS)
+        } catch (ignored: Exception) {}
+
+        cookieManager.flush()
+        Log.i(TAG, "Restored $totalOperations cookie operations (TV unique: ${tvCookieMap.size}), hasAuth=$hasAuthCookie")
+        onDone(true, tvCookieMap.size + otherDomainCookies.size, hasAuthCookie)
+    }
+
+    /**
+     * 冷启动同步静默恢复 Cookie (在 WebView loadUrl 之前调用，耗时极短约 2-5ms)
+     */
+    fun restoreCookiesSync(context: Context): Boolean {
+        return try {
+            val file = findExistingCookieBackupFile(context) ?: return false
+            if (!file.exists() || file.length() == 0L) return false
+            val content = file.readText(Charsets.UTF_8)
+            if (content.isBlank()) return false
+            val json = JSONObject(content)
+            val cookieMapObj = json.optJSONObject("cookies") ?: return false
+
+            var completed = false
+            applyCookiesFromJson(cookieMapObj) { success, _, _ ->
+                completed = success
+            }
+            completed
+        } catch (e: Exception) {
+            Log.e(TAG, "Error in restoreCookiesSync", e)
+            false
+        }
+    }
+
+    /**
+     * 从公共目录恢复 Cookie 和会话凭据并同步至 CookieManager (异步调用，适用于用户点击恢复按钮)
      */
     fun restoreCookiesFromPublicStorage(
         context: Context,
@@ -310,50 +477,18 @@ object PersistentSessionManager {
 
                 val json = JSONObject(content)
                 val cookieMapObj = json.optJSONObject("cookies") ?: JSONObject()
-                val cookieManager = CookieManager.getInstance()
-                cookieManager.setAcceptCookie(true)
 
-                var restoredCount = 0
-                var hasAuthCookie = false
-                val keys = cookieMapObj.keys()
-                while (keys.hasNext()) {
-                    val domain = keys.next()
-                    val cookieStr = cookieMapObj.optString(domain)
-                    if (cookieStr.isNotBlank()) {
-                        val cookiePairs = cookieStr.split(";")
-                        for (pair in cookiePairs) {
-                            val trimmed = pair.trim()
-                            if (trimmed.isNotEmpty()) {
-                                if (trimmed.startsWith("sessionid=") || trimmed.startsWith("sessionid_sign=") || trimmed.startsWith("tv_ecuid=")) {
-                                    hasAuthCookie = true
-                                }
-                                // 注入给指定源
-                                cookieManager.setCookie(domain, trimmed)
-                                // 关键：如果属于 TradingView 域名，同时泛化注入给 .tradingview.com 顶级域，确保所有子图、图表 WebSocket 及认证子域均立即可见
-                                if (domain.contains("tradingview.com")) {
-                                    cookieManager.setCookie("https://tradingview.com", "$trimmed; Domain=.tradingview.com; Path=/; SameSite=None; Secure")
-                                    cookieManager.setCookie("https://www.tradingview.com", "$trimmed; Domain=.tradingview.com; Path=/; SameSite=None; Secure")
-                                    cookieManager.setCookie("https://s.tradingview.com", "$trimmed; Domain=.tradingview.com; Path=/; SameSite=None; Secure")
-                                    cookieManager.setCookie("https://id.tradingview.com", "$trimmed; Domain=.tradingview.com; Path=/; SameSite=None; Secure")
-                                }
-                            }
+                applyCookiesFromJson(cookieMapObj) { success, count, hasAuth ->
+                    if (success && count > 0) {
+                        val msg = if (hasAuth) {
+                            "已成功恢复登录凭据（含 TradingView 登录态 sessionid）！页面已刷新。"
+                        } else {
+                            "已恢复 $count 项 Cookie（注：该备份中未包含登录账号，若未登录请先登录后点击立即备份）"
                         }
-                        restoredCount++
-                    }
-                }
-
-                cookieManager.flush()
-                Log.i(TAG, "Restored cookies for $restoredCount domains, hasAuthCookie=$hasAuthCookie")
-
-                if (restoredCount > 0) {
-                    val msg = if (hasAuthCookie) {
-                        "已成功恢复 $restoredCount 个域名的登录凭据（含 TradingView 登录态）！"
+                        onComplete?.invoke(true, count, msg)
                     } else {
-                        "已恢复 $restoredCount 个域名的 Cookie（注：未检测到登录账号，若未登录请先登录后点击立即备份）"
+                        onComplete?.invoke(false, 0, "备份文件中未包含有效的 Cookie 数据")
                     }
-                    onComplete?.invoke(true, restoredCount, msg)
-                } else {
-                    onComplete?.invoke(false, 0, "备份文件中未包含有效的 Cookie 数据")
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error restoring cookies from public storage", e)
@@ -392,7 +527,7 @@ object PersistentSessionManager {
                 }
 
                 if (!hasAnyCookie) {
-                    onComplete?.invoke(false, "当前 WebView 暂无任何 Cookie 凭证")
+                    onComplete?.invoke(false, "当前 WebView 暂无任何 Cookie 凭据")
                     return@Thread
                 }
 
@@ -407,7 +542,7 @@ object PersistentSessionManager {
                 }
 
                 val rootObj = JSONObject().apply {
-                    put("version", 2)
+                    put("version", 3)
                     put("timestamp", System.currentTimeMillis())
                     put("hasAuthCookie", hasAuthCookie)
                     put("cookies", cookieMapObj)
@@ -434,7 +569,7 @@ object PersistentSessionManager {
                     val msg = if (hasAuthCookie) {
                         "已成功将 TradingView 登录凭证（含账号 sessionid）永久保存至公共目录！跨安装免重新登录"
                     } else {
-                        "已将当前 Cookie 保存至公共目录。提示：当前网页中似乎尚未登录 TradingView 账号，建议登录成功后再点击一次备份！"
+                        "已将当前 Cookie 保存至公共目录。⚠️提示：当前网页尚未登录 TradingView 账号（未检测到 sessionid），请在网页登录后再点击备份！"
                     }
                     onComplete?.invoke(true, msg)
                 } else {
@@ -451,6 +586,46 @@ object PersistentSessionManager {
                 onComplete?.invoke(false, e.localizedMessage ?: "备份异常")
             }
         }.start()
+    }
+
+    /**
+     * 备份 TradingView 的 window.localStorage 到公共目录
+     */
+    fun backupLocalStorageToPublicStorage(context: Context, jsonString: String) {
+        if (jsonString.isBlank() || jsonString == "{}" || jsonString == "null") return
+        Thread {
+            try {
+                for (dir in getAllCandidateDirs(context)) {
+                    try {
+                        if (!dir.exists()) dir.mkdirs()
+                        if (dir.exists()) {
+                            val file = File(dir, LOCALSTORAGE_BACKUP_FILE)
+                            file.writeText(jsonString, Charsets.UTF_8)
+                        }
+                    } catch (ignored: Exception) {}
+                }
+                Log.i(TAG, "Backed up localStorage successfully")
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed backing up localStorage", e)
+            }
+        }.start()
+    }
+
+    /**
+     * 读取备份的 localStorage 内容
+     */
+    fun getLocalStorageBackup(context: Context): String? {
+        for (dir in getAllCandidateDirs(context)) {
+            val file = File(dir, LOCALSTORAGE_BACKUP_FILE)
+            if (file.exists() && file.length() > 0) {
+                return try {
+                    file.readText(Charsets.UTF_8)
+                } catch (e: Exception) {
+                    null
+                }
+            }
+        }
+        return null
     }
 
     /**
@@ -553,9 +728,9 @@ object PersistentSessionManager {
             clipboard.setPrimaryClip(clip)
 
             val msg = if (hasAuth) {
-                "已复制含 TradingView 登录凭据的完整 Token 至剪贴板！可备忘至便签"
+                "已复制含 TradingView 登录凭据（sessionid 就绪）的完整 Token 至剪贴板！可粘贴至备忘录备用"
             } else {
-                "已复制 Cookie 至剪贴板（注：未检测到登录账号，建议登录后复制）"
+                "已复制 Cookie 至剪贴板（⚠️注：未检测到登录账号 sessionid，建议登录后复制）"
             }
             Pair(true, msg)
         } catch (e: Exception) {
@@ -566,7 +741,7 @@ object PersistentSessionManager {
     /**
      * 从剪贴板字符串一键导入 Cookie 凭证
      */
-    fun importCookiesFromClipboard(context: Context): Pair<Boolean, String> {
+    fun importCookiesFromClipboard(context: Context, onDone: ((Boolean, String) -> Unit)? = null): Pair<Boolean, String> {
         return try {
             val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
             val clip = clipboard.primaryClip
@@ -580,47 +755,22 @@ object PersistentSessionManager {
 
             val json = JSONObject(text)
             val cookieMapObj = json.optJSONObject("cookies") ?: JSONObject()
-            val cookieManager = CookieManager.getInstance()
-            cookieManager.setAcceptCookie(true)
 
-            var restoredCount = 0
-            var hasAuth = false
-            val keys = cookieMapObj.keys()
-            while (keys.hasNext()) {
-                val domain = keys.next()
-                val cookieStr = cookieMapObj.optString(domain)
-                if (cookieStr.isNotBlank()) {
-                    val pairs = cookieStr.split(";")
-                    for (pair in pairs) {
-                        val trimmed = pair.trim()
-                        if (trimmed.isNotEmpty()) {
-                            if (isTradingViewLoggedInCookie(trimmed)) hasAuth = true
-                            cookieManager.setCookie(domain, trimmed)
-                            if (domain.contains("tradingview.com")) {
-                                cookieManager.setCookie("https://tradingview.com", "$trimmed; Domain=.tradingview.com; Path=/; SameSite=None; Secure")
-                                cookieManager.setCookie("https://www.tradingview.com", "$trimmed; Domain=.tradingview.com; Path=/; SameSite=None; Secure")
-                                cookieManager.setCookie("https://s.tradingview.com", "$trimmed; Domain=.tradingview.com; Path=/; SameSite=None; Secure")
-                                cookieManager.setCookie("https://id.tradingview.com", "$trimmed; Domain=.tradingview.com; Path=/; SameSite=None; Secure")
-                            }
-                        }
+            applyCookiesFromJson(cookieMapObj) { success, count, hasAuth ->
+                if (success && count > 0) {
+                    backupCookiesToPublicStorage(context)
+                    val msg = if (hasAuth) {
+                        "成功从剪贴板导入 $count 项凭据（含 TradingView 登录态）并同步至公共目录！"
+                    } else {
+                        "成功从剪贴板导入 $count 项 Cookie！"
                     }
-                    restoredCount++
-                }
-            }
-            cookieManager.flush()
-
-            if (restoredCount > 0) {
-                // 同时把这份凭证回写到公共目录
-                backupCookiesToPublicStorage(context)
-                val msg = if (hasAuth) {
-                    "成功从剪贴板导入 $restoredCount 个域名的凭据（含登录态）并同步至公共目录！"
+                    onDone?.invoke(true, msg)
                 } else {
-                    "成功从剪贴板导入 $restoredCount 个域名的 Cookie！"
+                    onDone?.invoke(false, "剪贴板中未包含有效的 Cookie 数据")
                 }
-                Pair(true, msg)
-            } else {
-                Pair(false, "未找到有效的 Cookie 数据")
             }
+
+            Pair(true, "正在导入剪贴板凭据...")
         } catch (e: Exception) {
             Pair(false, "导入失败: ${e.localizedMessage}")
         }

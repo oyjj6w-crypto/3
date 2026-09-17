@@ -568,11 +568,10 @@ class TradingViewModel : ViewModel() {
 
     /**
      * 全局一键刷新全部 3 个视窗 (保持常驻单例并重载页面)
+     * @param forceClean 是否强制清理 HTTP 缓存并从网络重新发起请求 (恢复凭证时置为 true 确保携带最新 Cookie)
      */
-    fun reloadAll() {
-        listOf(1, 2, 3).forEach { windowId ->
-            PersistentWebViewPool.reloadWindow(windowId)
-        }
+    fun reloadAll(forceClean: Boolean = false) {
+        PersistentWebViewPool.reloadAll(forceClean = forceClean)
     }
 
     /**
@@ -1048,7 +1047,8 @@ class TradingViewModel : ViewModel() {
                 if (success && count > 0) {
                     PersistentSessionManager.restorePreferencesFromPublicStorageIfNeeded(context)
                     loadSavedGroupsFromPrefs(context)
-                    reloadAll()
+                    // 强制清理内存缓存并重新从网络请求，确保浏览器核心携带最新持久化的 Cookie
+                    reloadAll(forceClean = true)
                     android.widget.Toast.makeText(
                         context,
                         msg,
@@ -1082,16 +1082,23 @@ class TradingViewModel : ViewModel() {
      * 从剪贴板导入凭据并生效刷新
      */
     fun importSessionFromClipboard(context: Context, onComplete: ((Boolean, String) -> Unit)? = null) {
-        val (ok, msg) = PersistentSessionManager.importCookiesFromClipboard(context)
-        if (ok) {
-            loadSavedGroupsFromPrefs(context)
-            reloadAll()
+        val (initiated, initialMsg) = PersistentSessionManager.importCookiesFromClipboard(context) { success, finalMsg ->
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                if (success) {
+                    loadSavedGroupsFromPrefs(context)
+                    reloadAll(forceClean = true)
+                }
+                android.widget.Toast.makeText(
+                    context,
+                    finalMsg,
+                    if (success) android.widget.Toast.LENGTH_LONG else android.widget.Toast.LENGTH_SHORT
+                ).show()
+                onComplete?.invoke(success, finalMsg)
+            }
         }
-        android.widget.Toast.makeText(
-            context,
-            msg,
-            if (ok) android.widget.Toast.LENGTH_LONG else android.widget.Toast.LENGTH_SHORT
-        ).show()
-        onComplete?.invoke(ok, msg)
+        if (!initiated) {
+            android.widget.Toast.makeText(context, initialMsg, android.widget.Toast.LENGTH_SHORT).show()
+            onComplete?.invoke(false, initialMsg)
+        }
     }
 }
