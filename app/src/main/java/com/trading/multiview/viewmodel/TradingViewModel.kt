@@ -781,13 +781,42 @@ class TradingViewModel : ViewModel() {
     }
 
     /**
-     * 全部视窗同步：隐藏/显示画线 (Ctrl+Alt+H)
-     * 先模拟物理点击依次激活每个视窗，再派发快捷键
+     * 隐藏/显示画线 (Ctrl+Alt+H)：默认 3 个窗口全部生效，也可由用户选择对其中 1 个或 2 个窗口生效
      */
-    fun triggerHideDrawings(context: Context? = null) {
-        PersistentWebViewPool.dispatchTradingViewAction("hide")
+    fun triggerHideDrawings(targets: Set<Int> = setOf(1, 2, 3), context: Context? = null) {
+        val validTargets = targets.filter { it in 1..3 }.toSet().ifEmpty { setOf(1, 2, 3) }
+        PersistentWebViewPool.dispatchTradingViewAction("hide", validTargets)
         context?.let {
-            android.widget.Toast.makeText(it, "已同步向全部 3 个窗口触发: 隐藏/显示画线 (Ctrl+Alt+H)", android.widget.Toast.LENGTH_SHORT).show()
+            val winNames = validTargets.sorted().joinToString(", ") { "窗口$it" }
+            android.widget.Toast.makeText(it, "已向 $winNames 触发: 隐藏/显示画线 (Ctrl+Alt+H)", android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /**
+     * 磁力吸附切换 (Magnet / Ctrl)：默认全都不生效，等用户选择其中一个窗口生效
+     */
+    fun triggerToggleWindowMagnet(windowId: Int, context: Context? = null) {
+        var isNowActive = false
+        _uiState.update { state ->
+            val targetWin = state.windows.find { it.id == windowId }
+            val nextState = !(targetWin?.isMagnetActive ?: false)
+            isNowActive = nextState
+            state.copy(
+                windows = state.windows.map { win ->
+                    if (win.id == windowId) {
+                        win.copy(isMagnetActive = nextState)
+                    } else {
+                        // 仅当前选中的一个窗口生效，其他窗口保持关闭
+                        win.copy(isMagnetActive = false)
+                    }
+                },
+                isMagnetActive = nextState
+            )
+        }
+        PersistentWebViewPool.dispatchSingleTradingViewAction(windowId, "magnet")
+        context?.let {
+            val text = if (isNowActive) "窗口 $windowId 已开启磁力吸附" else "窗口 $windowId 已关闭磁力吸附"
+            android.widget.Toast.makeText(it, text, android.widget.Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -820,12 +849,14 @@ class TradingViewModel : ViewModel() {
     }
 
     /**
-     * 全部视窗同步：4图布局翻转 K 线图 (纵向 4 图依次激活并翻转)
+     * 4图布局翻转 K 线图 (Alt+I)：默认 3 个窗口全部生效，也可由用户选择对其中 1 个或 2 个窗口生效
      */
-    fun triggerInvert4Charts(context: Context? = null) {
-        PersistentWebViewPool.dispatchTradingViewAction("invert4")
+    fun triggerInvert4Charts(targets: Set<Int> = setOf(1, 2, 3), context: Context? = null) {
+        val validTargets = targets.filter { it in 1..3 }.toSet().ifEmpty { setOf(1, 2, 3) }
+        PersistentWebViewPool.dispatchTradingViewAction("invert4", validTargets)
         context?.let {
-            android.widget.Toast.makeText(it, "已同步触发 4 图布局依次翻转 K 线 (Alt+I)", android.widget.Toast.LENGTH_SHORT).show()
+            val winNames = validTargets.sorted().joinToString(", ") { "窗口$it" }
+            android.widget.Toast.makeText(it, "已向 $winNames 触发 4 布局依次翻转 K 线 (Alt+I)", android.widget.Toast.LENGTH_SHORT).show()
         }
     }
 

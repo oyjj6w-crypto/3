@@ -580,7 +580,7 @@ object PersistentWebViewPool {
         // 为了确保不同 WebView 窗口之间完全不冲突不卡顿，我们将窗口间隔排队延时调整为 2600ms。
         // 周期切换（timeframe_）窗口间隔设为 1000ms。其余通用延迟根据用户要求升级为 400ms (原为 200ms)。
         val stepDelay = when {
-            action == "invert4" -> 2600L
+            action == "invert4" -> 3800L
             action.startsWith("timeframe_") -> 1000L
             else -> 400L
         }
@@ -709,9 +709,35 @@ object PersistentWebViewPool {
                     });
 
                     var points = [];
-                    var activeWidget = null;
-                    if (widgets.length > 0) {
-                        // 1. 尝试定位当前高亮/激活/选中的子图 widget (包含 class 中有 active, selected 关键字，或 data-active="true" 的)
+                    if (action === 'invert4') {
+                        // 4 图翻转：从上往下依次提取 4 个子图（或少于4个的全部图）
+                        var targetWidgets = widgets.slice(0, 4);
+                        if (targetWidgets.length > 0) {
+                            for (var ti = 0; ti < targetWidgets.length; ti++) {
+                                var tw = targetWidgets[ti];
+                                var twRect = tw.getBoundingClientRect();
+                                points.push({
+                                    x: twRect.left + twRect.width / 2,
+                                    y: twRect.top + twRect.height / 2,
+                                    element: tw.querySelector('canvas.interactive-graphics-layer') || 
+                                             tw.querySelector('canvas') || 
+                                             tw,
+                                    widget: tw
+                                });
+                            }
+                        } else {
+                            var container = document.querySelector('.layout__area--center') || 
+                                            document.querySelector('.chart-container') || 
+                                            document.body;
+                            var rect = container.getBoundingClientRect();
+                            var px = rect.left + rect.width / 2;
+                            var py = rect.top + rect.height / 2;
+                            var el = document.elementFromPoint(px, py) || container;
+                            points.push({ x: px, y: py, element: el, widget: container });
+                        }
+                    } else if (action.indexOf('timeframe_') === 0) {
+                        // 周期切换：只对手指激活的高亮子图生效
+                        var activeWidget = null;
                         for (var wi = 0; wi < widgets.length; wi++) {
                             var cls = widgets[wi].className || "";
                             if (cls.indexOf("active") !== -1 || cls.indexOf("selected") !== -1 || widgets[wi].getAttribute("data-active") === "true") {
@@ -719,29 +745,30 @@ object PersistentWebViewPool {
                                 break;
                             }
                         }
-                        // 2. 如果没有显式的手指激活高亮，默认回退到第一个子图
-                        if (!activeWidget) {
+                        if (!activeWidget && widgets.length > 0) {
                             activeWidget = widgets[0];
                         }
-                        
-                        var wRect = activeWidget.getBoundingClientRect();
-                        points.push({
-                            x: wRect.left + wRect.width / 2,
-                            y: wRect.top + wRect.height / 2,
-                            element: activeWidget.querySelector('canvas.interactive-graphics-layer') || 
-                                     activeWidget.querySelector('canvas') || 
-                                     activeWidget
-                        });
+                        if (activeWidget) {
+                            var wRect = activeWidget.getBoundingClientRect();
+                            points.push({
+                                x: wRect.left + wRect.width / 2,
+                                y: wRect.top + wRect.height / 2,
+                                element: activeWidget.querySelector('canvas.interactive-graphics-layer') || 
+                                         activeWidget.querySelector('canvas') || 
+                                         activeWidget,
+                                widget: activeWidget
+                            });
+                        }
                     } else {
-                        // 如果未完全初始化或框架改变，使用纯几何坐标 fallback
-                        var container = document.querySelector('.layout__area--center') || 
-                                        document.querySelector('.chart-container') || 
-                                        document.body;
-                        var rect = container.getBoundingClientRect();
-                        var px = rect.left + rect.width / 2;
-                        var py = rect.top + rect.height / 2;
-                        var el = document.elementFromPoint(px, py) || container;
-                        points.push({ x: px, y: py, element: el });
+                        // 其他动作 (如 hide 画线)：使用主画布或第一图
+                        var baseEl = widgets.length > 0 ? widgets[0] : (document.querySelector('.layout__area--center') || document.body);
+                        var bRect = baseEl.getBoundingClientRect();
+                        points.push({
+                            x: bRect.left + bRect.width / 2,
+                            y: bRect.top + bRect.height / 2,
+                            element: baseEl.querySelector('canvas') || baseEl,
+                            widget: baseEl
+                        });
                     }
 
                     // 3. 串行延迟循环调度队列，每一次触发包含：模拟物理轻触、物理聚焦、稍作停顿、再发键盘指令
@@ -890,40 +917,20 @@ object PersistentWebViewPool {
                                 typeNextChar();
                                 return;
                             } else if (action.indexOf('invert') === 0) {
-                                // 翻转 K 线组合键为 alt + i
+                                // 翻转 K 线组合键为 alt + i (只向 target 派发，通过 bubbles: true 自然冒泡，杜绝重复冒泡导致的二次翻转)
                                 var opts = { key: 'i', code: 'KeyI', keyCode: 73, which: 73, altKey: true, bubbles: true, cancelable: true, composed: true };
                                 var kd = new KeyboardEvent('keydown', opts);
                                 target.dispatchEvent(kd);
-                                document.dispatchEvent(kd);
-                                window.dispatchEvent(kd);
                                 setTimeout(function() {
                                     var ku = new KeyboardEvent('keyup', opts);
                                     target.dispatchEvent(ku);
-                                    document.dispatchEvent(ku);
-                                    window.dispatchEvent(ku);
 
-                                    // 额外在 100ms 后触发一次左键单击，清除 hover 遗留的十字线，让看盘画面纯净
+                                    // 每个子图翻转完毕后，稍候 400ms 推进到下一个子图
                                     setTimeout(function() {
-                                        var cleanEvt = {
-                                            clientX: p.x,
-                                            clientY: p.y,
-                                            screenX: p.x,
-                                            screenY: p.y,
-                                            bubbles: true,
-                                            cancelable: true,
-                                            view: window,
-                                            buttons: 1,
-                                            composed: true
-                                        };
-                                        try {
-                                            target.dispatchEvent(new PointerEvent('pointerdown', cleanEvt));
-                                            target.dispatchEvent(new MouseEvent('mousedown', cleanEvt));
-                                            target.dispatchEvent(new PointerEvent('pointerup', cleanEvt));
-                                            target.dispatchEvent(new MouseEvent('mouseup', cleanEvt));
-                                            target.dispatchEvent(new MouseEvent('click', cleanEvt));
-                                        } catch(e) {}
-                                    }, 100);
-                                }, 50);
+                                        processPoint(idx + 1);
+                                    }, 400);
+                                }, 80);
+                                return;
                             }
 
                             // 【安全延迟 400ms】：处理完毕后，再给浏览器与内核 400ms 的渲染静默空闲

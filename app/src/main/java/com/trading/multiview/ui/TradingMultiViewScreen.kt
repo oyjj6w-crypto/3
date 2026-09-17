@@ -76,6 +76,9 @@ fun TradingMultiViewScreen(
     val focusManager = LocalFocusManager.current
     var showSaveDialog by remember { mutableStateOf(false) }
     var showTimeframeDialog by remember { mutableStateOf(false) }
+    var showInvertDialog by remember { mutableStateOf(false) }
+    var showHideDrawingsDialog by remember { mutableStateOf(false) }
+    var showMagnetDialog by remember { mutableStateOf(false) }
 
     // 初始化时加载本地存储的自定义分组
     LaunchedEffect(Unit) {
@@ -269,56 +272,64 @@ fun TradingMultiViewScreen(
                         modifier = Modifier
                             .size(24.dp)
                             .clip(RoundedCornerShape(4.dp))
-                            .background(Color(0xFF1E293B).copy(alpha = 0.7f))
-                            .clickable { viewModel.triggerHideDrawings(context) },
+                            .background(
+                                if (showHideDrawingsDialog) Color(0xFF2563EB)
+                                else Color(0xFF1E293B).copy(alpha = 0.7f)
+                            )
+                            .clickable { showHideDrawingsDialog = true },
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
                             imageVector = Icons.Default.VisibilityOff,
-                            contentDescription = "同步向全部窗口触发: 隐藏/恢复画线 (Ctrl+Alt+H)",
-                            tint = Color(0xFF38BDF8),
+                            contentDescription = "选择窗口: 隐藏/恢复画线 (Ctrl+Alt+H)",
+                            tint = if (showHideDrawingsDialog) Color.White else Color(0xFF38BDF8),
                             modifier = Modifier.size(15.dp)
                         )
                     }
 
-                    // 2. 磁力吸附切换 (Magnet / Ctrl)
-                    val isMagnetActive = uiState.isMagnetActive
+                    // 2. 磁力吸附切换 (Magnet / Ctrl)：默认全都不生效，等用户选择其中一个窗口生效
+                    val activeMagnetWin = uiState.windows.find { it.isMagnetActive }
+                    val isAnyMagnetActive = activeMagnetWin != null
                     Box(
                         modifier = Modifier
                             .size(24.dp)
                             .clip(RoundedCornerShape(4.dp))
                             .background(
-                                if (isMagnetActive) Color(0xFFE11D48).copy(alpha = 0.35f)
+                                if (showMagnetDialog) Color(0xFFE11D48)
+                                else if (isAnyMagnetActive) Color(0xFFE11D48).copy(alpha = 0.35f)
                                 else Color(0xFF1E293B).copy(alpha = 0.7f)
                             )
                             .border(
-                                width = if (isMagnetActive) 1.dp else 0.dp,
-                                color = if (isMagnetActive) Color(0xFFFB7185) else Color.Transparent,
+                                width = if (isAnyMagnetActive || showMagnetDialog) 1.dp else 0.dp,
+                                color = if (showMagnetDialog) Color.White else if (isAnyMagnetActive) Color(0xFFFB7185) else Color.Transparent,
                                 shape = RoundedCornerShape(4.dp)
                             )
-                            .clickable { viewModel.triggerToggleMagnet(context) },
+                            .clickable { showMagnetDialog = true },
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
                             imageVector = Icons.Default.CenterFocusStrong,
-                            contentDescription = "同步向全部窗口触发: 磁力吸附切换 (Magnet)",
-                            tint = if (isMagnetActive) Color(0xFFFB7185) else Color(0xFFCBD5E1),
+                            contentDescription = "选择窗口: 磁力吸附切换 (Magnet)",
+                            tint = if (showMagnetDialog) Color.White else if (isAnyMagnetActive) Color(0xFFFB7185) else Color(0xFFCBD5E1),
                             modifier = Modifier.size(15.dp)
                         )
                     }
 
-                    // 3. 4图翻转 K线 (Alt+I)
+                    // 3. 4图翻转 K线 (Alt+I)：默认对3个窗口4布局翻转，亦可选择对其中1个或2个窗口翻转
                     Box(
                         modifier = Modifier
                             .size(24.dp)
                             .clip(RoundedCornerShape(4.dp))
-                            .background(Color(0xFF1E293B).copy(alpha = 0.7f))
-                            .clickable { viewModel.triggerInvert4Charts(context) },
+                            .background(
+                                if (showInvertDialog) Color(0xFF059669)
+                                else Color(0xFF1E293B).copy(alpha = 0.7f)
+                            )
+                            .clickable { showInvertDialog = true },
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
                             text = "4",
-                            color = Color(0xFF34D399),
+                            color = if (showInvertDialog) Color.White else Color(0xFF34D399),
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
                             fontFamily = FontFamily.Monospace
@@ -641,6 +652,37 @@ fun TradingMultiViewScreen(
             onSelectTimeframe = { tf, targets ->
                 viewModel.triggerGlobalTimeframe(tf, targets, context)
                 showTimeframeDialog = false
+            }
+        )
+    }
+
+    if (showHideDrawingsDialog) {
+        HideDrawingsSyncDialog(
+            onDismiss = { showHideDrawingsDialog = false },
+            onConfirm = { targets ->
+                viewModel.triggerHideDrawings(targets, context)
+                showHideDrawingsDialog = false
+            }
+        )
+    }
+
+    if (showMagnetDialog) {
+        MagnetSelectDialog(
+            windows = uiState.windows,
+            onDismiss = { showMagnetDialog = false },
+            onSelectWindow = { winId ->
+                viewModel.triggerToggleWindowMagnet(winId, context)
+                showMagnetDialog = false
+            }
+        )
+    }
+
+    if (showInvertDialog) {
+        Invert4SyncDialog(
+            onDismiss = { showInvertDialog = false },
+            onConfirm = { targets ->
+                viewModel.triggerInvert4Charts(targets, context)
+                showInvertDialog = false
             }
         )
     }
@@ -981,6 +1023,313 @@ fun HiddenWindowsTray(
                         fontSize = 11.sp,
                         color = Color(0xFF10B981)
                     )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 隐藏/显示画线窗口选择对话框 (默认 1, 2, 3 全选，支持选择 1 个或 2 个或 3 个)
+ */
+@Composable
+fun HideDrawingsSyncDialog(
+    onDismiss: () -> Unit,
+    onConfirm: (Set<Int>) -> Unit
+) {
+    var selectedWindows by remember { mutableStateOf(setOf(1, 2, 3)) }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Card(
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF111827)),
+            border = BorderStroke(1.dp, Color(0xFF374151)),
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier
+                .width(320.dp)
+                .padding(16.dp)
+        ) {
+            Column(
+                modifier = Modifier.padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                // 窗口目标选择按钮
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    (1..3).forEach { winId ->
+                        val isSelected = selectedWindows.contains(winId)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(if (isSelected) Color(0xFF1E293B) else Color(0xFF1F2937))
+                                .border(
+                                    1.dp,
+                                    if (isSelected) Color(0xFF38BDF8) else Color(0xFF374151),
+                                    RoundedCornerShape(6.dp)
+                                )
+                                .clickable {
+                                    selectedWindows = if (isSelected) {
+                                        if (selectedWindows.size > 1) selectedWindows - winId else selectedWindows
+                                    } else {
+                                        selectedWindows + winId
+                                    }
+                                }
+                                .padding(vertical = 6.dp),
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(12.dp)
+                                    .clip(RoundedCornerShape(3.dp))
+                                    .background(if (isSelected) Color(0xFF0284C7) else Color(0xFF4B5563))
+                                    .border(
+                                        1.dp,
+                                        if (isSelected) Color(0xFF38BDF8) else Color(0xFF6B7280),
+                                        RoundedCornerShape(3.dp)
+                                    ),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (isSelected) {
+                                    Text(
+                                        text = "✓",
+                                        color = Color.White,
+                                        fontSize = 8.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "窗口 $winId",
+                                color = if (isSelected) Color.White else Color(0xFF9CA3AF),
+                                fontSize = 10.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                            )
+                        }
+                    }
+                }
+
+                // 立即执行按钮
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(36.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(Color(0xFF0369A1))
+                        .clickable { onConfirm(selectedWindows) },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.VisibilityOff,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(15.dp)
+                        )
+                        Text(
+                            text = "隐藏 / 恢复画线 (Ctrl+Alt+H)",
+                            color = Color.White,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 4图翻转 K线选择对话框 (默认 1, 2, 3 全选，支持选择 1 个或 2 个或 3 个)
+ */
+@Composable
+fun Invert4SyncDialog(
+    onDismiss: () -> Unit,
+    onConfirm: (Set<Int>) -> Unit
+) {
+    var selectedWindows by remember { mutableStateOf(setOf(1, 2, 3)) }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Card(
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF111827)),
+            border = BorderStroke(1.dp, Color(0xFF374151)),
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier
+                .width(320.dp)
+                .padding(16.dp)
+        ) {
+            Column(
+                modifier = Modifier.padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                // 窗口目标选择按钮
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    (1..3).forEach { winId ->
+                        val isSelected = selectedWindows.contains(winId)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(if (isSelected) Color(0xFF1E293B) else Color(0xFF1F2937))
+                                .border(
+                                    1.dp,
+                                    if (isSelected) Color(0xFF34D399) else Color(0xFF374151),
+                                    RoundedCornerShape(6.dp)
+                                )
+                                .clickable {
+                                    selectedWindows = if (isSelected) {
+                                        if (selectedWindows.size > 1) selectedWindows - winId else selectedWindows
+                                    } else {
+                                        selectedWindows + winId
+                                    }
+                                }
+                                .padding(vertical = 6.dp),
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(12.dp)
+                                    .clip(RoundedCornerShape(3.dp))
+                                    .background(if (isSelected) Color(0xFF059669) else Color(0xFF4B5563))
+                                    .border(
+                                        1.dp,
+                                        if (isSelected) Color(0xFF34D399) else Color(0xFF6B7280),
+                                        RoundedCornerShape(3.dp)
+                                    ),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (isSelected) {
+                                    Text(
+                                        text = "✓",
+                                        color = Color.White,
+                                        fontSize = 8.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "窗口 $winId",
+                                color = if (isSelected) Color.White else Color(0xFF9CA3AF),
+                                fontSize = 10.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                            )
+                        }
+                    }
+                }
+
+                // 立即执行按钮
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(36.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(Color(0xFF047857))
+                        .clickable { onConfirm(selectedWindows) },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "4 布局依次翻转 K 线 (Alt+I)",
+                        color = Color.White,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 磁力吸附选择对话框 (默认全都不生效，等用户选择其中 1 个窗口生效)
+ */
+@Composable
+fun MagnetSelectDialog(
+    windows: List<WindowState>,
+    onDismiss: () -> Unit,
+    onSelectWindow: (Int) -> Unit
+) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Card(
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF111827)),
+            border = BorderStroke(1.dp, Color(0xFF374151)),
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier
+                .width(320.dp)
+                .padding(16.dp)
+        ) {
+            Column(
+                modifier = Modifier.padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                // 3 个独立窗口磁吸选择按钮
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    (1..3).forEach { winId ->
+                        val isWinMagnetActive = windows.find { it.id == winId }?.isMagnetActive == true
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(
+                                    if (isWinMagnetActive) Color(0xFFE11D48).copy(alpha = 0.25f)
+                                    else Color(0xFF1F2937)
+                                )
+                                .border(
+                                    1.dp,
+                                    if (isWinMagnetActive) Color(0xFFFB7185) else Color(0xFF374151),
+                                    RoundedCornerShape(6.dp)
+                                )
+                                .clickable { onSelectWindow(winId) }
+                                .padding(vertical = 10.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.CenterFocusStrong,
+                                contentDescription = null,
+                                tint = if (isWinMagnetActive) Color(0xFFFB7185) else Color(0xFF94A3B8),
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "窗口 $winId",
+                                color = if (isWinMagnetActive) Color.White else Color(0xFFCBD5E1),
+                                fontSize = 11.sp,
+                                fontWeight = if (isWinMagnetActive) FontWeight.Bold else FontWeight.Normal
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = if (isWinMagnetActive) "已生效" else "未生效",
+                                color = if (isWinMagnetActive) Color(0xFFFB7185) else Color(0xFF64748B),
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Normal
+                            )
+                        }
+                    }
                 }
             }
         }
