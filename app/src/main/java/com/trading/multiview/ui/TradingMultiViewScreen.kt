@@ -729,6 +729,7 @@ fun TradingMultiViewScreen(
                 }
             }
         }
+    }
 
         // 5. 屏幕右侧浮动快捷移至最新K线按钮 (Alt+Shift+Right Arrow)，支持自由拖动
         Box(
@@ -928,7 +929,7 @@ fun TradingMultiViewScreen(
                                     .clip(RoundedCornerShape(4.dp))
                                     .background(Color(0xFF0284C7))
                                     .clickable {
-                                        val sec = delayInput.toIntOrNull() ?: 2
+                                        val sec = delayInput.toFloatOrNull() ?: 2.0f
                                         viewModel.setAutoHideDelaySeconds(sec, context)
                                     }
                                     .padding(horizontal = 8.dp, vertical = 4.dp)
@@ -970,7 +971,15 @@ fun TradingMultiViewScreen(
                                 ) {
                                     // 上移
                                     IconButton(
-                                        onClick = { viewModel.reorderGroups(index, index - 1, context) },
+                                        onClick = {
+                                            val list = uiState.groups.toMutableList()
+                                            if (index > 0) {
+                                                val temp = list[index]
+                                                list[index] = list[index - 1]
+                                                list[index - 1] = temp
+                                                viewModel.reorderGroups(list, context)
+                                            }
+                                        },
                                         enabled = index > 0,
                                         modifier = Modifier.size(24.dp)
                                     ) {
@@ -984,7 +993,15 @@ fun TradingMultiViewScreen(
 
                                     // 下移
                                     IconButton(
-                                        onClick = { viewModel.reorderGroups(index, index + 1, context) },
+                                        onClick = {
+                                            val list = uiState.groups.toMutableList()
+                                            if (index < list.size - 1) {
+                                                val temp = list[index]
+                                                list[index] = list[index + 1]
+                                                list[index + 1] = temp
+                                                viewModel.reorderGroups(list, context)
+                                            }
+                                        },
                                         enabled = index < uiState.groups.size - 1,
                                         modifier = Modifier.size(24.dp)
                                     ) {
@@ -998,7 +1015,7 @@ fun TradingMultiViewScreen(
 
                                     // 删除
                                     IconButton(
-                                        onClick = { viewModel.deleteGroup(group.id, context) },
+                                        onClick = { viewModel.deleteCustomGroup(group.id, context) },
                                         enabled = uiState.groups.size > 1,
                                         modifier = Modifier.size(24.dp)
                                     ) {
