@@ -3,7 +3,6 @@ package com.trading.multiview.viewmodel
 import android.content.Context
 import androidx.lifecycle.ViewModel
 import com.trading.multiview.webview.PersistentWebViewPool
-import com.trading.multiview.storage.PersistentSessionManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -23,6 +22,7 @@ data class TabGroup(
     val name: String,
     val isPreset: Boolean = false,
     val description: String = "",
+    val windowCount: Int = 3, // 每个标签页独立设置：3 或 4 个独立窗口
     val items: List<TabGroupItem>
 )
 
@@ -32,32 +32,38 @@ val DEFAULT_TAB_GROUPS = listOf(
         name = "1",
         isPreset = false,
         description = "分组 1 (TradingView 官方行情)",
+        windowCount = 3,
         items = listOf(
             TabGroupItem("TradingView 1", "BTCUSDT", "https://www.tradingview.com", "15m"),
             TabGroupItem("TradingView 2", "ETHUSDT", "https://www.tradingview.com", "60m"),
-            TabGroupItem("TradingView 3", "SOLUSDT", "https://www.tradingview.com", "240m")
+            TabGroupItem("TradingView 3", "SOLUSDT", "https://www.tradingview.com", "240m"),
+            TabGroupItem("TradingView 4", "DOGEUSDT", "https://www.tradingview.com", "15m")
         )
     ),
     TabGroup(
         id = "preset_2",
         name = "2",
         isPreset = false,
-        description = "分组 2 (主流大盘 BTC/ETH/SOL)",
+        description = "分组 2 (主流大盘 BTC/ETH/SOL/DOGE)",
+        windowCount = 3,
         items = listOf(
             TabGroupItem("BTC/USDT 15M", "BTCUSDT", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:BTCUSDT&interval=15&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1", "15m"),
             TabGroupItem("ETH/USDT 1H", "ETHUSDT", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:ETHUSDT&interval=60&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1", "60m"),
-            TabGroupItem("SOL/USDT 4H", "SOLUSDT", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:SOLUSDT&interval=240&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1", "240m")
+            TabGroupItem("SOL/USDT 4H", "SOLUSDT", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:SOLUSDT&interval=240&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1", "240m"),
+            TabGroupItem("DOGE/USDT 15M", "DOGEUSDT", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:DOGEUSDT&interval=15&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1", "15m")
         )
     ),
     TabGroup(
         id = "preset_3",
         name = "3",
         isPreset = false,
-        description = "分组 3 (公链龙头 BNB/AVAX/NEAR)",
+        description = "分组 3 (公链龙头 BNB/AVAX/NEAR/PEPE)",
+        windowCount = 3,
         items = listOf(
             TabGroupItem("BNB/USDT 15M", "BNBUSDT", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:BNBUSDT&interval=15&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1", "15m"),
             TabGroupItem("AVAX/USDT 1H", "AVAXUSDT", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:AVAXUSDT&interval=60&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1", "60m"),
-            TabGroupItem("NEAR/USDT 4H", "NEARUSDT", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:NEARUSDT&interval=240&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1", "240m")
+            TabGroupItem("NEAR/USDT 4H", "NEARUSDT", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:NEARUSDT&interval=240&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1", "240m"),
+            TabGroupItem("PEPE/USDT 15M", "PEPEUSDT", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:PEPEUSDT&interval=15&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1", "15m")
         )
     )
 )
@@ -80,7 +86,8 @@ fun createInitialWindows(): List<WindowState> {
     val defaults = listOf(
         Triple(1, "TradingView 1" to "BTCUSDT", "https://www.tradingview.com"),
         Triple(2, "TradingView 2" to "ETHUSDT", "https://www.tradingview.com"),
-        Triple(3, "TradingView 3" to "SOLUSDT", "https://www.tradingview.com")
+        Triple(3, "TradingView 3" to "SOLUSDT", "https://www.tradingview.com"),
+        Triple(4, "TradingView 4" to "DOGEUSDT", "https://www.tradingview.com")
     )
     return defaults.map { (id, titleSymbol, defaultUrl) ->
         val savedUrl = PersistentWebViewPool.getSavedWindowUrl(null, id)
@@ -104,29 +111,44 @@ data class MultiViewUiState(
     val fixedPixelWidth: Int = 1280, // 固定像素桌面视口基准 (默认 1280px 标准 PC)
     val isMagnetActive: Boolean = false // 磁力吸附切换状态
 ) {
+    // 当前标签页集合对象
+    val currentGroup: TabGroup?
+        get() = groups.find { it.id == activeGroupId }
+
+    // 当前标签页配置的独立视窗数量 (3 或 4，默认 3)
+    val currentWindowCount: Int
+        get() = currentGroup?.windowCount ?: 3
+
+    // 当前标签页下活跃的视窗集合 (前 3 个或前 4 个)
+    val activeWindowsForGroup: List<WindowState>
+        get() = windows.take(currentWindowCount)
+
     // 获取当前活跃且未隐藏的窗口列表
     val visibleWindows: List<WindowState>
-        get() = windows.filter { !it.isHidden }
+        get() = activeWindowsForGroup.filter { !it.isHidden }
 
     // 获取被隐藏的窗口列表
     val hiddenWindows: List<WindowState>
-        get() = windows.filter { it.isHidden }
+        get() = activeWindowsForGroup.filter { it.isHidden }
 
     /**
      * 核心算力：根据需求规格计算 Compose Row 的 weight 分配：
+     * - 若该窗口超出当前标签页配置的窗口数量 (例如设置 3 窗口时的第 4 窗口)，彻底分配 0f 隐藏
      * - 若有窗口全屏最大化：该窗口独占 1f，其余 0f
-     * - 若 3 个可见：各占 1f（1:1:1 比例，各 33.3%）
+     * - 若 4 个可见（横向 4 联屏）：各占 1f（1:1:1:1 比例，各 25% 宽度）
+     * - 若 3 个可见（横向 3 联屏）：各占 1f（1:1:1 比例，各 33.3% 宽度）
      * - 若 2 个可见：各占 1f（各占 50% 宽度）
-     * - 若 1 个可见：占 1f（独占 100%）
+     * - 若 1 个可见：占 1f（独占 100% 宽度）
      */
     fun calculateWeight(windowId: Int): Float {
+        if (windowId > currentWindowCount) return 0f
         val window = windows.find { it.id == windowId } ?: return 0f
         if (window.isHidden) return 0f
 
         return if (maximizedWindowId != null) {
             if (maximizedWindowId == windowId) 1f else 0f
         } else {
-            1f // 在 Compose Row 中，所有可显示的窗口 weight 均为 1f，自动实现均分 (1:1:1 或 50%:50% 或 100%)
+            1f // 在 Compose Row 中均分，4 窗口时 1:1:1:1 自动分配各 25%，3 窗口时 1:1:1 自动分配各 33.3%
         }
     }
 }
@@ -187,6 +209,8 @@ class TradingViewModel : ViewModel() {
         }
 
         val targetGroup = updatedGroups.find { it.id == groupId } ?: return
+        val targetWindowCount = targetGroup.windowCount
+        PersistentWebViewPool.setWindowActive(4, targetWindowCount >= 4)
 
         _uiState.update { state ->
             val updatedWindows = state.windows.mapIndexed { index, win ->
@@ -225,7 +249,8 @@ class TradingViewModel : ViewModel() {
      */
     fun setGlobalZoom(zoomPercent: Int) {
         val clamped = zoomPercent.coerceIn(50, 250)
-        listOf(1, 2, 3).forEach { windowId ->
+        val count = _uiState.value.currentWindowCount
+        (1..count).forEach { windowId ->
             PersistentWebViewPool.setZoom(windowId, clamped)
         }
         _uiState.update { state ->
@@ -248,7 +273,8 @@ class TradingViewModel : ViewModel() {
 
     fun resetGlobalZoom() {
         setGlobalZoom(100)
-        listOf(1, 2, 3).forEach { windowId ->
+        val count = _uiState.value.currentWindowCount
+        (1..count).forEach { windowId ->
             PersistentWebViewPool.triggerAutoFit(windowId)
         }
     }
@@ -280,6 +306,8 @@ class TradingViewModel : ViewModel() {
      */
     fun saveCurrentGroup(name: String, context: Context) {
         val currentWindows = _uiState.value.windows
+        val activeGroup = _uiState.value.currentGroup
+        val currentCount = activeGroup?.windowCount ?: 3
         val customCount = _uiState.value.groups.filter { !it.isPreset }.size
         val finalName = if (name.isNotBlank()) name.trim() else "自选看盘组合 #${customCount + 1}"
         
@@ -287,8 +315,9 @@ class TradingViewModel : ViewModel() {
             id = "custom_${System.currentTimeMillis()}",
             name = finalName,
             isPreset = false,
-            description = "用户自定义保存的 3 视窗配置",
-            items = currentWindows.map { win ->
+            description = "用户自定义保存的 $currentCount 视窗配置",
+            windowCount = currentCount,
+            items = currentWindows.take(4).map { win ->
                 TabGroupItem(
                     title = win.title,
                     symbol = win.symbol,
@@ -398,6 +427,7 @@ class TradingViewModel : ViewModel() {
                 val name = obj.getString("name")
                 val isPreset = obj.optBoolean("isPreset", false)
                 val desc = obj.optString("description", "")
+                val windowCount = obj.optInt("windowCount", 3).coerceIn(3, 4)
                 val itemsArray = obj.getJSONArray("items")
                 val items = mutableListOf<TabGroupItem>()
                 for (j in 0 until itemsArray.length()) {
@@ -417,6 +447,7 @@ class TradingViewModel : ViewModel() {
                         name = name,
                         isPreset = isPreset,
                         description = desc,
+                        windowCount = windowCount,
                         items = items
                     )
                 )
@@ -492,6 +523,7 @@ class TradingViewModel : ViewModel() {
                     put("name", group.name)
                     put("isPreset", group.isPreset)
                     put("description", group.description)
+                    put("windowCount", group.windowCount)
                     val itemsArr = JSONArray()
                     group.items.forEach { item ->
                         val itemObj = JSONObject().apply {
@@ -567,11 +599,30 @@ class TradingViewModel : ViewModel() {
     }
 
     /**
-     * 全局一键刷新全部 3 个视窗 (保持常驻单例并重载页面)
-     * @param forceClean 是否强制清理 HTTP 缓存并从网络重新发起请求 (恢复凭证时置为 true 确保携带最新 Cookie)
+     * 每个标签页集合独立配置窗口数量 (3 或 4 个独立窗口，横向 3 联屏或横向 4 联屏)
      */
-    fun reloadAll(forceClean: Boolean = false) {
-        PersistentWebViewPool.reloadAll(forceClean = forceClean)
+    fun updateGroupWindowCount(groupId: String, count: Int, context: Context? = null) {
+        val safeCount = count.coerceIn(3, 4)
+        _uiState.update { state ->
+            val updated = state.groups.map { g ->
+                if (g.id == groupId) g.copy(windowCount = safeCount) else g
+            }
+            if (groupId == state.activeGroupId) {
+                PersistentWebViewPool.setWindowActive(4, safeCount >= 4)
+            }
+            persistAllGroupsToPrefs(updated, activeGroupId = state.activeGroupId, context = context)
+            state.copy(groups = updated)
+        }
+    }
+
+    /**
+     * 全局一键刷新全部视窗 (按当前标签页配置的 3 或 4 窗口重载)
+     */
+    fun reloadAll() {
+        val count = _uiState.value.currentWindowCount
+        (1..count).forEach { windowId ->
+            PersistentWebViewPool.reloadWindow(windowId)
+        }
     }
 
     /**
@@ -674,9 +725,14 @@ class TradingViewModel : ViewModel() {
 
     /**
      * 隐藏窗口：剩余可见窗口自动等比拉伸
+     * 关键性能优化：暂停隐藏窗口的 JS 定时器与渲染，毫秒级腾出 GPU 算力并触发极速重排
      */
     fun hideWindow(windowId: Int) {
         _uiState.update { state ->
+            val visibleCount = state.visibleWindows.size
+            if (visibleCount <= 1) return@update state // 至少保留一个窗口可见
+
+            PersistentWebViewPool.setWindowActive(windowId, false)
             val newMaximizedId = if (state.maximizedWindowId == windowId) null else state.maximizedWindowId
 
             state.copy(
@@ -694,6 +750,7 @@ class TradingViewModel : ViewModel() {
      * 恢复隐藏的窗口
      */
     fun restoreWindow(windowId: Int) {
+        PersistentWebViewPool.setWindowActive(windowId, true)
         _uiState.update { state ->
             state.copy(
                 windows = state.windows.map { win ->
@@ -704,9 +761,11 @@ class TradingViewModel : ViewModel() {
     }
 
     /**
-     * 一键恢复全部窗口（回到 1:1:1 默认排布）
+     * 一键恢复全部窗口
      */
     fun restoreAll() {
+        val count = _uiState.value.currentWindowCount
+        (1..count).forEach { PersistentWebViewPool.setWindowActive(it, true) }
         _uiState.update { state ->
             state.copy(
                 maximizedWindowId = null,
@@ -1010,95 +1069,6 @@ class TradingViewModel : ViewModel() {
         context?.let {
             val winsText = selectedWindowIds.sorted().joinToString(", ") { "窗口 $it" }
             android.widget.Toast.makeText(it, "已在 $winsText 触发 K 线周期切换为 $tf", android.widget.Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    /**
-     * 手动/主动将当前 TradingView 登录状态及配置持久化到公共目录
-     */
-    fun backupSessionToPublicStorage(context: Context, onComplete: ((Boolean, String) -> Unit)? = null) {
-        PersistentSessionManager.backupCookiesToPublicStorage(context, force = true) { success, msg ->
-            android.os.Handler(android.os.Looper.getMainLooper()).post {
-                if (success) {
-                    PersistentSessionManager.backupPreferencesToPublicStorage(context)
-                    android.widget.Toast.makeText(
-                        context,
-                        msg,
-                        android.widget.Toast.LENGTH_LONG
-                    ).show()
-                } else {
-                    android.widget.Toast.makeText(
-                        context,
-                        "登录备份提示: $msg",
-                        android.widget.Toast.LENGTH_SHORT
-                    ).show()
-                }
-                onComplete?.invoke(success, msg)
-            }
-        }
-    }
-
-    /**
-     * 从公共目录重新载入登录状态与配置
-     */
-    fun restoreSessionFromPublicStorage(context: Context, onComplete: ((Boolean, String) -> Unit)? = null) {
-        PersistentSessionManager.restoreCookiesFromPublicStorage(context) { success, count, msg ->
-            android.os.Handler(android.os.Looper.getMainLooper()).post {
-                if (success && count > 0) {
-                    PersistentSessionManager.restorePreferencesFromPublicStorageIfNeeded(context)
-                    loadSavedGroupsFromPrefs(context)
-                    // 强制清理内存缓存并重新从网络请求，确保浏览器核心携带最新持久化的 Cookie
-                    reloadAll(forceClean = true)
-                    android.widget.Toast.makeText(
-                        context,
-                        msg,
-                        android.widget.Toast.LENGTH_LONG
-                    ).show()
-                } else {
-                    android.widget.Toast.makeText(
-                        context,
-                        msg,
-                        android.widget.Toast.LENGTH_LONG
-                    ).show()
-                }
-                onComplete?.invoke(success, msg)
-            }
-        }
-    }
-
-    /**
-     * 将当前凭据导出复制至剪贴板
-     */
-    fun copySessionToClipboard(context: Context) {
-        val (ok, msg) = PersistentSessionManager.exportCookiesToClipboard(context)
-        android.widget.Toast.makeText(
-            context,
-            msg,
-            if (ok) android.widget.Toast.LENGTH_LONG else android.widget.Toast.LENGTH_SHORT
-        ).show()
-    }
-
-    /**
-     * 从剪贴板导入凭据并生效刷新
-     */
-    fun importSessionFromClipboard(context: Context, onComplete: ((Boolean, String) -> Unit)? = null) {
-        val (initiated, initialMsg) = PersistentSessionManager.importCookiesFromClipboard(context) { success, finalMsg ->
-            android.os.Handler(android.os.Looper.getMainLooper()).post {
-                if (success) {
-                    loadSavedGroupsFromPrefs(context)
-                    reloadAll(forceClean = true)
-                }
-                android.widget.Toast.makeText(
-                    context,
-                    finalMsg,
-                    if (success) android.widget.Toast.LENGTH_LONG else android.widget.Toast.LENGTH_SHORT
-                ).show()
-                onComplete?.invoke(success, finalMsg)
-            }
-        }
-        if (!initiated) {
-            android.widget.Toast.makeText(context, initialMsg, android.widget.Toast.LENGTH_SHORT).show()
-            onComplete?.invoke(false, initialMsg)
         }
     }
 }

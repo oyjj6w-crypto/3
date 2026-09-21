@@ -21,6 +21,7 @@ export interface WindowGroup {
   name: string;
   isPreset?: boolean;
   description?: string;
+  windowCount?: number; // 3 或 4 个独立窗口，每个标签页独立设置
   items: {
     title: string;
     symbol: string;

@@ -6,6 +6,7 @@ export const PRESET_GROUPS: WindowGroup[] = [
     name: '1',
     isPreset: false,
     description: '分组 1 (TradingView 官方行情)',
+    windowCount: 3,
     items: [
       {
         title: 'TradingView 1',
@@ -25,13 +26,20 @@ export const PRESET_GROUPS: WindowGroup[] = [
         url: 'https://www.tradingview.com',
         timeframe: '240m',
       },
+      {
+        title: 'TradingView 4',
+        symbol: 'DOGEUSDT',
+        url: 'https://www.tradingview.com',
+        timeframe: '15m',
+      },
     ],
   },
   {
     id: 'preset_2',
     name: '2',
     isPreset: false,
-    description: '分组 2 (主流大盘 BTC/ETH/SOL)',
+    description: '分组 2 (主流大盘 BTC/ETH/SOL/DOGE)',
+    windowCount: 3,
     items: [
       {
         title: 'BTC/USDT 15M',
@@ -51,13 +59,20 @@ export const PRESET_GROUPS: WindowGroup[] = [
         url: 'https://s.tradingview.com/widgetembed/?symbol=BINANCE:SOLUSDT&interval=240&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1',
         timeframe: '240m',
       },
+      {
+        title: 'DOGE/USDT 15M',
+        symbol: 'DOGEUSDT',
+        url: 'https://s.tradingview.com/widgetembed/?symbol=BINANCE:DOGEUSDT&interval=15&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1',
+        timeframe: '15m',
+      },
     ],
   },
   {
     id: 'preset_3',
     name: '3',
     isPreset: false,
-    description: '分组 3 (公链龙头 BNB/AVAX/NEAR)',
+    description: '分组 3 (公链龙头 BNB/AVAX/NEAR/PEPE)',
+    windowCount: 3,
     items: [
       {
         title: 'BNB/USDT 15M',
@@ -76,6 +91,12 @@ export const PRESET_GROUPS: WindowGroup[] = [
         symbol: 'NEARUSDT',
         url: 'https://s.tradingview.com/widgetembed/?symbol=BINANCE:NEARUSDT&interval=240&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1',
         timeframe: '240m',
+      },
+      {
+        title: 'PEPE/USDT 15M',
+        symbol: 'PEPEUSDT',
+        url: 'https://s.tradingview.com/widgetembed/?symbol=BINANCE:PEPEUSDT&interval=15&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1',
+        timeframe: '15m',
       },
     ],
   },

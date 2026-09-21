@@ -7,6 +7,8 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -50,6 +52,7 @@ import androidx.compose.ui.window.Popup
 import androidx.compose.ui.text.style.TextAlign
 import com.trading.multiview.viewmodel.TradingViewModel
 import com.trading.multiview.viewmodel.WindowState
+import com.trading.multiview.viewmodel.TabGroup
 import com.trading.multiview.webview.PersistentWebViewPool
 import android.app.Activity
 import android.content.pm.ActivityInfo
@@ -75,11 +78,12 @@ fun TradingMultiViewScreen(
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
     var showSaveDialog by remember { mutableStateOf(false) }
+    var showGroupConfigDialog by remember { mutableStateOf(false) }
+    var targetGroupForConfig by remember { mutableStateOf<TabGroup?>(null) }
     var showTimeframeDialog by remember { mutableStateOf(false) }
     var showInvertDialog by remember { mutableStateOf(false) }
     var showHideDrawingsDialog by remember { mutableStateOf(false) }
     var showMagnetDialog by remember { mutableStateOf(false) }
-    var showSessionDialog by remember { mutableStateOf(false) }
 
     // 初始化时加载本地存储的自定义分组
     LaunchedEffect(Unit) {
@@ -106,7 +110,7 @@ fun TradingMultiViewScreen(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                // 左侧：分组标签集合 (纯净标签 1, 2, 3 + 标准方形尺寸的加号按钮)
+                // 左侧：分组标签集合 (纯净标签 1, 2, 3，长按弹出配置选项：支持每个标签页独立选择 3 或 4 窗口)
                 Row(
                     modifier = Modifier.weight(1f, fill = false),
                     verticalAlignment = Alignment.CenterVertically,
@@ -117,7 +121,7 @@ fun TradingMultiViewScreen(
                         Box(
                             modifier = Modifier
                                 .height(30.dp)
-                                .defaultMinSize(minWidth = 32.dp)
+                                .defaultMinSize(minWidth = 36.dp)
                                 .clip(RoundedCornerShape(6.dp))
                                 .background(if (isActive) Color(0xFF0284C7) else Color(0xFF1E293B))
                                 .border(
@@ -125,16 +129,34 @@ fun TradingMultiViewScreen(
                                     if (isActive) Color(0xFF38BDF8) else Color(0xFF334155),
                                     RoundedCornerShape(6.dp)
                                 )
-                                .clickable { viewModel.switchGroup(group.id) }
-                                .padding(horizontal = 10.dp),
+                                @OptIn(ExperimentalFoundationApi::class)
+                                .combinedClickable(
+                                    onClick = { viewModel.switchGroup(group.id) },
+                                    onLongClick = {
+                                        targetGroupForConfig = group
+                                        showGroupConfigDialog = true
+                                    }
+                                )
+                                .padding(horizontal = 8.dp),
                             contentAlignment = Alignment.Center
                         ) {
-                            Text(
-                                text = group.name,
-                                color = if (isActive) Color.White else Color(0xFFE2E8F0),
-                                fontSize = 12.sp,
-                                fontWeight = if (isActive) FontWeight.Bold else FontWeight.Medium
-                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(3.dp)
+                            ) {
+                                Text(
+                                    text = group.name,
+                                    color = if (isActive) Color.White else Color(0xFFE2E8F0),
+                                    fontSize = 12.sp,
+                                    fontWeight = if (isActive) FontWeight.Bold else FontWeight.Medium
+                                )
+                                Text(
+                                    text = "${group.windowCount}屏",
+                                    color = if (isActive) Color(0xFFBAE6FD) else Color(0xFF94A3B8),
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Normal
+                                )
+                            }
                         }
                     }
 
@@ -159,12 +181,12 @@ fun TradingMultiViewScreen(
 
                 Spacer(modifier = Modifier.width(8.dp))
 
-                // 中部：每个窗口的最大化按钮和隐藏按钮 (严格 30dp 高度胶囊)
+                // 中部：每个窗口的最大化按钮和隐藏按钮 (严格根据当前标签页配置的 3 窗或 4 窗显示)
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    uiState.windows.forEach { win ->
+                    uiState.activeWindowsForGroup.forEach { win ->
                         val isMaximized = uiState.maximizedWindowId == win.id
                         val isHidden = win.isHidden
 
@@ -429,24 +451,6 @@ fun TradingMultiViewScreen(
                             modifier = Modifier.size(15.dp)
                         )
                     }
-
-                    // 账号会话与持久化备份（卸载重装免登录）按钮
-                    Box(
-                        modifier = Modifier
-                            .size(30.dp)
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(Color(0xFF1E293B))
-                            .border(1.dp, Color(0xFF334155), RoundedCornerShape(6.dp))
-                            .clickable { showSessionDialog = true },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.AccountCircle,
-                            contentDescription = "登录持久化与跨安装备份",
-                            tint = Color(0xFF10B981),
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
                 }
             }
         }
@@ -468,12 +472,12 @@ fun TradingMultiViewScreen(
                         .padding(horizontal = 8.dp, vertical = 6.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    // 1. 各窗口详细网址配置行
+                    // 1. 各窗口详细网址配置行 (当前标签页活跃视窗)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        uiState.windows.forEach { win ->
+                        uiState.activeWindowsForGroup.forEach { win ->
                             var inputUrl by remember(win.currentUrl) { mutableStateOf(win.currentUrl) }
                             Column(
                                 modifier = Modifier
@@ -573,7 +577,7 @@ fun TradingMultiViewScreen(
             }
         }
 
-        // 主视窗 Row 排布：默认横向均分 3 视窗（1:1:1）
+        // 主视窗 Row 排布：横向 3 联屏 或 横向 4 联屏 (均分 25% 或 33.3%)
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -587,12 +591,11 @@ fun TradingMultiViewScreen(
                     val targetWeight = uiState.calculateWeight(window.id)
                     val animatedWeight by animateFloatAsState(
                         targetValue = targetWeight,
-                        animationSpec = tween(durationMillis = 280),
+                        animationSpec = tween(durationMillis = 140),
                         label = "window_weight_${window.id}"
                     )
 
-                    // 通过保留所有 3 个视窗在 Composable 视图树中，彻底根治 WebView 因从视图树中移除重建导致 WebGL 重新初始化缓慢的问题（4-10秒白屏）
-                    // 隐藏或全屏时将其 weight 缩至极小值 0.0001f 并设置 alpha 为 0，不破坏其他可见视窗的拉伸比例，同时保持 WebView 100% 持续热激活
+                    // 优化：隐藏或非活跃视窗分配 weight 0.0001f，仅在活跃且可见时 (animatedWeight > 0.005f) 挂载 WebView，零渲染消耗
                     Box(
                         modifier = Modifier
                             .fillMaxHeight()
@@ -603,21 +606,22 @@ fun TradingMultiViewScreen(
                                 color = if (animatedWeight > 0.01f) Color(0xFF1E293B) else Color.Transparent
                             )
                     ) {
-                        SingleTradingWindowView(
-                            windowId = window.id,
-                            zoomPercent = window.zoomPercent
-                        )
+                        if (animatedWeight > 0.005f) {
+                            SingleTradingWindowView(
+                                windowId = window.id,
+                                zoomPercent = window.zoomPercent
+                            )
+                        }
                     }
                 }
             }
-
-
         }
     }
 
     if (showSaveDialog) {
         SaveGroupDialog(
             windows = uiState.windows,
+            windowCount = uiState.currentWindowCount,
             onDismiss = { showSaveDialog = false },
             onConfirm = { name ->
                 viewModel.saveCurrentGroup(name, context)
@@ -626,8 +630,24 @@ fun TradingMultiViewScreen(
         )
     }
 
+    if (showGroupConfigDialog && targetGroupForConfig != null) {
+        GroupConfigDialog(
+            group = targetGroupForConfig!!,
+            onDismiss = {
+                showGroupConfigDialog = false
+                targetGroupForConfig = null
+            },
+            onConfirm = { newName, newCount ->
+                viewModel.updateGroupWindowCount(targetGroupForConfig!!.id, newCount, context)
+                showGroupConfigDialog = false
+                targetGroupForConfig = null
+            }
+        )
+    }
+
     if (showTimeframeDialog) {
         TimeframeSyncDialog(
+            windowCount = uiState.currentWindowCount,
             onDismiss = { showTimeframeDialog = false },
             onSelectTimeframe = { tf, targets ->
                 viewModel.triggerGlobalTimeframe(tf, targets, context)
@@ -638,6 +658,7 @@ fun TradingMultiViewScreen(
 
     if (showHideDrawingsDialog) {
         HideDrawingsSyncDialog(
+            windowCount = uiState.currentWindowCount,
             onDismiss = { showHideDrawingsDialog = false },
             onConfirm = { targets ->
                 viewModel.triggerHideDrawings(targets, context)
@@ -648,7 +669,7 @@ fun TradingMultiViewScreen(
 
     if (showMagnetDialog) {
         MagnetSelectDialog(
-            windows = uiState.windows,
+            windows = uiState.activeWindowsForGroup,
             onDismiss = { showMagnetDialog = false },
             onSelectWindow = { winId ->
                 viewModel.triggerToggleWindowMagnet(winId, context)
@@ -659,19 +680,12 @@ fun TradingMultiViewScreen(
 
     if (showInvertDialog) {
         Invert4SyncDialog(
+            windowCount = uiState.currentWindowCount,
             onDismiss = { showInvertDialog = false },
             onConfirm = { targets, delayMs ->
                 viewModel.triggerInvert4Charts(targets, delayMs, context)
                 showInvertDialog = false
             }
-        )
-    }
-
-    if (showSessionDialog) {
-        SessionPersistenceDialog(
-            viewModel = viewModel,
-            context = context,
-            onDismiss = { showSessionDialog = false }
         )
     }
 }
@@ -681,10 +695,11 @@ fun TradingMultiViewScreen(
  */
 @Composable
 fun TimeframeSyncDialog(
+    windowCount: Int = 3,
     onDismiss: () -> Unit,
     onSelectTimeframe: (String, Set<Int>) -> Unit
 ) {
-    var selectedWindows by remember { mutableStateOf(setOf(1, 2, 3)) }
+    var selectedWindows by remember(windowCount) { mutableStateOf((1..windowCount).toSet()) }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -708,7 +723,7 @@ fun TimeframeSyncDialog(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    (1..3).forEach { winId ->
+                    (1..windowCount).forEach { winId ->
                         val isSelected = selectedWindows.contains(winId)
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
@@ -826,11 +841,169 @@ fun TimeframeSyncDialog(
 }
 
 /**
- * 保存当前三视窗为新分组对话框
+ * 标签页视窗配置对话框：长按分组标签弹出，支持独立设置 3 窗口或 4 窗口及重命名
+ */
+@Composable
+fun GroupConfigDialog(
+    group: TabGroup,
+    onDismiss: () -> Unit,
+    onConfirm: (name: String, windowCount: Int) -> Unit
+) {
+    var groupName by remember { mutableStateOf(group.name) }
+    var selectedWindowCount by remember { mutableStateOf(group.windowCount) }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Card(
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF111827)),
+            border = BorderStroke(1.dp, Color(0xFF374151)),
+            shape = RoundedCornerShape(14.dp),
+            modifier = Modifier
+                .width(360.dp)
+                .padding(16.dp)
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                // 顶部标题
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Tune,
+                        contentDescription = null,
+                        tint = Color(0xFF38BDF8),
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "标签页视窗配置",
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                }
+
+                // 分组名称输入
+                OutlinedTextField(
+                    value = groupName,
+                    onValueChange = { groupName = it },
+                    label = { Text("标签页名称", fontSize = 11.sp) },
+                    singleLine = true,
+                    textStyle = TextStyle(fontSize = 13.sp, color = Color.White),
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Text(
+                    text = "独立视窗数量与布局选择:",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color(0xFFE2E8F0)
+                )
+
+                // 2 个选项：3 个独立窗口 vs 4 个独立窗口
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    // 3 窗口选项
+                    val is3 = selectedWindowCount == 3
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (is3) Color(0xFF0C4A6E) else Color(0xFF1E293B))
+                            .border(
+                                1.5.dp,
+                                if (is3) Color(0xFF38BDF8) else Color(0xFF334155),
+                                RoundedCornerShape(8.dp)
+                            )
+                            .clickable { selectedWindowCount = 3 }
+                            .padding(12.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            text = "3 个独立窗口",
+                            fontSize = 13.sp,
+                            fontWeight = if (is3) FontWeight.Bold else FontWeight.Medium,
+                            color = if (is3) Color.White else Color(0xFFCBD5E1)
+                        )
+                        Text(
+                            text = "横向 3 联屏 (各 33.3%)",
+                            fontSize = 10.sp,
+                            color = if (is3) Color(0xFFBAE6FD) else Color(0xFF64748B)
+                        )
+                    }
+
+                    // 4 窗口选项
+                    val is4 = selectedWindowCount == 4
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (is4) Color(0xFF0C4A6E) else Color(0xFF1E293B))
+                            .border(
+                                1.5.dp,
+                                if (is4) Color(0xFF38BDF8) else Color(0xFF334155),
+                                RoundedCornerShape(8.dp)
+                            )
+                            .clickable { selectedWindowCount = 4 }
+                            .padding(12.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            text = "4 个独立窗口",
+                            fontSize = 13.sp,
+                            fontWeight = if (is4) FontWeight.Bold else FontWeight.Medium,
+                            color = if (is4) Color.White else Color(0xFFCBD5E1)
+                        )
+                        Text(
+                            text = "横向 4 联屏 (各 25.0%)",
+                            fontSize = 10.sp,
+                            color = if (is4) Color(0xFFBAE6FD) else Color(0xFF64748B)
+                        )
+                    }
+                }
+
+                Text(
+                    text = "说明：每个标签页独立锁定其专属的 3 或 4 窗口数量，从根本上杜绝动态隐藏/恢复带来的重新排版卡顿，切换顺畅丝滑。",
+                    fontSize = 11.sp,
+                    lineHeight = 16.sp,
+                    color = Color(0xFF94A3B8)
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(onClick = onDismiss) {
+                        Text("取消", fontSize = 12.sp, color = Color(0xFF94A3B8))
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(
+                        onClick = { onConfirm(groupName, selectedWindowCount) },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
+                        shape = RoundedCornerShape(6.dp)
+                    ) {
+                        Text("确认应用", fontSize = 12.sp, color = Color.White)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 保存当前视窗配置为新分组对话框
  */
 @Composable
 fun SaveGroupDialog(
     windows: List<WindowState>,
+    windowCount: Int = 3,
     onDismiss: () -> Unit,
     onConfirm: (String) -> Unit
 ) {
@@ -848,7 +1021,7 @@ fun SaveGroupDialog(
                 )
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
-                    text = "保存当前三窗口为新分组",
+                    text = "保存当前 ${windowCount} 窗口配置为新分组",
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Bold,
                     color = Color.White
@@ -858,7 +1031,7 @@ fun SaveGroupDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
-                    text = "将当前 3 个窗口的实时 URL 与配置持久化保存在本地 SharedPreferences 中，随时一键切换。",
+                    text = "将当前 $windowCount 个窗口的实时 URL 与配置持久化保存在本地 SharedPreferences 中，随时一键切换。",
                     fontSize = 12.sp,
                     color = Color(0xFF94A3B8)
                 )
@@ -879,7 +1052,7 @@ fun SaveGroupDialog(
                         .padding(8.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    windows.forEach { w ->
+                    windows.take(windowCount).forEach { w ->
                         Text(
                             text = "W${w.id}: ${w.title} (${w.symbol})",
                             fontSize = 10.sp,
@@ -1018,14 +1191,15 @@ fun HiddenWindowsTray(
 }
 
 /**
- * 隐藏/显示画线窗口选择对话框 (默认 1, 2, 3 全选，支持选择 1 个或 2 个或 3 个)
+ * 隐藏/显示画线窗口选择对话框 (支持当前标签页配置的 3 或 4 窗口)
  */
 @Composable
 fun HideDrawingsSyncDialog(
+    windowCount: Int = 3,
     onDismiss: () -> Unit,
     onConfirm: (Set<Int>) -> Unit
 ) {
-    var selectedWindows by remember { mutableStateOf(setOf(1, 2, 3)) }
+    var selectedWindows by remember(windowCount) { mutableStateOf((1..windowCount).toSet()) }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -1049,7 +1223,7 @@ fun HideDrawingsSyncDialog(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    (1..3).forEach { winId ->
+                    (1..windowCount).forEach { winId ->
                         val isSelected = selectedWindows.contains(winId)
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
@@ -1138,14 +1312,15 @@ fun HideDrawingsSyncDialog(
 }
 
 /**
- * 4图翻转 K线选择对话框 (默认 1, 2, 3 全选，支持选择 1 个或 2 个或 3 个，支持自定义延迟 ms，默认 200ms 为原默认值的 1/2)
+ * 4图翻转 K线选择对话框 (支持当前标签页配置的 3 或 4 窗口，支持自定义延迟 ms，默认 200ms 为原默认值的 1/2)
  */
 @Composable
 fun Invert4SyncDialog(
+    windowCount: Int = 3,
     onDismiss: () -> Unit,
     onConfirm: (Set<Int>, Long) -> Unit
 ) {
-    var selectedWindows by remember { mutableStateOf(setOf(1, 2, 3)) }
+    var selectedWindows by remember(windowCount) { mutableStateOf((1..windowCount).toSet()) }
     var delayText by remember { mutableStateOf("200") }
 
     Dialog(
@@ -1170,7 +1345,7 @@ fun Invert4SyncDialog(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    (1..3).forEach { winId ->
+                    (1..windowCount).forEach { winId ->
                         val isSelected = selectedWindows.contains(winId)
                         Row(
                             verticalAlignment = Alignment.CenterVertically,

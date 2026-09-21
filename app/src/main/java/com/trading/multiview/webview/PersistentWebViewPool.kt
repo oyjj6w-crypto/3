@@ -11,7 +11,6 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.*
-import com.trading.multiview.storage.PersistentSessionManager
 
 /**
  * 持久化 WebView 池
@@ -79,7 +78,8 @@ object PersistentWebViewPool {
     val DEFAULT_URLS = mapOf(
         1 to "https://www.tradingview.com",
         2 to "https://www.tradingview.com",
-        3 to "https://www.tradingview.com"
+        3 to "https://www.tradingview.com",
+        4 to "https://www.tradingview.com"
     )
 
     // 快捷书签推荐网站
@@ -125,6 +125,7 @@ object PersistentWebViewPool {
 
     // 缓存每个视窗最近一次生效的缩放系数，避免重复注入导致 WebView 重复计算布局与重新缩放
     private val appliedScaleMap = java.util.concurrent.ConcurrentHashMap<Int, String>()
+    private val appliedScaleFloatMap = java.util.concurrent.ConcurrentHashMap<Int, Float>()
 
     /**
      * 判断两个 URL 是否实质相同（智能忽略末尾斜杠、前后空格及协议大小写）
@@ -168,20 +169,41 @@ object PersistentWebViewPool {
         val scaleStr = String.format(java.util.Locale.US, "%.4f", calculatedScale)
 
         val cacheKey = "${targetPixelWidth}_${scaleStr}"
-        // 核心优化：如果未强制重置，且该视窗已经成功注入过相同的目标宽度和缩放比例，
-        // 则跳过 JS 注入与 Chromium 布局重排，杜绝重复计算
-        if (!force && windowId != null && appliedScaleMap[windowId] == cacheKey) {
+        val lastScale = if (windowId != null) appliedScaleFloatMap[windowId] else null
+        // 核心优化：如果未强制重置，且该视窗已注入过相似比例 (偏差 < 2%)，直接跳过，杜绝多余 Chromium 重新排版
+        if (!force && lastScale != null && Math.abs(calculatedScale - lastScale) < 0.02f) {
             return
         }
         if (windowId != null) {
             appliedScaleMap[windowId] = cacheKey
+            appliedScaleFloatMap[windowId] = calculatedScale
         }
 
-        val script = """
+        val script = if (!force) {
+            // 极速路径：针对窗口尺寸改变 (如隐藏窗口、切换 3/4 屏)，仅热更新已存在的 meta 标签内容，耗时 < 1ms！
+            """
+            (function() {
+                var c = 'width=' + $targetPixelWidth + ', initial-scale=' + '$scaleStr' + ', minimum-scale=0.1, maximum-scale=5.0, user-scalable=yes';
+                window.__targetViewportContent = c;
+                var m = document.querySelector('meta[name="viewport"]');
+                if (m) {
+                    if (m.getAttribute('content') !== c) m.setAttribute('content', c);
+                } else {
+                    var n = document.createElement('meta');
+                    n.name = 'viewport';
+                    n.content = c;
+                    if (document.head) document.head.appendChild(n);
+                }
+            })();
+            """.trimIndent()
+        } else {
+            // 完整路径：页面刚加载时注入完整 MutationObserver 与 PC 平台模拟标头
+            """
             (function() {
                 var targetWidth = $targetPixelWidth;
                 var targetScale = '$scaleStr';
                 var targetContent = 'width=' + targetWidth + ', initial-scale=' + targetScale + ', minimum-scale=0.1, maximum-scale=5.0, user-scalable=yes';
+                window.__targetViewportContent = targetContent;
                 
                 function applyDesktop() {
                     try {
@@ -208,14 +230,15 @@ object PersistentWebViewPool {
                             window.__viewport_observer.disconnect();
                         }
                         var obs = new MutationObserver(function(mutations) {
+                            var expected = window.__targetViewportContent || targetContent;
                             var currentMeta = document.querySelector('meta[name="viewport"]');
                             if (!currentMeta) {
                                 var newMeta = document.createElement('meta');
                                 newMeta.setAttribute('name', 'viewport');
-                                newMeta.setAttribute('content', targetContent);
+                                newMeta.setAttribute('content', expected);
                                 if (document.head) document.head.appendChild(newMeta);
-                            } else if (currentMeta.getAttribute('content') !== targetContent) {
-                                currentMeta.setAttribute('content', targetContent);
+                            } else if (currentMeta.getAttribute('content') !== expected) {
+                                currentMeta.setAttribute('content', expected);
                             }
                         });
                         
@@ -223,8 +246,6 @@ object PersistentWebViewPool {
                             obs.observe(document.head, { childList: true, subtree: true, attributes: true, attributeFilter: ['content'] });
                             window.__viewport_observer = obs;
                         }
-
-
 
                         // 模拟 PC 平台标头，但保留真实触屏支持，确保周期切换按钮与下拉菜单流畅交互
                         if (window.navigator) {
@@ -258,7 +279,8 @@ object PersistentWebViewPool {
                     applyDesktop();
                 }
             })();
-        """.trimIndent()
+            """.trimIndent()
+        }
 
         webView.evaluateJavascript(script, null)
     }
@@ -299,19 +321,9 @@ object PersistentWebViewPool {
         val appCtx = context.applicationContext
         this.appContext = appCtx
         if (isInitialized) return
-
-        // 1. 全局配置 CookieManager：开启第三方 Cookie 支持与自动同步
-        try {
-            val cookieManager = CookieManager.getInstance()
-            cookieManager.setAcceptCookie(true)
-            // 关键：在初次加载 URL 之前同步恢复持久化登录凭据，确保首次网络请求即携带已认证 Cookie
-            PersistentSessionManager.restoreCookiesSync(appCtx)
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
         
-        // 为 3 个视窗分别创建专属 WebView 实例
-        listOf(1, 2, 3).forEach { windowId ->
+        // 为 4 个视窗分别创建专属 WebView 实例 (支持 3 窗口与 4 窗口横向 4 联屏)
+        listOf(1, 2, 3, 4).forEach { windowId ->
             val webView = createConfiguredWebView(appCtx, windowId)
             val savedUrl = getSavedWindowUrl(appCtx, windowId)
             val initialUrl = if (!savedUrl.isNullOrBlank()) savedUrl else (DEFAULT_URLS[windowId] ?: "https://www.tradingview.com")
@@ -319,6 +331,19 @@ object PersistentWebViewPool {
             webViewMap[windowId] = webView
         }
         isInitialized = true
+    }
+
+    /**
+     * 控制单个视窗的活跃状态 (暂停/恢复 JS 定时器与 WebGL 渲染帧)
+     * 当窗口被隐藏或超出当前标签页窗口数时暂停，腾出 100% GPU 算力；显示时立即恢复！
+     */
+    fun setWindowActive(windowId: Int, isActive: Boolean) {
+        val webView = webViewMap[windowId] ?: return
+        if (isActive) {
+            webView.onResume()
+        } else {
+            webView.onPause()
+        }
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -330,13 +355,6 @@ object PersistentWebViewPool {
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
             )
-
-            // 关键：开启 CookieManager 跨源/第三方 Cookie 接收，支持 TradingView Google/Twitter OAuth 登录
-            try {
-                CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
 
             // 关键优化 1：彻底解决 K 线图表在数据更新更正时的周期性闪烁！
             // Android 窗口在 AndroidManifest 中已开启硬件加速，Chromium 原生通过专用 GPU 合成线程渲染 WebGL / Canvas。
@@ -358,17 +376,22 @@ object PersistentWebViewPool {
                     val webView = v as? WebView ?: return@addOnLayoutChangeListener
                     val wId = (webView.tag as? Int) ?: return@addOnLayoutChangeListener
                     
+                    // 核心优化 1：若宽高尺寸变动很小 (< 8px)，跳过，避免微小抖动触发无效重排
+                    if (Math.abs(newWidth - oldWidth) < 8 && Math.abs(newHeight - oldHeight) < 8) {
+                        return@addOnLayoutChangeListener
+                    }
+
                     val oldRunnable = resizeRunnableMap[wId]
                     if (oldRunnable != null) {
                         webView.removeCallbacks(oldRunnable)
                     }
                     val runnable = Runnable {
-                        injectDesktopViewport(webView, force = true)
+                        // 核心优化 2：force = false，仅当 scale 变化 > 2% 时才执行轻量 meta 更新
+                        injectDesktopViewport(webView, force = false)
                     }
                     resizeRunnableMap[wId] = runnable
-                    // 延迟 180 毫秒执行。280ms 动画期间产生的频繁布局重排都会被 remove 过滤，
-                    // 仅在动画结束尺寸静止后 180ms 执行一次，彻底释放渲染与 JS IPC 算力！
-                    webView.postDelayed(runnable, 180)
+                    // 仅防抖 80 毫秒，尺寸稳定后瞬间生效，消灭 4-5 秒延迟
+                    webView.postDelayed(runnable, 80)
                 }
             }
 
@@ -382,10 +405,6 @@ object PersistentWebViewPool {
                 setSupportZoom(true)
                 builtInZoomControls = true
                 displayZoomControls = false
-
-                // 支持弹窗与多窗口（解决 Google/第三方 OAuth 登录点击无反应或空白的问题）
-                setSupportMultipleWindows(true)
-                javaScriptCanOpenWindowsAutomatically = true
 
                 // 混合内容与安全策略配置
                 mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
@@ -419,64 +438,11 @@ object PersistentWebViewPool {
                     view?.let {
                         injectDesktopViewport(it, force = true)
                         injectTradingViewEnhancer(it, url)
-
-                        // 若已备份 localStorage，进行补齐还原
-                        appContext?.let { ctx ->
-                            val lsBackup = PersistentSessionManager.getLocalStorageBackup(ctx)
-                            if (!lsBackup.isNullOrBlank() && lsBackup != "{}") {
-                                val script = """
-                                    (function() {
-                                        try {
-                                            var d = $lsBackup;
-                                            for (var k in d) {
-                                                if (!localStorage.getItem(k)) {
-                                                    localStorage.setItem(k, d[k]);
-                                                }
-                                            }
-                                        } catch(e) {}
-                                    })();
-                                """.trimIndent()
-                                it.evaluateJavascript(script, null)
-                            }
-                        }
                     }
                     if (url != null && url != lastReportedUrl) {
                         lastReportedUrl = url
                         saveWindowUrl(windowId, url, view?.title ?: "")
                         onUrlChanged?.invoke(windowId, url, view?.title ?: "")
-                    }
-                    // 自动将会话与 Cookie 同步备份到公共目录（防卸载丢失）
-                    if (url != null && (url.contains("tradingview.com") || url.contains("binance.com") || url.contains("okx.com"))) {
-                        appContext?.let { ctx ->
-                            PersistentSessionManager.backupCookiesToPublicStorage(ctx)
-
-                            // 备份 localStorage
-                            if (url.contains("tradingview.com")) {
-                                view?.evaluateJavascript("""
-                                    (function() {
-                                        try {
-                                            var s = {};
-                                            for (var i = 0; i < localStorage.length; i++) {
-                                                var k = localStorage.key(i);
-                                                if (k && (k.indexOf('tradingview') >= 0 || k.indexOf('tv_') >= 0 || k.indexOf('user') >= 0 || k.indexOf('theme') >= 0 || k.indexOf('chart') >= 0)) {
-                                                    s[k] = localStorage.getItem(k);
-                                                }
-                                            }
-                                            return JSON.stringify(s);
-                                        } catch(e) { return "{}"; }
-                                    })();
-                                """.trimIndent()) { jsonStr ->
-                                    if (!jsonStr.isNullOrBlank() && jsonStr != "null" && jsonStr != "\"\"") {
-                                        val clean = if (jsonStr.startsWith("\"") && jsonStr.endsWith("\"") && jsonStr.length > 2) {
-                                            try {
-                                                org.json.JSONTokener(jsonStr).nextValue().toString()
-                                            } catch (e: Exception) { jsonStr }
-                                        } else jsonStr
-                                        PersistentSessionManager.backupLocalStorageToPublicStorage(ctx, clean)
-                                    }
-                                }
-                            }
-                        }
                     }
                 }
 
@@ -508,45 +474,6 @@ object PersistentWebViewPool {
                     }
                 }
 
-                override fun onCreateWindow(
-                    view: WebView?,
-                    isDialog: Boolean,
-                    isUserGesture: Boolean,
-                    resultMsg: android.os.Message?
-                ): Boolean {
-                    if (resultMsg == null || view == null) return false
-                    val transport = resultMsg.obj as? WebView.WebViewTransport ?: return false
-                    // 创建临时轻量级 WebView 承载 Google 或第三方 OAuth 登录弹窗
-                    val popupWebView = WebView(view.context).apply {
-                        settings.javaScriptEnabled = true
-                        settings.domStorageEnabled = true
-                        settings.userAgentString = PC_DESKTOP_USER_AGENT
-                        CookieManager.getInstance().setAcceptCookie(true)
-                        CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
-                        webViewClient = object : WebViewClient() {
-                            override fun onPageFinished(popupView: WebView?, url: String?) {
-                                super.onPageFinished(popupView, url)
-                                CookieManager.getInstance().flush()
-                                if (url != null && (url.contains("tradingview.com") || url.contains("accounts.google.com"))) {
-                                    appContext?.let { PersistentSessionManager.backupCookiesToPublicStorage(it) }
-                                }
-                            }
-                            override fun shouldOverrideUrlLoading(popupView: WebView?, req: WebResourceRequest?): Boolean {
-                                val targetUrl = req?.url?.toString() ?: return false
-                                // 授权完成返回主站
-                                if (targetUrl.contains("tradingview.com") && !targetUrl.contains("signin") && !targetUrl.contains("oauth")) {
-                                    view.loadUrl(targetUrl)
-                                    return true
-                                }
-                                return false
-                            }
-                        }
-                    }
-                    transport.webView = popupWebView
-                    resultMsg.sendToTarget()
-                    return true
-                }
-
                 override fun onConsoleMessage(consoleMessage: ConsoleMessage?): Boolean {
                     // 过滤调试日志
                     return true
@@ -559,20 +486,9 @@ object PersistentWebViewPool {
         return webViewMap[windowId]
     }
 
-    fun reloadWindow(windowId: Int, forceClean: Boolean = false) {
+    fun reloadWindow(windowId: Int) {
         appliedScaleMap.remove(windowId)
-        val wv = webViewMap[windowId] ?: return
-        if (forceClean) {
-            wv.clearCache(false)
-            val currentUrl = wv.url ?: (DEFAULT_URLS[windowId] ?: "https://www.tradingview.com")
-            wv.loadUrl(currentUrl)
-        } else {
-            wv.reload()
-        }
-    }
-
-    fun reloadAll(forceClean: Boolean = false) {
-        listOf(1, 2, 3).forEach { reloadWindow(it, forceClean) }
+        webViewMap[windowId]?.reload()
     }
 
     /**
