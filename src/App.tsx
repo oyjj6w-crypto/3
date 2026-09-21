@@ -1154,19 +1154,8 @@ export default function App() {
                 </button>
               </div>
 
-              {/* 右侧：16实例监控 + 全局一键刷新 + 屏幕旋转 */}
+              {/* 右侧：全局一键刷新 + 屏幕旋转 + 16实例监控 */}
               <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-                {/* 16 WebView 实例实时性能监控按钮 */}
-                <button
-                  type="button"
-                  onClick={() => setIsPerformanceModalOpen(true)}
-                  className="h-[30px] px-2 flex items-center gap-1.5 rounded-md bg-emerald-950/40 hover:bg-emerald-900/60 border border-emerald-500/50 text-emerald-400 hover:text-emerald-300 transition-colors shadow-sm cursor-pointer text-xs font-mono"
-                  title="查看 16 WebView 实例实时性能与内存监控 (vivo Pad 3 Pro 深度优化)"
-                >
-                  <Activity className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
-                  <span className="hidden sm:inline font-bold">16实例监控</span>
-                </button>
-
                 {/* 全局一键刷新按钮：高度 30px x 30px，与左侧保持严格一致 */}
                 <button
                   type="button"
@@ -1185,6 +1174,17 @@ export default function App() {
                   title="旋转屏幕（切换横屏/竖屏）"
                 >
                   <RotateCw className="w-3.5 h-3.5 text-sky-400" />
+                </button>
+
+                {/* 16 WebView 实例实时性能监控按钮 */}
+                <button
+                  type="button"
+                  onClick={() => setIsPerformanceModalOpen(true)}
+                  className="h-[30px] px-3 flex items-center gap-1.5 rounded-md bg-emerald-950 hover:bg-emerald-900 border border-emerald-500/80 text-emerald-300 hover:text-emerald-200 transition-colors shadow-sm cursor-pointer text-xs font-mono"
+                  title="查看 16 WebView 实例实时性能与内存监控 (vivo Pad 3 Pro 深度优化)"
+                >
+                  <Activity className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
+                  <span className="font-bold whitespace-nowrap">16实例监控</span>
                 </button>
               </div>
             </div>
