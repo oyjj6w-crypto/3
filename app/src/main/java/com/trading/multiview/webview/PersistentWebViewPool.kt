@@ -28,50 +28,67 @@ object PersistentWebViewPool {
     const val KEY_WINDOW_URL_PREFIX = "saved_window_url_"
     const val KEY_WINDOW_TITLE_PREFIX = "saved_window_title_"
 
-    private val webViewMap = mutableMapOf<Int, WebView>()
+    // 当前活跃的分组 ID (支持 16 实例常驻秒切，默认 preset_1)
+    var currentGroupId: String = "preset_1"
+
+    private val webViewMap = mutableMapOf<String, WebView>()
     private var isInitialized = false
 
     // 缓存每个视窗最近一次 resize 的防抖 Runnable 任务，杜绝动画中频繁执行 JS 导致 UI 卡顿
-    private val resizeRunnableMap = java.util.concurrent.ConcurrentHashMap<Int, Runnable>()
+    private val resizeRunnableMap = java.util.concurrent.ConcurrentHashMap<String, Runnable>()
 
     // URL 变化监听回调 (windowId, newUrl, pageTitle)
     var onUrlChanged: ((Int, String, String) -> Unit)? = null
     // 网页标题更新回调 (windowId, newTitle) - 独立解耦，避免价格频繁跳动触发 URL 变更重绘
     var onTitleChanged: ((Int, String) -> Unit)? = null
 
-    fun getSavedWindowUrl(context: Context? = null, windowId: Int): String? {
+    fun getSavedWindowUrlForGroup(context: Context? = null, groupId: String, windowId: Int): String? {
         val ctx = context ?: appContext ?: return null
         return try {
             val prefs = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            prefs.getString("${KEY_WINDOW_URL_PREFIX}$windowId", null)?.takeIf { it.isNotBlank() }
+            prefs.getString("${KEY_WINDOW_URL_PREFIX}${groupId}_$windowId", null)?.takeIf { it.isNotBlank() }
+                ?: prefs.getString("${KEY_WINDOW_URL_PREFIX}$windowId", null)?.takeIf { it.isNotBlank() }
         } catch (e: Exception) {
             null
         }
     }
 
-    fun getSavedWindowTitle(context: Context? = null, windowId: Int): String? {
+    fun getSavedWindowTitleForGroup(context: Context? = null, groupId: String, windowId: Int): String? {
         val ctx = context ?: appContext ?: return null
         return try {
             val prefs = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            prefs.getString("${KEY_WINDOW_TITLE_PREFIX}$windowId", null)?.takeIf { it.isNotBlank() }
+            prefs.getString("${KEY_WINDOW_TITLE_PREFIX}${groupId}_$windowId", null)?.takeIf { it.isNotBlank() }
+                ?: prefs.getString("${KEY_WINDOW_TITLE_PREFIX}$windowId", null)?.takeIf { it.isNotBlank() }
         } catch (e: Exception) {
             null
         }
     }
 
-    fun saveWindowUrl(windowId: Int, url: String, title: String? = null, context: Context? = null) {
+    fun saveWindowUrlForGroup(groupId: String, windowId: Int, url: String, title: String? = null, context: Context? = null) {
         if (url.isBlank()) return
         val ctx = context ?: appContext ?: return
         try {
             val editor = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
-            editor.putString("${KEY_WINDOW_URL_PREFIX}$windowId", url)
+            editor.putString("${KEY_WINDOW_URL_PREFIX}${groupId}_$windowId", url)
             if (!title.isNullOrBlank()) {
-                editor.putString("${KEY_WINDOW_TITLE_PREFIX}$windowId", title)
+                editor.putString("${KEY_WINDOW_TITLE_PREFIX}${groupId}_$windowId", title)
             }
             editor.apply()
         } catch (e: Exception) {
             e.printStackTrace()
         }
+    }
+
+    fun getSavedWindowUrl(context: Context? = null, windowId: Int): String? {
+        return getSavedWindowUrlForGroup(context, currentGroupId, windowId)
+    }
+
+    fun getSavedWindowTitle(context: Context? = null, windowId: Int): String? {
+        return getSavedWindowTitleForGroup(context, currentGroupId, windowId)
+    }
+
+    fun saveWindowUrl(windowId: Int, url: String, title: String? = null, context: Context? = null) {
+        saveWindowUrlForGroup(currentGroupId, windowId, url, title, context)
     }
 
     // 默认看盘标的预设 (默认加载 TradingView 官网 www.tradingview.com)
@@ -124,8 +141,8 @@ object PersistentWebViewPool {
     var currentZoomPercent: Int = 100
 
     // 缓存每个视窗最近一次生效的缩放系数，避免重复注入导致 WebView 重复计算布局与重新缩放
-    private val appliedScaleMap = java.util.concurrent.ConcurrentHashMap<Int, String>()
-    private val appliedScaleFloatMap = java.util.concurrent.ConcurrentHashMap<Int, Float>()
+    private val appliedScaleMap = java.util.concurrent.ConcurrentHashMap<String, String>()
+    private val appliedScaleFloatMap = java.util.concurrent.ConcurrentHashMap<String, Float>()
 
     /**
      * 判断两个 URL 是否实质相同（智能忽略末尾斜杠、前后空格及协议大小写）
@@ -154,7 +171,11 @@ object PersistentWebViewPool {
         zoomPercent: Int = currentZoomPercent,
         force: Boolean = false
     ) {
-        val windowId = (webView.tag as? Int) ?: webViewMap.entries.find { it.value == webView }?.key
+        val windowId = when (val tag = webView.tag) {
+            is String -> tag
+            is Int -> "${currentGroupId}_$tag"
+            else -> webViewMap.entries.find { it.value == webView }?.key
+        }
         val metrics = webView.context.resources.displayMetrics
         val density = metrics.density
         // 获取当前视窗在当前屏幕密度下的精确 CSS 像素宽度 (dp)
@@ -349,15 +370,39 @@ object PersistentWebViewPool {
         this.appContext = appCtx
         if (isInitialized) return
         
-        // 为 4 个视窗分别创建专属 WebView 实例 (支持 3 窗口与 4 窗口横向 4 联屏)
-        listOf(1, 2, 3, 4).forEach { windowId ->
-            val webView = createConfiguredWebView(appCtx, windowId)
-            val savedUrl = getSavedWindowUrl(appCtx, windowId)
-            val initialUrl = if (!savedUrl.isNullOrBlank()) savedUrl else (DEFAULT_URLS[windowId] ?: "https://www.tradingview.com")
-            webView.loadUrl(initialUrl)
-            webViewMap[windowId] = webView
+        // 关键优化：16 独立 WebView 实例（4 分组 × 4 视窗）一次性常驻内存预热！
+        // 彻底杜绝切换标签页时重新加载 URL、等待 K 线重绘与指标重新计算
+        val groupIds = listOf("preset_1", "preset_2", "preset_3", "preset_4")
+        groupIds.forEach { gId ->
+            listOf(1, 2, 3, 4).forEach { windowId ->
+                val key = "${gId}_$windowId"
+                val webView = createConfiguredWebView(appCtx, key)
+                val savedUrl = getSavedWindowUrlForGroup(appCtx, gId, windowId)
+                val initialUrl = if (!savedUrl.isNullOrBlank()) savedUrl else getDefaultUrlForGroup(gId, windowId)
+                webView.loadUrl(initialUrl)
+                webViewMap[key] = webView
+            }
         }
         isInitialized = true
+    }
+
+    fun getWebView(windowId: Int): WebView? {
+        return getWebViewForGroup(currentGroupId, windowId)
+    }
+
+    fun getWebViewForGroup(groupId: String, windowId: Int): WebView? {
+        val key = "${groupId}_$windowId"
+        var webView = webViewMap[key]
+        if (webView == null && appContext != null) {
+            // 动态惰性创建新分组的 WebView 实例，保证 100% 容错与秒开支持
+            val webViewNew = createConfiguredWebView(appContext!!, key)
+            val savedUrl = getSavedWindowUrlForGroup(appContext, groupId, windowId)
+            val initialUrl = if (!savedUrl.isNullOrBlank()) savedUrl else getDefaultUrlForGroup(groupId, windowId)
+            webViewNew.loadUrl(initialUrl)
+            webViewMap[key] = webViewNew
+            webView = webViewNew
+        }
+        return webView
     }
 
     /**
@@ -366,7 +411,7 @@ object PersistentWebViewPool {
      * 活跃时立即触发极速重排，恢复隐藏窗口 0ms 瞬间显示。
      */
     fun setWindowActive(windowId: Int, isActive: Boolean) {
-        val webView = webViewMap[windowId] ?: return
+        val webView = getWebView(windowId) ?: return
         if (isActive) {
             triggerImmediateResize(windowId)
         }
@@ -377,7 +422,7 @@ object PersistentWebViewPool {
      * 彻底消灭隐藏/恢复窗口时的 4-5 秒 TradingView 图表等待延迟
      */
     fun triggerImmediateResize(windowId: Int? = null) {
-        val targets = if (windowId != null) listOfNotNull(webViewMap[windowId]) else webViewMap.values
+        val targets = if (windowId != null) listOfNotNull(getWebView(windowId)) else webViewMap.values
         val resizeScript = """
             (function() {
                 try {
@@ -405,10 +450,12 @@ object PersistentWebViewPool {
     }
 
     @SuppressLint("SetJavaScriptEnabled")
-    private fun createConfiguredWebView(context: Context, windowId: Int): WebView {
+    private fun createConfiguredWebView(context: Context, key: String): WebView {
+        val parts = key.split("_")
+        val windowId = parts.lastOrNull()?.toIntOrNull() ?: 1
         return WebView(context).apply {
             id = View.generateViewId()
-            tag = windowId
+            tag = key
             layoutParams = ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
@@ -432,7 +479,7 @@ object PersistentWebViewPool {
                 val oldHeight = oldBottom - oldTop
                 if ((newWidth != oldWidth || newHeight != oldHeight) && newWidth > 0 && newHeight > 0) {
                     val webView = v as? WebView ?: return@addOnLayoutChangeListener
-                    val wId = (webView.tag as? Int) ?: return@addOnLayoutChangeListener
+                    val wId = (webView.tag as? String) ?: return@addOnLayoutChangeListener
                     
                     // 仅微小位移 (< 4px) 过滤
                     if (Math.abs(newWidth - oldWidth) < 4 && Math.abs(newHeight - oldHeight) < 4) {
@@ -1071,12 +1118,12 @@ object PersistentWebViewPool {
                     var style = document.createElement('style');
                     style.id = 'tv-native-multiwindow-optimizer';
                     style.innerHTML = `
-                        /* 1. 锁定收藏画图浮动工具栏至正底部居中 */
+                        /* 1. 锁定收藏画图浮动工具栏至正底部居中 (留出底部原生栏间隙，改至 38px 防止遮挡画图栏等 DOM) */
                         div[data-name="drawing-toolbar-favorite"],
                         div[class*="floating-toolbar-react-widgets"],
                         div[class*="floating-toolbar"] {
                             position: fixed !important;
-                            bottom: 10px !important;
+                            bottom: 38px !important;
                             left: 50% !important;
                             transform: translateX(-50%) !important;
                             top: auto !important;
@@ -1090,17 +1137,13 @@ object PersistentWebViewPool {
                             backdrop-filter: blur(8px) !important;
                             pointer-events: auto !important;
                         }
-                        /* 2. 精准移除与图表无关的非核心庞大 DOM，释放内存 */
+                        /* 2. 精准仅移除右侧自选股、新闻社交流与促销横幅，【严禁隐藏】任何底部 DOM，确保 Pine 编辑器与指标可用 */
                         div[class*="widgetbar-pages"],
                         div[data-name="watchlist-widget"],
                         div[data-name="news-widget"],
                         div[data-name="details-widget"],
                         div[class*="widgetbar-widget"],
                         div[class*="social-panel"],
-                        div[class*="bottom-widgetbar"],
-                        div[data-name="screener-widget"],
-                        div[data-name="pine-editor"],
-                        div[data-name="strategy-tester"],
                         div[class*="toast-container"],
                         div[class*="tv-dialog__floating-wrapper--promo"],
                         div[class*="banner-promo"],
@@ -1125,7 +1168,7 @@ object PersistentWebViewPool {
                                  document.querySelector('div[class*="floating-toolbar-react-widgets"]');
                         if (tb) {
                             tb.style.setProperty('position', 'fixed', 'important');
-                            tb.style.setProperty('bottom', '10px', 'important');
+                            tb.style.setProperty('bottom', '38px', 'important');
                             tb.style.setProperty('left', '50%', 'important');
                             tb.style.setProperty('transform', 'translateX(-50%)', 'important');
                             tb.style.setProperty('top', 'auto', 'important');
@@ -1136,6 +1179,53 @@ object PersistentWebViewPool {
                 }
                 lockToolbar();
                 setInterval(lockToolbar, 2000);
+
+                /**
+                 * 核心优化：1Hz 交互感知智能节流 (1Hz Render Throttling with Touch Boost)
+                 * 平板 16 视窗看盘时，静态观看只需 1 秒刷新一次 (1Hz)；
+                 * 用户触控（拖拽、缩放、绘制趋势线）时，瞬间解除节流跑满 60Hz/120Hz！
+                 * 完美解决 GPU 空转与设备发热，释放处理器算力。
+                 */
+                var lastInteractionTime = Date.now();
+                var isInteracting = false;
+                var INTERACTION_TIMEOUT = 1200; // 交互结束后 1.2 秒恢复 1Hz 省电模式
+
+                function markInteraction() {
+                    lastInteractionTime = Date.now();
+                    isInteracting = true;
+                }
+
+                ['touchstart', 'touchmove', 'touchend', 'mousedown', 'mousemove', 'wheel', 'pointerdown'].forEach(function(evt) {
+                    window.addEventListener(evt, markInteraction, { passive: true, capture: true });
+                });
+
+                var originalRAF = window.requestAnimationFrame;
+                var lastRenderTime = 0;
+                var MIN_RENDER_INTERVAL_MS = 1000; // 静止时 1000ms (1Hz) 渲染一次
+
+                window.requestAnimationFrame = function(callback) {
+                    var now = performance.now();
+                    var timeSinceInteraction = Date.now() - lastInteractionTime;
+                    
+                    // 如果处于用户交互期 (缩放/画图/拖拽)，完全使用原生 60Hz/120Hz 无延迟回调
+                    if (timeSinceInteraction < INTERACTION_TIMEOUT) {
+                        isInteracting = true;
+                        return originalRAF.call(window, callback);
+                    }
+
+                    isInteracting = false;
+
+                    // 静止状态下：节流为 1Hz，避免 GPU 空转
+                    if (now - lastRenderTime >= MIN_RENDER_INTERVAL_MS) {
+                        lastRenderTime = now;
+                        return originalRAF.call(window, callback);
+                    } else {
+                        // 在下一个整秒窗口触发
+                        return setTimeout(function() {
+                            originalRAF.call(window, callback);
+                        }, Math.max(0, MIN_RENDER_INTERVAL_MS - (now - lastRenderTime)));
+                    }
+                };
             })();
         """.trimIndent()
         webView.evaluateJavascript(optimizerScript, null)

@@ -611,6 +611,7 @@ fun TradingMultiViewScreen(
                                 .border(1.dp, Color(0xFF1E293B))
                         ) {
                             SingleTradingWindowView(
+                                groupId = uiState.activeGroupId,
                                 windowId = window.id,
                                 zoomPercent = window.zoomPercent
                             )
@@ -1122,41 +1123,44 @@ fun SaveGroupDialog(
  */
 @Composable
 fun SingleTradingWindowView(
+    groupId: String,
     windowId: Int,
     zoomPercent: Int,
     modifier: Modifier = Modifier
 ) {
-    Box(
-        modifier = modifier
-            .fillMaxSize()
-            .background(Color(0xFF090D16))
-    ) {
-        // ================= 底层常驻 WebView (100% 纯净满屏渲染) =================
-        AndroidView(
-            factory = { context ->
-                val webView = PersistentWebViewPool.getWebView(windowId)
-                    ?: android.webkit.WebView(context)
+    androidx.compose.runtime.key(groupId, windowId) {
+        Box(
+            modifier = modifier
+                .fillMaxSize()
+                .background(Color(0xFF090D16))
+        ) {
+            // ================= 底层常驻 WebView (100% 纯净满屏渲染) =================
+            AndroidView(
+                factory = { context ->
+                    val webView = PersistentWebViewPool.getWebViewForGroup(groupId, windowId)
+                        ?: android.webkit.WebView(context)
 
-                // 确保从旧父容器解绑并添加到当前视窗
-                (webView.parent as? ViewGroup)?.removeView(webView)
-                
-                // 当 View 完成排版测量拥有实际像素尺寸后，注入视口并极速唤醒图表重排
-                webView.post {
-                    PersistentWebViewPool.injectDesktopViewport(webView, zoomPercent = zoomPercent, force = true)
-                    PersistentWebViewPool.triggerImmediateResize(windowId)
-                }
+                    // 确保从旧父容器解绑并添加到当前视窗
+                    (webView.parent as? ViewGroup)?.removeView(webView)
+                    
+                    // 当 View 完成排版测量拥有实际像素尺寸后，注入视口并极速唤醒图表重排
+                    webView.post {
+                        PersistentWebViewPool.injectDesktopViewport(webView, zoomPercent = zoomPercent, force = true)
+                        PersistentWebViewPool.triggerImmediateResize(windowId)
+                    }
 
-                webView
-            },
-            update = { webView ->
-                // 布局或缩放更新时，立即触发快速重排，杜绝等待
-                webView.post {
-                    PersistentWebViewPool.injectDesktopViewport(webView, zoomPercent = zoomPercent, force = false)
-                    PersistentWebViewPool.triggerImmediateResize(windowId)
-                }
-            },
-            modifier = Modifier.fillMaxSize()
-        )
+                    webView
+                },
+                update = { webView ->
+                    // 布局或缩放更新时，立即触发快速重排，杜绝等待
+                    webView.post {
+                        PersistentWebViewPool.injectDesktopViewport(webView, zoomPercent = zoomPercent, force = false)
+                        PersistentWebViewPool.triggerImmediateResize(windowId)
+                    }
+                },
+                modifier = Modifier.fillMaxSize()
+            )
+        }
     }
 }
 

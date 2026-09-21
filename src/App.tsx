@@ -747,7 +747,7 @@ export default function App() {
               {/* 16 WebView 实例实时性能监控按钮 */}
               <button
                 onClick={() => setIsPerformanceModalOpen(true)}
-                className="hidden md:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-950/50 hover:bg-emerald-900/60 border border-emerald-500/40 text-emerald-300 hover:text-emerald-200 text-xs font-semibold shadow transition-all cursor-pointer"
+                className="flex items-center gap-1.5 px-2 py-1 md:px-2.5 md:py-1.5 rounded-lg bg-emerald-950/50 hover:bg-emerald-900/60 border border-emerald-500/40 text-emerald-300 hover:text-emerald-200 text-xs font-semibold shadow transition-all cursor-pointer"
                 title="打开 16 WebView 实例实时调度与内存预算监控中心"
               >
                 <Activity className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />

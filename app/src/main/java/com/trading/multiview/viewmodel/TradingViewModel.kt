@@ -221,27 +221,23 @@ class TradingViewModel : ViewModel() {
             } else group
         }
 
+        // 更新后台 WebView 线程池中的活跃组 ID (支持 16 独立实例常驻)
+        PersistentWebViewPool.currentGroupId = groupId
         val targetGroup = updatedGroups.find { it.id == groupId } ?: return
         val targetWindowCount = targetGroup.windowCount
-        PersistentWebViewPool.setWindowActive(4, targetWindowCount >= 4)
 
         _uiState.update { state ->
             val updatedWindows = state.windows.mapIndexed { index, win ->
+                val windowId = index + 1
                 val targetItem = targetGroup.items.getOrNull(index) ?: targetGroup.items.first()
-                val targetUrl = targetItem.url
+                
+                // 获取该分组下该窗口的真实/持久化 URL
+                val savedUrl = PersistentWebViewPool.getSavedWindowUrlForGroup(null, groupId, windowId)
+                val targetUrl = if (!savedUrl.isNullOrBlank()) savedUrl else targetItem.url
 
-                // 核心性能优化：如果网页没有改变（如前后两个标签集合对应窗口都是 BTC 或相同网址），
-                // 绝不重新加载网页，不需要对网页重新缩放，保持当前视窗图表毫秒级瞬显！
-                val urlChanged = !PersistentWebViewPool.isSameUrl(win.currentUrl, targetUrl)
-                if (urlChanged) {
-                    PersistentWebViewPool.loadCustomUrl(win.id, targetUrl)
-                }
-
-                // 持久化当前窗口切换后的目标 URL 与标题
-                PersistentWebViewPool.saveWindowUrl(win.id, targetUrl, targetItem.title)
-
+                // 核心性能突破：【绝不重新加载网页】，全 16 实例在后台持续保活连接，实现 0ms 闪切！
                 win.copy(
-                    title = targetItem.title,
+                    title = PersistentWebViewPool.getSavedWindowTitleForGroup(null, groupId, windowId) ?: targetItem.title,
                     symbol = targetItem.symbol,
                     currentUrl = targetUrl
                 )
@@ -251,6 +247,14 @@ class TradingViewModel : ViewModel() {
                 windows = updatedWindows,
                 activeGroupId = groupId
             )
+        }
+
+        // 激活 4 视窗的显示状态
+        PersistentWebViewPool.setWindowActive(4, targetWindowCount >= 4)
+
+        // 重新请求并触发当前活跃的所有窗口进行 resize 适配物理尺寸，消除拉合卡顿
+        (1..targetWindowCount).forEach { winId ->
+            PersistentWebViewPool.triggerImmediateResize(winId)
         }
 
         // 持久化活跃分组与最新分组数据
