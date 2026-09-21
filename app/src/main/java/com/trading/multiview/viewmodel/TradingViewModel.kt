@@ -123,7 +123,9 @@ data class MultiViewUiState(
     val globalZoomPercent: Int = 100,
     val isGlobalUrlCollapsed: Boolean = true,
     val fixedPixelWidth: Int = 1280, // 固定像素桌面视口基准 (默认 1280px 标准 PC)
-    val isMagnetActive: Boolean = false // 磁力吸附切换状态
+    val isMagnetActive: Boolean = false, // 磁力吸附切换状态
+    val isZoomLocked: Boolean = false, // 网页整版缩放锁定状态
+    val autoHideDelaySeconds: Float = 2.0f // 切换标签页后自动触发隐藏画线等待延迟 (秒)
 ) {
     // 当前标签页集合对象
     val currentGroup: TabGroup?
@@ -171,6 +173,9 @@ class TradingViewModel : ViewModel() {
 
     private val _uiState = MutableStateFlow(MultiViewUiState())
     val uiState: StateFlow<MultiViewUiState> = _uiState.asStateFlow()
+
+    private val handler = android.os.Handler(android.os.Looper.getMainLooper())
+    private var autoHideRunnable: Runnable? = null
 
     companion object {
         private const val PREFS_NAME = "trading_multiview_prefs"
@@ -258,6 +263,15 @@ class TradingViewModel : ViewModel() {
         (1..targetWindowCount).forEach { winId ->
             PersistentWebViewPool.triggerImmediateResize(winId)
         }
+
+        // 每次切换标签页后，默认延迟一段时间后，自动对所有活动窗口执行一次隐藏画线，以免被大量画线遮挡视野
+        autoHideRunnable?.let { handler.removeCallbacks(it) }
+        val seconds = _uiState.value.autoHideDelaySeconds
+        val runnable = Runnable {
+            triggerHideDrawings(delayMs = 0L)
+        }
+        autoHideRunnable = runnable
+        handler.postDelayed(runnable, (seconds * 1000).toLong())
 
         // 持久化活跃分组与最新分组数据
         persistAllGroupsToPrefs(updatedGroups, activeGroupId = groupId)
@@ -407,12 +421,19 @@ class TradingViewModel : ViewModel() {
             val savedPixelWidth = prefs.getInt(KEY_FIXED_PIXEL_WIDTH, 1280)
             PersistentWebViewPool.setFixedPixelWidth(savedPixelWidth)
 
+            // 读取并恢复整版缩放锁定及自动隐藏画线延迟
+            val savedAutoHideDelay = prefs.getFloat("auto_hide_delay_seconds", 2.0f)
+            val savedZoomLocked = prefs.getBoolean("is_zoom_locked", false)
+            PersistentWebViewPool.setZoomLock(savedZoomLocked)
+
             _uiState.update { state ->
                 state.copy(
                     groups = loadedGroups,
                     windows = currentWindows,
                     activeGroupId = validActiveGroupId,
-                    fixedPixelWidth = savedPixelWidth
+                    fixedPixelWidth = savedPixelWidth,
+                    autoHideDelaySeconds = savedAutoHideDelay,
+                    isZoomLocked = savedZoomLocked
                 )
             }
         } catch (e: Exception) {
@@ -1104,6 +1125,70 @@ class TradingViewModel : ViewModel() {
         context?.let {
             val winsText = selectedWindowIds.sorted().joinToString(", ") { "窗口 $it" }
             android.widget.Toast.makeText(it, "已在 $winsText 触发 K 线周期切换为 $tf", android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /**
+     * 网页整版缩放锁定切换
+     */
+    fun toggleZoomLock(context: Context? = null) {
+        val nextState = !_uiState.value.isZoomLocked
+        PersistentWebViewPool.setZoomLock(nextState)
+        _uiState.update { it.copy(isZoomLocked = nextState) }
+        
+        val ctx = context ?: PersistentWebViewPool.appContext
+        if (ctx != null) {
+            try {
+                ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                    .edit()
+                    .putBoolean("is_zoom_locked", nextState)
+                    .apply()
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+            val text = if (nextState) "网页整版缩放已锁定（屏幕已锁定，点击上方锁按钮或红色外框还原解锁）" else "网页整版缩放已解锁"
+            android.widget.Toast.makeText(ctx, text, android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /**
+     * 设置切换标签页后自动触发隐藏画线延迟 (秒) 并持久化
+     */
+    fun setAutoHideDelaySeconds(seconds: Float, context: Context? = null) {
+        val clamped = seconds.coerceIn(0.5f, 10.0f)
+        _uiState.update { it.copy(autoHideDelaySeconds = clamped) }
+        val ctx = context ?: PersistentWebViewPool.appContext
+        if (ctx != null) {
+            try {
+                ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                    .edit()
+                    .putFloat("auto_hide_delay_seconds", clamped)
+                    .apply()
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    /**
+     * 调整标签页的前后顺序并持久化
+     */
+    fun reorderGroups(reordered: List<TabGroup>, context: Context) {
+        _uiState.update { it.copy(groups = reordered) }
+        persistAllGroupsToPrefs(reordered, activeGroupId = _uiState.value.activeGroupId, context = context)
+    }
+
+    /**
+     * 移到最新 K 线 (Alt+Shift+ArrowRight)：默认对当前标签页内全部窗口 (3/4个窗口) 生效，可由用户自定义选择目标和延迟 (默认 0ms)
+     */
+    fun triggerLatestKline(targets: Set<Int>? = null, delayMs: Long = 0L, context: Context? = null) {
+        val count = _uiState.value.currentWindowCount
+        val validTargets = (targets ?: (1..count).toSet()).filter { it in 1..count }.toSet().ifEmpty { (1..count).toSet() }
+        PersistentWebViewPool.dispatchTradingViewAction("latest_kline", validTargets, customDelayMs = delayMs)
+        context?.let {
+            val winNames = validTargets.sorted().joinToString(", ") { "窗口$it" }
+            val delayNotice = if (delayMs == 0L) "极速执行" else "延迟 ${delayMs}ms"
+            android.widget.Toast.makeText(it, "已向 $winNames 触发: 移到最新K线 (Alt+Shift+→, $delayNotice)", android.widget.Toast.LENGTH_SHORT).show()
         }
     }
 }

@@ -383,6 +383,21 @@ object PersistentWebViewPool {
     }
 
     /**
+     * 锁定 / 解锁 网页整版缩放
+     */
+    fun setZoomLock(locked: Boolean) {
+        val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+        mainHandler.post {
+            webViewMap.forEach { (_, webView) ->
+                webView.settings.apply {
+                    setSupportZoom(!locked)
+                    builtInZoomControls = !locked
+                }
+            }
+        }
+    }
+
+    /**
      * 循环切换下一个预设固定像素基准
      */
     fun cycleFixedPixelWidth(): Int {
@@ -1146,6 +1161,22 @@ object PersistentWebViewPool {
                                     target.dispatchEvent(ku);
 
                                     // 每个子图翻转完毕后，稍候自定义延迟 (默认 0ms) 推进到下一个子图
+                                    setTimeout(function() {
+                                        processPoint(idx + 1);
+                                    }, customDelay);
+                                }, keyHold);
+                                return;
+                            } else if (action === 'latest_kline') {
+                                // 移到最新 K 线组合键为 Alt + Shift + ArrowRight (39)
+                                var opts = { key: 'ArrowRight', code: 'ArrowRight', keyCode: 39, which: 39, altKey: true, shiftKey: true, bubbles: true, cancelable: true, composed: true };
+                                var kd = new KeyboardEvent('keydown', opts);
+                                target.dispatchEvent(kd);
+                                var keyHold = (customDelay > 0) ? Math.min(60, Math.max(15, Math.floor(customDelay / 4))) : 10;
+                                setTimeout(function() {
+                                    var ku = new KeyboardEvent('keyup', opts);
+                                    target.dispatchEvent(ku);
+
+                                    // 稍候自定义延迟 (默认 0ms) 推进到下一个子图
                                     setTimeout(function() {
                                         processPoint(idx + 1);
                                     }, customDelay);

@@ -14,6 +14,12 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -86,17 +92,23 @@ fun TradingMultiViewScreen(
     var showHideDrawingsDialog by remember { mutableStateOf(false) }
     var showMagnetDialog by remember { mutableStateOf(false) }
     var showGlobalZoomDialog by remember { mutableStateOf(false) }
+    var showReorderDialog by remember { mutableStateOf(false) }
+    var showLatestKlineDialog by remember { mutableStateOf(false) }
+    var floatingButtonOffset by remember { mutableStateOf(Offset(0f, 0f)) }
 
     // 初始化时加载本地存储的自定义分组
     LaunchedEffect(Unit) {
         viewModel.loadSavedGroupsFromPrefs(context)
     }
 
-    Column(
+    Box(
         modifier = modifier
             .fillMaxSize()
             .background(Color(0xFF0F141C)) // 专业深色看盘背景
     ) {
+        Column(
+            modifier = Modifier.fillMaxSize()
+        ) {
         // ================= 极简统一顶部顶栏 (分组标签 1/2/3 + 3窗口全屏/隐藏控制 + 全局刷新 + 统一缩放 + 网址配置) =================
         Surface(
             modifier = Modifier
@@ -157,7 +169,10 @@ fun TradingMultiViewScreen(
                             .clip(RoundedCornerShape(6.dp))
                             .background(Color(0xFF064E3B).copy(alpha = 0.8f))
                             .border(1.dp, Color(0xFF059669), RoundedCornerShape(6.dp))
-                            .clickable { showSaveDialog = true },
+                            .combinedClickable(
+                                onClick = { showSaveDialog = true },
+                                onLongClick = { showReorderDialog = true }
+                            ),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
@@ -249,25 +264,24 @@ fun TradingMultiViewScreen(
 
                 Spacer(modifier = Modifier.width(6.dp))
 
-                // ================= 油猴快捷 3 视窗动作组 (隐藏画线 · 磁力吸附 · 翻转K线) =================
+                // ================= 油猴快捷 3 视窗动作组 (隐藏画线 · 磁力吸附 · 翻转K线 · 全局缩放 · 缩放锁定) =================
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier
-                        .height(30.dp)
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(Color(0xFF101827))
-                        .border(1.dp, Color(0xFF2563EB).copy(alpha = 0.5f), RoundedCornerShape(6.dp))
-                        .padding(horizontal = 3.dp),
-                    horizontalArrangement = Arrangement.spacedBy(3.dp)
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     // T. 周期选择 (T字按钮)
                     Box(
                         modifier = Modifier
-                            .size(24.dp)
-                            .clip(RoundedCornerShape(4.dp))
+                            .size(30.dp)
+                            .clip(RoundedCornerShape(6.dp))
                             .background(
-                                if (showTimeframeDialog) Color(0xFF2563EB)
-                                else Color(0xFF1E293B).copy(alpha = 0.7f)
+                                if (showTimeframeDialog) Color(0xFF0284C7)
+                                else Color(0xFF1E293B)
+                            )
+                            .border(
+                                width = 1.dp,
+                                color = if (showTimeframeDialog) Color(0xFF38BDF8) else Color(0xFF334155),
+                                shape = RoundedCornerShape(6.dp)
                             )
                             .clickable { showTimeframeDialog = true },
                         contentAlignment = Alignment.Center
@@ -275,7 +289,7 @@ fun TradingMultiViewScreen(
                         Text(
                             text = "T",
                             color = if (showTimeframeDialog) Color.White else Color(0xFF38BDF8),
-                            fontSize = 12.sp,
+                            fontSize = 13.sp,
                             fontWeight = FontWeight.Bold
                         )
                     }
@@ -283,11 +297,16 @@ fun TradingMultiViewScreen(
                     // 1. 隐藏/恢复画线 (Ctrl+Alt+H)：单击直接执行(0ms延迟)，长按弹出选择窗口
                     Box(
                         modifier = Modifier
-                            .size(24.dp)
-                            .clip(RoundedCornerShape(4.dp))
+                            .size(30.dp)
+                            .clip(RoundedCornerShape(6.dp))
                             .background(
-                                if (showHideDrawingsDialog) Color(0xFF2563EB)
-                                else Color(0xFF1E293B).copy(alpha = 0.7f)
+                                if (showHideDrawingsDialog) Color(0xFF0284C7)
+                                else Color(0xFF1E293B)
+                            )
+                            .border(
+                                width = 1.dp,
+                                color = if (showHideDrawingsDialog) Color(0xFF38BDF8) else Color(0xFF334155),
+                                shape = RoundedCornerShape(6.dp)
                             )
                             .combinedClickable(
                                 onClick = { viewModel.triggerHideDrawings(delayMs = 0L, context = context) },
@@ -297,9 +316,9 @@ fun TradingMultiViewScreen(
                     ) {
                         Icon(
                             imageVector = Icons.Default.VisibilityOff,
-                            contentDescription = "隐藏/恢复画线 (单击执行，长按选择窗口)",
+                            contentDescription = "隐藏/恢复画线",
                             tint = if (showHideDrawingsDialog) Color.White else Color(0xFF38BDF8),
-                            modifier = Modifier.size(15.dp)
+                            modifier = Modifier.size(16.dp)
                         )
                     }
 
@@ -308,17 +327,17 @@ fun TradingMultiViewScreen(
                     val isAnyMagnetActive = activeMagnetWin != null
                     Box(
                         modifier = Modifier
-                            .size(24.dp)
-                            .clip(RoundedCornerShape(4.dp))
+                            .size(30.dp)
+                            .clip(RoundedCornerShape(6.dp))
                             .background(
                                 if (showMagnetDialog) Color(0xFFE11D48)
                                 else if (isAnyMagnetActive) Color(0xFFE11D48).copy(alpha = 0.35f)
-                                else Color(0xFF1E293B).copy(alpha = 0.7f)
+                                else Color(0xFF1E293B)
                             )
                             .border(
-                                width = if (isAnyMagnetActive || showMagnetDialog) 1.dp else 0.dp,
-                                color = if (showMagnetDialog) Color.White else if (isAnyMagnetActive) Color(0xFFFB7185) else Color.Transparent,
-                                shape = RoundedCornerShape(4.dp)
+                                width = 1.dp,
+                                color = if (showMagnetDialog) Color.White else if (isAnyMagnetActive) Color(0xFFFB7185) else Color(0xFF334155),
+                                shape = RoundedCornerShape(6.dp)
                             )
                             .combinedClickable(
                                 onClick = { viewModel.triggerToggleMagnet(delayMs = 0L, context = context) },
@@ -328,20 +347,25 @@ fun TradingMultiViewScreen(
                     ) {
                         Icon(
                             imageVector = Icons.Default.CenterFocusStrong,
-                            contentDescription = "磁力吸附切换 (单击执行，长按选择窗口)",
+                            contentDescription = "磁力吸附切换",
                             tint = if (showMagnetDialog) Color.White else if (isAnyMagnetActive) Color(0xFFFB7185) else Color(0xFFCBD5E1),
-                            modifier = Modifier.size(15.dp)
+                            modifier = Modifier.size(16.dp)
                         )
                     }
 
                     // 3. 4图翻转 K线 (Alt+I)：默认0ms延迟，单击直接对全部3/4个窗口执行翻转，长按弹出选择窗口
                     Box(
                         modifier = Modifier
-                            .size(24.dp)
-                            .clip(RoundedCornerShape(4.dp))
+                            .size(30.dp)
+                            .clip(RoundedCornerShape(6.dp))
                             .background(
                                 if (showInvertDialog) Color(0xFF059669)
-                                else Color(0xFF1E293B).copy(alpha = 0.7f)
+                                else Color(0xFF1E293B)
+                            )
+                            .border(
+                                width = 1.dp,
+                                color = if (showInvertDialog) Color(0xFF34D399) else Color(0xFF334155),
+                                shape = RoundedCornerShape(6.dp)
                             )
                             .combinedClickable(
                                 onClick = { viewModel.triggerInvert4Charts(delayMs = 0L, context = context) },
@@ -352,51 +376,25 @@ fun TradingMultiViewScreen(
                         Text(
                             text = "4",
                             color = if (showInvertDialog) Color.White else Color(0xFF34D399),
-                            fontSize = 11.sp,
+                            fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
                             fontFamily = FontFamily.Monospace
                         )
                     }
 
-                    // 网址按钮与k线图翻转按钮隔开一个按钮的距离 (按钮24dp+间距3dp=27dp)
-                    Spacer(modifier = Modifier.width(27.dp))
-
-                    // 4. 网址配置按钮
+                    // 4. 全局缩放按钮：单击循环切换固定分辨率基准，长按弹出全局缩放与分辨率选择对话框
                     Box(
                         modifier = Modifier
-                            .size(24.dp)
-                            .clip(RoundedCornerShape(4.dp))
-                            .background(if (!uiState.isGlobalUrlCollapsed) Color(0xFF075985) else Color(0xFF1E293B).copy(alpha = 0.7f))
-                            .border(
-                                width = if (!uiState.isGlobalUrlCollapsed) 1.dp else 0.dp,
-                                color = if (!uiState.isGlobalUrlCollapsed) Color(0xFF38BDF8) else Color.Transparent,
-                                shape = RoundedCornerShape(4.dp)
-                            )
-                            .clickable { viewModel.toggleUrlBarCollapse(null) },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = if (!uiState.isGlobalUrlCollapsed) Icons.Default.ExpandLess else Icons.Default.Settings,
-                            contentDescription = "配置网址",
-                            tint = if (!uiState.isGlobalUrlCollapsed) Color.White else Color(0xFF38BDF8),
-                            modifier = Modifier.size(13.dp)
-                        )
-                    }
-
-                    // 5. 全局缩放按钮：放到网址按钮后，两个按钮紧挨 (依靠 spacedBy(3.dp) 紧密相依)
-                    // 单击循环切换固定分辨率基准，长按弹出全局缩放与分辨率选择对话框
-                    Box(
-                        modifier = Modifier
-                            .size(24.dp)
-                            .clip(RoundedCornerShape(4.dp))
+                            .size(30.dp)
+                            .clip(RoundedCornerShape(6.dp))
                             .background(
                                 if (showGlobalZoomDialog) Color(0xFF0284C7)
-                                else Color(0xFF0F2338)
+                                else Color(0xFF1E293B)
                             )
                             .border(
                                 width = 1.dp,
-                                color = if (showGlobalZoomDialog) Color(0xFF38BDF8) else Color(0xFF0284C7),
-                                shape = RoundedCornerShape(4.dp)
+                                color = if (showGlobalZoomDialog) Color(0xFF38BDF8) else Color(0xFF334155),
+                                shape = RoundedCornerShape(6.dp)
                             )
                             .combinedClickable(
                                 onClick = { viewModel.cycleFixedPixelWidth(context) },
@@ -406,21 +404,68 @@ fun TradingMultiViewScreen(
                     ) {
                         Icon(
                             imageVector = Icons.Default.Computer,
-                            contentDescription = "全局缩放与桌面基准像素 (单击切换，长按选择窗口/调整)",
+                            contentDescription = "全局缩放与桌面基准像素",
                             tint = if (showGlobalZoomDialog) Color.White else Color(0xFF38BDF8),
-                            modifier = Modifier.size(14.dp)
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+
+                    // 5. 网页缩放锁定：锁定后禁止一切触摸或Pinch缩放
+                    val isLocked = uiState.isZoomLocked
+                    Box(
+                        modifier = Modifier
+                            .size(30.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(
+                                if (isLocked) Color(0xFFEF4444).copy(alpha = 0.2f)
+                                else Color(0xFF1E293B)
+                            )
+                            .border(
+                                width = 1.dp,
+                                color = if (isLocked) Color(0xFFEF4444) else Color(0xFF334155),
+                                shape = RoundedCornerShape(6.dp)
+                            )
+                            .clickable { viewModel.toggleZoomLock(context) },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = if (isLocked) Icons.Default.Lock else Icons.Default.LockOpen,
+                            contentDescription = "网页整版缩放锁定",
+                            tint = if (isLocked) Color(0xFFEF4444) else Color(0xFF38BDF8),
+                            modifier = Modifier.size(15.dp)
                         )
                     }
                 }
 
                 Spacer(modifier = Modifier.width(6.dp))
 
-                // 右侧：全局控制区 (全局刷新 + 屏幕旋转，全部统一 30dp 高度)
+                // 右侧：全局控制区 (全局刷新 + 网址配置 + 屏幕旋转，全部统一 30dp 高度)
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    // 全局一键刷新按钮：标准 30dp x 30dp 方形，圆角 6dp，与左侧保持严格一致
+                    // 版本与更新时间 (放在刷新按钮之前)
+                    Column(
+                        horizontalAlignment = Alignment.End,
+                        verticalArrangement = Arrangement.Center,
+                        modifier = Modifier.padding(end = 4.dp)
+                    ) {
+                        Text(
+                            text = "v2.6.0",
+                            color = Color(0xFF64748B),
+                            fontSize = 9.sp,
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "2026-09-21 14:30",
+                            color = Color(0xFF475569),
+                            fontSize = 8.sp,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
+
+                    // 全局一键刷新按钮：标准 30dp x 30dp 方形，圆角 6dp
                     Box(
                         modifier = Modifier
                             .size(30.dp)
@@ -434,11 +479,34 @@ fun TradingMultiViewScreen(
                             imageVector = Icons.Default.Refresh,
                             contentDescription = "全局刷新",
                             tint = Color(0xFF38BDF8),
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+
+                    // 网址配置 (地址栏展开) 按钮：移到刷新和旋转中间
+                    val isUrlBarExpanded = !uiState.isGlobalUrlCollapsed
+                    Box(
+                        modifier = Modifier
+                            .size(30.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(if (isUrlBarExpanded) Color(0xFF075985) else Color(0xFF1E293B))
+                            .border(
+                                width = 1.dp,
+                                color = if (isUrlBarExpanded) Color(0xFF38BDF8) else Color(0xFF334155),
+                                shape = RoundedCornerShape(6.dp)
+                            )
+                            .clickable { viewModel.toggleUrlBarCollapse(null) },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = if (isUrlBarExpanded) Icons.Default.ExpandLess else Icons.Default.Settings,
+                            contentDescription = "配置网址",
+                            tint = if (isUrlBarExpanded) Color.White else Color(0xFF38BDF8),
                             modifier = Modifier.size(15.dp)
                         )
                     }
 
-                    // 屏幕旋转按钮：标准 30dp x 30dp 方形，圆角 6dp，支持横屏/竖屏自由切换
+                    // 屏幕旋转按钮：标准 30dp x 30dp 方形，圆角 6dp
                     Box(
                         modifier = Modifier
                             .size(30.dp)
@@ -594,6 +662,10 @@ fun TradingMultiViewScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
+                .border(
+                    width = if (uiState.isZoomLocked) 2.dp else 0.dp,
+                    color = if (uiState.isZoomLocked) Color(0xFFEF4444) else Color.Transparent
+                )
         ) {
             Row(
                 modifier = Modifier.fillMaxSize(),
@@ -619,6 +691,80 @@ fun TradingMultiViewScreen(
                     }
                 }
             }
+
+            // 当开启网页整版缩放锁定时，覆盖一层手势拦截板，防止意外缩放/触控，并给用户以全局点击解锁的触控体验
+            if (uiState.isZoomLocked) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.25f))
+                        .clickable { viewModel.toggleZoomLock(context) },
+                    contentAlignment = Alignment.TopCenter
+                ) {
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFFEF4444)),
+                        shape = RoundedCornerShape(bottomStart = 8.dp, bottomEnd = 8.dp),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
+                        modifier = Modifier.padding(horizontal = 16.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Lock,
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Text(
+                                text = "网页整版缩放锁定中 (屏幕已锁定，点击任意位置还原并解锁)",
+                                color = Color.White,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // 5. 屏幕右侧浮动快捷移至最新K线按钮 (Alt+Shift+Right Arrow)，支持自由拖动
+        Box(
+            modifier = Modifier
+                .offset { IntOffset(floatingButtonOffset.x.toInt(), floatingButtonOffset.y.toInt()) }
+                .align(Alignment.CenterEnd)
+                .padding(end = 12.dp)
+                .size(44.dp)
+                .clip(CircleShape)
+                .background(Color(0xFF0284C7).copy(alpha = 0.85f))
+                .border(1.5.dp, Color.White, CircleShape)
+                .pointerInput(Unit) {
+                    detectDragGestures { change, dragAmount ->
+                        change.consume()
+                        floatingButtonOffset = Offset(
+                            x = floatingButtonOffset.x + dragAmount.x,
+                            y = floatingButtonOffset.y + dragAmount.y
+                        )
+                    }
+                }
+                .combinedClickable(
+                    onClick = {
+                        viewModel.triggerLatestKline(targets = null, delayMs = 0L, context = context)
+                    },
+                    onLongClick = {
+                        showLatestKlineDialog = true
+                    }
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = Icons.Default.FastForward,
+                contentDescription = "移至最新K线",
+                tint = Color.White,
+                modifier = Modifier.size(20.dp)
+            )
         }
     }
 
@@ -716,6 +862,274 @@ fun TradingMultiViewScreen(
                 viewModel.resetGlobalZoom()
             }
         )
+    }
+
+    if (showReorderDialog) {
+        Dialog(
+            onDismissRequest = { showReorderDialog = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF111827)),
+                border = BorderStroke(1.dp, Color(0xFF374151)),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier
+                    .width(360.dp)
+                    .padding(16.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        text = "标签页管理与顺序调整",
+                        color = Color.White,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+
+                    // 1. 自动触发等待秒数配置
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(Color(0xFF1E293B).copy(alpha = 0.5f), RoundedCornerShape(6.dp))
+                            .padding(10.dp)
+                    ) {
+                        Text(
+                            text = "切换标签页时自动触发一次隐藏画图",
+                            color = Color(0xFF94A3B8),
+                            fontSize = 11.sp
+                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(text = "等待时间:", color = Color.White, fontSize = 12.sp)
+                            var delayInput by remember { mutableStateOf(uiState.autoHideDelaySeconds.toString()) }
+                            BasicTextField(
+                                value = delayInput,
+                                onValueChange = { delayInput = it },
+                                modifier = Modifier
+                                    .width(50.dp)
+                                    .height(24.dp)
+                                    .background(Color(0xFF0F172A), RoundedCornerShape(4.dp))
+                                    .border(1.dp, Color(0xFF475569), RoundedCornerShape(4.dp))
+                                    .padding(horizontal = 4.dp, vertical = 2.dp),
+                                textStyle = TextStyle(color = Color.White, fontSize = 12.sp, fontFamily = FontFamily.Monospace),
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                            )
+                            Text(text = "秒", color = Color.White, fontSize = 12.sp)
+                            
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .background(Color(0xFF0284C7))
+                                    .clickable {
+                                        val sec = delayInput.toIntOrNull() ?: 2
+                                        viewModel.setAutoHideDelaySeconds(sec, context)
+                                    }
+                                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                            ) {
+                                Text(text = "保存", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+
+                    // 2. 分组顺序调整
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 200.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        itemsIndexed(uiState.groups) { index, group ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(Color(0xFF1E293B), RoundedCornerShape(6.dp))
+                                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = group.name,
+                                    color = Color.White,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    modifier = Modifier.weight(1f),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(2.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    // 上移
+                                    IconButton(
+                                        onClick = { viewModel.reorderGroups(index, index - 1, context) },
+                                        enabled = index > 0,
+                                        modifier = Modifier.size(24.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.ArrowUpward,
+                                            contentDescription = "上移",
+                                            tint = if (index > 0) Color(0xFF38BDF8) else Color(0xFF475569),
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                    }
+
+                                    // 下移
+                                    IconButton(
+                                        onClick = { viewModel.reorderGroups(index, index + 1, context) },
+                                        enabled = index < uiState.groups.size - 1,
+                                        modifier = Modifier.size(24.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.ArrowDownward,
+                                            contentDescription = "下移",
+                                            tint = if (index < uiState.groups.size - 1) Color(0xFF38BDF8) else Color(0xFF475569),
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                    }
+
+                                    // 删除
+                                    IconButton(
+                                        onClick = { viewModel.deleteGroup(group.id, context) },
+                                        enabled = uiState.groups.size > 1,
+                                        modifier = Modifier.size(24.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Delete,
+                                            contentDescription = "删除",
+                                            tint = if (uiState.groups.size > 1) Color(0xFFEF4444) else Color(0xFF475569),
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(Color(0xFF374151))
+                                .clickable { showReorderDialog = false }
+                                .padding(horizontal = 14.dp, vertical = 6.dp)
+                        ) {
+                            Text(text = "关闭", color = Color.White, fontSize = 12.sp)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (showLatestKlineDialog) {
+        LatestKlineSyncDialog(
+            windowCount = uiState.currentWindowCount,
+            onDismiss = { showLatestKlineDialog = false },
+            onConfirm = { targets ->
+                viewModel.triggerLatestKline(targets, delayMs = 0L, context = context)
+                showLatestKlineDialog = false
+            }
+        )
+    }
+}
+
+/**
+ * 快捷移至最新 K 线同步目标窗口选择对话框
+ */
+@Composable
+fun LatestKlineSyncDialog(
+    windowCount: Int = 3,
+    onDismiss: () -> Unit,
+    onConfirm: (Set<Int>) -> Unit
+) {
+    var selectedWindows by remember(windowCount) { mutableStateOf((1..windowCount).toSet()) }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Card(
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF111827)),
+            border = BorderStroke(1.dp, Color(0xFF374151)),
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier
+                .width(320.dp)
+                .padding(16.dp)
+        ) {
+            Column(
+                modifier = Modifier.padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                // 窗口目标选择按钮
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    (1..windowCount).forEach { winId ->
+                        val isSelected = selectedWindows.contains(winId)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(if (isSelected) Color(0xFF0284C7) else Color(0xFF1E293B))
+                                .clickable {
+                                    selectedWindows = if (isSelected) {
+                                        selectedWindows - winId
+                                    } else {
+                                        selectedWindows + winId
+                                    }
+                                }
+                                .padding(vertical = 6.dp),
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            Text(
+                                text = "视窗 $winId",
+                                color = if (isSelected) Color.White else Color(0xFF94A3B8),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Button(
+                        onClick = onDismiss,
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF374151)),
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(6.dp)
+                    ) {
+                        Text("取消", color = Color.White, fontSize = 11.sp)
+                    }
+
+                    Button(
+                        onClick = { onConfirm(selectedWindows) },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(6.dp)
+                    ) {
+                        Text("立即移至最新", color = Color.White, fontSize = 11.sp)
+                    }
+                }
+            }
+        }
     }
 }
 
