@@ -65,6 +65,19 @@ val DEFAULT_TAB_GROUPS = listOf(
             TabGroupItem("NEAR/USDT 4H", "NEARUSDT", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:NEARUSDT&interval=240&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1", "240m"),
             TabGroupItem("PEPE/USDT 15M", "PEPEUSDT", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:PEPEUSDT&interval=15&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1", "15m")
         )
+    ),
+    TabGroup(
+        id = "preset_4",
+        name = "4",
+        isPreset = false,
+        description = "分组 4 (热门生态 SUI/APT/LINK/RENDER)",
+        windowCount = 4,
+        items = listOf(
+            TabGroupItem("SUI/USDT 15M", "SUIUSDT", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:SUIUSDT&interval=15&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1", "15m"),
+            TabGroupItem("APT/USDT 1H", "APTUSDT", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:APTUSDT&interval=60&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1", "60m"),
+            TabGroupItem("LINK/USDT 4H", "LINKUSDT", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:LINKUSDT&interval=240&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1", "240m"),
+            TabGroupItem("RENDER/USDT 15M", "RENDERUSDT", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:RENDERUSDT&interval=15&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1", "15m")
+        )
     )
 )
 

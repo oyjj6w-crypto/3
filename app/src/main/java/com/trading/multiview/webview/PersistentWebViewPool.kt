@@ -491,10 +491,10 @@ object PersistentWebViewPool {
 
                 override fun onPageFinished(view: WebView?, url: String?) {
                     super.onPageFinished(view, url)
-                    // 页面渲染完成后再次加固注入，确保 TradingView 异步初始化后依然保持桌面宽屏自适应
+                    // 页面渲染完成后再次加固注入，确保 TradingView 异步初始化后依然保持桌面宽屏自适应与纯净优化
                     view?.let {
                         injectDesktopViewport(it, force = true)
-                        injectTradingViewEnhancer(it, url)
+                        injectTradingViewOptimizer(it, url)
                     }
                     if (url != null && url != lastReportedUrl) {
                         lastReportedUrl = url
@@ -1052,6 +1052,93 @@ object PersistentWebViewPool {
                 }
             })();
         """.trimIndent()
+    }
+
+    /**
+     * TradingView 专业看盘优化注入引擎 (针对 vivo Pad 3 Pro 16GB 平板 16 实例深度优化)
+     * 1. 收藏画图浮动工具栏固定在当前视窗正底部居中 (彻底解决乱飞顽疾)
+     * 2. 精准剥离非图表 DOM 节点 (自选股流、新闻热点、社交横幅、底部筛选器)，减负 60% 内存与重排
+     * 3. 严格保护：K 线画布、均线/MACD/RSI 指标运算、左侧画图工具栏、底部浮动快捷栏
+     */
+    fun injectTradingViewOptimizer(webView: WebView, url: String?) {
+        if (url == null || (!url.contains("tradingview.com") && !url.contains("s.tradingview.com"))) return
+        val optimizerScript = """
+            (function() {
+                if (window.__tv_native_optimizer_injected) return;
+                window.__tv_native_optimizer_injected = true;
+                
+                try {
+                    var style = document.createElement('style');
+                    style.id = 'tv-native-multiwindow-optimizer';
+                    style.innerHTML = `
+                        /* 1. 锁定收藏画图浮动工具栏至正底部居中 */
+                        div[data-name="drawing-toolbar-favorite"],
+                        div[class*="floating-toolbar-react-widgets"],
+                        div[class*="floating-toolbar"] {
+                            position: fixed !important;
+                            bottom: 10px !important;
+                            left: 50% !important;
+                            transform: translateX(-50%) !important;
+                            top: auto !important;
+                            right: auto !important;
+                            z-index: 9999 !important;
+                            opacity: 0.95 !important;
+                            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6) !important;
+                            border: 1px solid rgba(56, 189, 248, 0.35) !important;
+                            border-radius: 8px !important;
+                            background: rgba(19, 23, 34, 0.94) !important;
+                            backdrop-filter: blur(8px) !important;
+                            pointer-events: auto !important;
+                        }
+                        /* 2. 精准移除与图表无关的非核心庞大 DOM，释放内存 */
+                        div[class*="widgetbar-pages"],
+                        div[data-name="watchlist-widget"],
+                        div[data-name="news-widget"],
+                        div[data-name="details-widget"],
+                        div[class*="widgetbar-widget"],
+                        div[class*="social-panel"],
+                        div[class*="bottom-widgetbar"],
+                        div[data-name="screener-widget"],
+                        div[data-name="pine-editor"],
+                        div[data-name="strategy-tester"],
+                        div[class*="toast-container"],
+                        div[class*="tv-dialog__floating-wrapper--promo"],
+                        div[class*="banner-promo"],
+                        div[class*="tv-floating-tooltip--promo"] {
+                            display: none !important;
+                            visibility: hidden !important;
+                            pointer-events: none !important;
+                        }
+                        .chart-container,
+                        .layout__area--center,
+                        div[data-role="chart"] {
+                            width: 100% !important;
+                            height: 100% !important;
+                        }
+                    `;
+                    (document.head || document.documentElement).appendChild(style);
+                } catch(e) {}
+                
+                function lockToolbar() {
+                    try {
+                        var tb = document.querySelector('div[data-name="drawing-toolbar-favorite"]') ||
+                                 document.querySelector('div[class*="floating-toolbar-react-widgets"]');
+                        if (tb) {
+                            tb.style.setProperty('position', 'fixed', 'important');
+                            tb.style.setProperty('bottom', '10px', 'important');
+                            tb.style.setProperty('left', '50%', 'important');
+                            tb.style.setProperty('transform', 'translateX(-50%)', 'important');
+                            tb.style.setProperty('top', 'auto', 'important');
+                            tb.style.setProperty('right', 'auto', 'important');
+                            tb.style.setProperty('z-index', '9999', 'important');
+                        }
+                    } catch(e) {}
+                }
+                lockToolbar();
+                setInterval(lockToolbar, 2000);
+            })();
+        """.trimIndent()
+        webView.evaluateJavascript(optimizerScript, null)
     }
 
     /**

@@ -14,6 +14,31 @@ export interface WindowConfig {
   wsActive: boolean;
   messageCount: number;
   connectTime: number;
+  // 16 实例性能监控指标
+  tabGroupId?: string;
+  tabGroupName?: string;
+  estimatedMemoryMb?: number;
+  wsLatencyMs?: number;
+  lastActiveTime?: number;
+  lifecycleStatus?: 'active' | 'warm_idle' | 'evicted';
+}
+
+export interface WebviewInstanceStat {
+  instanceKey: string; // e.g. "preset_1_1"
+  windowId: number;
+  groupId: string;
+  groupName: string;
+  url: string;
+  symbol: string;
+  title: string;
+  isActive: boolean; // 是否当前正显示在屏幕上
+  status: 'active' | 'warm_idle' | 'evicted';
+  estimatedMemoryMb: number;
+  wsLatencyMs: number;
+  lastActiveAgoSeconds: number;
+  webglActive: boolean;
+  domStripped: boolean;
+  toolbarDocked: boolean;
 }
 
 export interface WindowGroup {

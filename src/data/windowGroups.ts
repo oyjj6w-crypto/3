@@ -6,7 +6,7 @@ export const PRESET_GROUPS: WindowGroup[] = [
     name: '1',
     isPreset: false,
     description: '分组 1 (TradingView 官方行情)',
-    windowCount: 3,
+    windowCount: 4,
     items: [
       {
         title: 'TradingView 1',
@@ -39,7 +39,7 @@ export const PRESET_GROUPS: WindowGroup[] = [
     name: '2',
     isPreset: false,
     description: '分组 2 (主流大盘 BTC/ETH/SOL/DOGE)',
-    windowCount: 3,
+    windowCount: 4,
     items: [
       {
         title: 'BTC/USDT 15M',
@@ -72,7 +72,7 @@ export const PRESET_GROUPS: WindowGroup[] = [
     name: '3',
     isPreset: false,
     description: '分组 3 (公链龙头 BNB/AVAX/NEAR/PEPE)',
-    windowCount: 3,
+    windowCount: 4,
     items: [
       {
         title: 'BNB/USDT 15M',
@@ -96,6 +96,39 @@ export const PRESET_GROUPS: WindowGroup[] = [
         title: 'PEPE/USDT 15M',
         symbol: 'PEPEUSDT',
         url: 'https://s.tradingview.com/widgetembed/?symbol=BINANCE:PEPEUSDT&interval=15&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1',
+        timeframe: '15m',
+      },
+    ],
+  },
+  {
+    id: 'preset_4',
+    name: '4',
+    isPreset: false,
+    description: '分组 4 (热门生态 SUI/APT/LINK/RENDER)',
+    windowCount: 4,
+    items: [
+      {
+        title: 'SUI/USDT 15M',
+        symbol: 'SUIUSDT',
+        url: 'https://s.tradingview.com/widgetembed/?symbol=BINANCE:SUIUSDT&interval=15&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1',
+        timeframe: '15m',
+      },
+      {
+        title: 'APT/USDT 1H',
+        symbol: 'APTUSDT',
+        url: 'https://s.tradingview.com/widgetembed/?symbol=BINANCE:APTUSDT&interval=60&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1',
+        timeframe: '60m',
+      },
+      {
+        title: 'LINK/USDT 4H',
+        symbol: 'LINKUSDT',
+        url: 'https://s.tradingview.com/widgetembed/?symbol=BINANCE:LINKUSDT&interval=240&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1',
+        timeframe: '240m',
+      },
+      {
+        title: 'RENDER/USDT 15M',
+        symbol: 'RENDERUSDT',
+        url: 'https://s.tradingview.com/widgetembed/?symbol=BINANCE:RENDERUSDT&interval=15&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1',
         timeframe: '15m',
       },
     ],

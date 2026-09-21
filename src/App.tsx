@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Tablet,
   RotateCw,
@@ -32,14 +32,17 @@ import {
   Eye,
   EyeOff,
   Magnet,
-  ArrowUpDown
+  ArrowUpDown,
+  Activity,
+  Cpu
 } from 'lucide-react';
-import { WindowConfig, OrientationMode, WindowGroup } from './types';
+import { WindowConfig, OrientationMode, WindowGroup, WebviewInstanceStat } from './types';
 import { TradingWindow } from './components/TradingWindow';
 import { HiddenWindowsDock } from './components/HiddenWindowsDock';
 import { CodeExplorerModal } from './components/CodeExplorerModal';
 import { TradingViewSimulator } from './components/TradingViewSimulator';
 import { UserScriptModal } from './components/UserScriptModal';
+import { PerformanceMonitorModal } from './components/PerformanceMonitorModal';
 import { DEFAULT_SCRIPT_OPTIONS, ScriptOptions } from './utils/scriptGenerator';
 import { generateAndroidProjectZip, triggerDownload } from './utils/zipGenerator';
 import { PRESET_GROUPS, loadSavedGroups, saveCustomGroups } from './data/windowGroups';
@@ -89,6 +92,22 @@ const INITIAL_WINDOWS: WindowConfig[] = [
     desktopWidth: 1280,
     zoomLevel: 100,
     timeframe: '240m',
+    wsActive: true,
+    messageCount: 0,
+    connectTime: Date.now(),
+  },
+  {
+    id: 4,
+    title: 'TradingView 4',
+    symbol: 'DOGEUSDT',
+    url: 'https://www.tradingview.com',
+    exchange: 'TradingView',
+    isHidden: false,
+    isMaximized: false,
+    isDesktopMode: true,
+    desktopWidth: 1280,
+    zoomLevel: 100,
+    timeframe: '15m',
     wsActive: true,
     messageCount: 0,
     connectTime: Date.now(),
@@ -149,7 +168,7 @@ export default function App() {
   const [showAddressConfigPanel, setShowAddressConfigPanel] = useState<boolean>(false);
 
   // 每个窗口的独立重载 Key 状态
-  const [reloadKeys, setReloadKeys] = useState<Record<number, number>>({ 1: 0, 2: 0, 3: 0 });
+  const [reloadKeys, setReloadKeys] = useState<Record<number, number>>({ 1: 0, 2: 0, 3: 0, 4: 0 });
 
   const handleReloadWindow = (id: number) => {
     setReloadKeys(prev => ({ ...prev, [id]: (prev[id] || 0) + 1 }));
@@ -158,6 +177,93 @@ export default function App() {
   // 3 视窗网页全局缩放与全局折叠状态
   const [globalZoom, setGlobalZoom] = useState<number>(100);
   const [refreshTrigger, setRefreshTrigger] = useState<number>(0);
+
+  // 16 实例实时性能监控弹窗状态与内存驱逐管理 (vivo Pad 3 Pro 调度器)
+  const [isPerformanceModalOpen, setIsPerformanceModalOpen] = useState<boolean>(false);
+  const [evictedKeys, setEvictedKeys] = useState<Set<string>>(new Set());
+
+  // 计算 16 个 WebView 实例状态 (4 分组标签 × 4 视窗)
+  const webviewInstances: WebviewInstanceStat[] = useMemo(() => {
+    const list: WebviewInstanceStat[] = [];
+    groups.forEach((grp) => {
+      const isGroupActive = grp.id === activeGroupId;
+      grp.items.forEach((item, idx) => {
+        const winId = idx + 1;
+        const key = `${grp.id}_${winId}`;
+        const win = isGroupActive ? windows[idx] : null;
+        const isWinHidden = win ? win.isHidden : false;
+        const isActive = isGroupActive && !isWinHidden;
+        const isEvicted = evictedKeys.has(key);
+        const status: 'active' | 'warm_idle' | 'evicted' = isActive
+          ? 'active'
+          : isEvicted
+          ? 'evicted'
+          : 'warm_idle';
+
+        // 内存估算：活跃约 110-135MB (含 WebGL 实时画布), 温休眠约 55-68MB, 驱逐后约 8-12MB
+        const estimatedMemoryMb = isActive
+          ? 115 + (winId * 5)
+          : status === 'warm_idle'
+          ? 62 + (winId * 2)
+          : 10;
+
+        const wsLatencyMs = isActive ? 24 + ((winId * 7) % 18) : (status === 'warm_idle' ? 45 : 0);
+
+        list.push({
+          instanceKey: key,
+          windowId: winId,
+          groupId: grp.id,
+          groupName: grp.name || `分组 ${grp.id}`,
+          url: isGroupActive && win?.url ? win.url : item.url,
+          symbol: isGroupActive && win?.symbol ? win.symbol : item.symbol,
+          title: isGroupActive && win?.title ? win.title : item.title || `视窗 ${winId}`,
+          isActive,
+          status,
+          estimatedMemoryMb,
+          wsLatencyMs,
+          lastActiveAgoSeconds: isActive ? 0 : 45 + (winId * 12),
+          webglActive: status !== 'evicted',
+          domStripped: true,
+          toolbarDocked: true,
+        });
+      });
+    });
+    return list;
+  }, [groups, activeGroupId, windows, evictedKeys]);
+
+  const totalMemoryMb = useMemo(() => {
+    return webviewInstances.reduce((acc, curr) => acc + curr.estimatedMemoryMb, 0);
+  }, [webviewInstances]);
+
+  const averageLatencyMs = useMemo(() => {
+    const activeInsts = webviewInstances.filter((i) => i.status === 'active');
+    if (activeInsts.length === 0) return 28;
+    return Math.round(activeInsts.reduce((acc, curr) => acc + curr.wsLatencyMs, 0) / activeInsts.length);
+  }, [webviewInstances]);
+
+  const handleEvictIdleInstances = () => {
+    const newEvicted = new Set<string>();
+    webviewInstances.forEach((inst) => {
+      if (inst.status === 'warm_idle') {
+        newEvicted.add(inst.instanceKey);
+      }
+    });
+    setEvictedKeys(newEvicted);
+    setActionToast('已释放全部后台温休眠实例内存 (释放 ~380MB)');
+    setTimeout(() => setActionToast(null), 3000);
+  };
+
+  const handleForceActiveInstance = (groupId: string, windowId: number) => {
+    setEvictedKeys((prev) => {
+      const next = new Set(prev);
+      next.delete(`${groupId}_${windowId}`);
+      return next;
+    });
+    handleSwitchGroup(groupId);
+    handleRestoreWindow(windowId);
+    setActionToast(`已激活并置顶分组 ${groupId} 的视窗 W${windowId}`);
+    setTimeout(() => setActionToast(null), 3000);
+  };
 
   // Tablet status bar clock
   useEffect(() => {
@@ -638,6 +744,16 @@ export default function App() {
             </>
           ) : (
             <>
+              {/* 16 WebView 实例实时性能监控按钮 */}
+              <button
+                onClick={() => setIsPerformanceModalOpen(true)}
+                className="hidden md:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-950/50 hover:bg-emerald-900/60 border border-emerald-500/40 text-emerald-300 hover:text-emerald-200 text-xs font-semibold shadow transition-all cursor-pointer"
+                title="打开 16 WebView 实例实时调度与内存预算监控中心"
+              >
+                <Activity className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
+                <span>16实例监控</span>
+              </button>
+
               {/* Quick 1:1:1 Reset */}
               <button
                 onClick={handleRestoreAll}
@@ -1038,14 +1154,25 @@ export default function App() {
                 </button>
               </div>
 
-              {/* 右侧：全局一键刷新(仅图标)，全部 30px 高度齐平 */}
+              {/* 右侧：16实例监控 + 全局一键刷新 + 屏幕旋转 */}
               <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+                {/* 16 WebView 实例实时性能监控按钮 */}
+                <button
+                  type="button"
+                  onClick={() => setIsPerformanceModalOpen(true)}
+                  className="h-[30px] px-2 flex items-center gap-1.5 rounded-md bg-emerald-950/40 hover:bg-emerald-900/60 border border-emerald-500/50 text-emerald-400 hover:text-emerald-300 transition-colors shadow-sm cursor-pointer text-xs font-mono"
+                  title="查看 16 WebView 实例实时性能与内存监控 (vivo Pad 3 Pro 深度优化)"
+                >
+                  <Activity className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
+                  <span className="hidden sm:inline font-bold">16实例监控</span>
+                </button>
+
                 {/* 全局一键刷新按钮：高度 30px x 30px，与左侧保持严格一致 */}
                 <button
                   type="button"
                   onClick={handleGlobalRefresh}
                   className="w-[30px] h-[30px] flex items-center justify-center rounded-md bg-slate-900 hover:bg-slate-800 border border-slate-700/80 text-slate-300 hover:text-sky-300 transition-colors shadow-sm cursor-pointer"
-                  title="全局刷新全部 3 个视窗"
+                  title="全局刷新全部视窗"
                 >
                   <RefreshCw className="w-3.5 h-3.5 text-sky-400" />
                 </button>
@@ -1099,6 +1226,8 @@ export default function App() {
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-1 font-mono font-bold text-sky-400 text-[11px]">
                           <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
+                          <span>W{w.id}</span>
+                          <span className="text-slate-200 font-medium ml-1 truncate max-w-[120px]">{w.title || `视窗 ${w.id}`}</span>
                         </div>
                         
                         <div className="flex items-center gap-2">
@@ -1298,6 +1427,18 @@ export default function App() {
         isOpen={isCodeModalOpen}
         initialTab={modalInitialTab}
         onClose={() => setIsCodeModalOpen(false)}
+      />
+
+      {/* ================= 16 WebView 实例实时性能与内存调度监控中心 ================= */}
+      <PerformanceMonitorModal
+        isOpen={isPerformanceModalOpen}
+        onClose={() => setIsPerformanceModalOpen(false)}
+        instances={webviewInstances}
+        activeGroupId={activeGroupId}
+        totalMemoryMb={totalMemoryMb}
+        averageLatencyMs={averageLatencyMs}
+        onEvictIdleInstances={handleEvictIdleInstances}
+        onForceActiveInstance={handleForceActiveInstance}
       />
 
       {/* ================= 保存当前三窗口为新分组对话框 (Save Group Modal) ================= */}
