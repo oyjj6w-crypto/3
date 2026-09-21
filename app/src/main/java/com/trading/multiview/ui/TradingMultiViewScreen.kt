@@ -69,6 +69,7 @@ private fun Context.findActivity(): Activity? {
     return null
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun TradingMultiViewScreen(
     viewModel: TradingViewModel,
@@ -129,7 +130,6 @@ fun TradingMultiViewScreen(
                                     if (isActive) Color(0xFF38BDF8) else Color(0xFF334155),
                                     RoundedCornerShape(6.dp)
                                 )
-                                @OptIn(ExperimentalFoundationApi::class)
                                 .combinedClickable(
                                     onClick = { viewModel.switchGroup(group.id) },
                                     onLongClick = {
