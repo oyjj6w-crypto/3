@@ -141,23 +141,12 @@ fun TradingMultiViewScreen(
                                 .padding(horizontal = 8.dp),
                             contentAlignment = Alignment.Center
                         ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(3.dp)
-                            ) {
                                 Text(
                                     text = group.name,
                                     color = if (isActive) Color.White else Color(0xFFE2E8F0),
                                     fontSize = 12.sp,
                                     fontWeight = if (isActive) FontWeight.Bold else FontWeight.Medium
                                 )
-                                Text(
-                                    text = "${group.windowCount}屏",
-                                    color = if (isActive) Color(0xFFBAE6FD) else Color(0xFF94A3B8),
-                                    fontSize = 9.sp,
-                                    fontWeight = FontWeight.Normal
-                                )
-                            }
                         }
                     }
 
@@ -610,26 +599,17 @@ fun TradingMultiViewScreen(
                 modifier = Modifier.fillMaxSize(),
                 horizontalArrangement = Arrangement.spacedBy(2.dp)
             ) {
-                uiState.windows.forEach { window ->
-                    val targetWeight = uiState.calculateWeight(window.id)
-                    val animatedWeight by animateFloatAsState(
-                        targetValue = targetWeight,
-                        animationSpec = tween(durationMillis = 140),
-                        label = "window_weight_${window.id}"
-                    )
-
-                    // 优化：隐藏或非活跃视窗分配 weight 0.0001f，仅在活跃且可见时 (animatedWeight > 0.005f) 挂载 WebView，零渲染消耗
-                    Box(
-                        modifier = Modifier
-                            .fillMaxHeight()
-                            .weight(maxOf(animatedWeight, 0.0001f))
-                            .alpha(if (animatedWeight > 0.01f) 1f else 0f)
-                            .border(
-                                width = if (animatedWeight > 0.01f) 1.dp else 0.dp,
-                                color = if (animatedWeight > 0.01f) Color(0xFF1E293B) else Color.Transparent
-                            )
-                    ) {
-                        if (animatedWeight > 0.005f) {
+                val visibleWindows = uiState.visibleWindows
+                val isMaximized = uiState.maximizedWindowId != null
+                visibleWindows.forEach { window ->
+                    val isThisMaximized = uiState.maximizedWindowId == window.id
+                    if (!isMaximized || isThisMaximized) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxHeight()
+                                .weight(1f)
+                                .border(1.dp, Color(0xFF1E293B))
+                        ) {
                             SingleTradingWindowView(
                                 windowId = window.id,
                                 zoomPercent = window.zoomPercent
@@ -955,7 +935,7 @@ fun GroupConfigDialog(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    // 3 窗口选项
+                    // 3 窗口选项：点击直接切换生效
                     val is3 = selectedWindowCount == 3
                     Column(
                         modifier = Modifier
@@ -967,7 +947,10 @@ fun GroupConfigDialog(
                                 if (is3) Color(0xFF38BDF8) else Color(0xFF334155),
                                 RoundedCornerShape(8.dp)
                             )
-                            .clickable { selectedWindowCount = 3 }
+                            .clickable {
+                                selectedWindowCount = 3
+                                onConfirm(groupName, 3)
+                            }
                             .padding(12.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(4.dp)
@@ -979,13 +962,13 @@ fun GroupConfigDialog(
                             color = if (is3) Color.White else Color(0xFFCBD5E1)
                         )
                         Text(
-                            text = "横向 3 联屏 (各 33.3%)",
+                            text = "横向 3 联屏 (点击直接切换)",
                             fontSize = 10.sp,
                             color = if (is3) Color(0xFFBAE6FD) else Color(0xFF64748B)
                         )
                     }
 
-                    // 4 窗口选项
+                    // 4 窗口选项：点击直接切换生效
                     val is4 = selectedWindowCount == 4
                     Column(
                         modifier = Modifier
@@ -997,7 +980,10 @@ fun GroupConfigDialog(
                                 if (is4) Color(0xFF38BDF8) else Color(0xFF334155),
                                 RoundedCornerShape(8.dp)
                             )
-                            .clickable { selectedWindowCount = 4 }
+                            .clickable {
+                                selectedWindowCount = 4
+                                onConfirm(groupName, 4)
+                            }
                             .padding(12.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(4.dp)
@@ -1009,7 +995,7 @@ fun GroupConfigDialog(
                             color = if (is4) Color.White else Color(0xFFCBD5E1)
                         )
                         Text(
-                            text = "横向 4 联屏 (各 25.0%)",
+                            text = "横向 4 联屏 (点击直接切换)",
                             fontSize = 10.sp,
                             color = if (is4) Color(0xFFBAE6FD) else Color(0xFF64748B)
                         )
@@ -1017,7 +1003,7 @@ fun GroupConfigDialog(
                 }
 
                 Text(
-                    text = "说明：每个标签页独立锁定其专属的 3 或 4 窗口数量，从根本上杜绝动态隐藏/恢复带来的重新排版卡顿，切换顺畅丝滑。",
+                    text = "提示：点击上方「3 屏」或「4 屏」卡片直接即时切换生效，无需点击确认；若修改了标签名称可点击右下角保存。",
                     fontSize = 11.sp,
                     lineHeight = 16.sp,
                     color = Color(0xFF94A3B8)
@@ -1029,15 +1015,17 @@ fun GroupConfigDialog(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     TextButton(onClick = onDismiss) {
-                        Text("取消", fontSize = 12.sp, color = Color(0xFF94A3B8))
+                        Text("关闭", fontSize = 12.sp, color = Color(0xFF94A3B8))
                     }
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Button(
-                        onClick = { onConfirm(groupName, selectedWindowCount) },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
-                        shape = RoundedCornerShape(6.dp)
-                    ) {
-                        Text("确认应用", fontSize = 12.sp, color = Color.White)
+                    if (groupName.trim() != group.name.trim() && groupName.isNotBlank()) {
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Button(
+                            onClick = { onConfirm(groupName, selectedWindowCount) },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
+                            shape = RoundedCornerShape(6.dp)
+                        ) {
+                            Text("保存新名称", fontSize = 12.sp, color = Color.White)
+                        }
                     }
                 }
             }
@@ -1152,16 +1140,20 @@ fun SingleTradingWindowView(
                 // 确保从旧父容器解绑并添加到当前视窗
                 (webView.parent as? ViewGroup)?.removeView(webView)
                 
-                // 当 View 完成排版测量拥有实际像素尺寸后，注入基于实际物理宽度的黄金桌面自适应缩放
+                // 当 View 完成排版测量拥有实际像素尺寸后，注入视口并极速唤醒图表重排
                 webView.post {
-                    PersistentWebViewPool.injectDesktopViewport(webView, zoomPercent)
+                    PersistentWebViewPool.injectDesktopViewport(webView, zoomPercent = zoomPercent, force = true)
+                    PersistentWebViewPool.triggerImmediateResize(windowId)
                 }
 
                 webView
             },
             update = { webView ->
-                // WebView 实例在 PersistentWebViewPool 中完全独立常驻并保持单例运行，
-                // 严禁在 Compose 的 update 回调中执行 reload 或 loadUrl，保证图表 WebSocket 持续保活且零重绘闪烁！
+                // 布局或缩放更新时，立即触发快速重排，杜绝等待
+                webView.post {
+                    PersistentWebViewPool.injectDesktopViewport(webView, zoomPercent = zoomPercent, force = false)
+                    PersistentWebViewPool.triggerImmediateResize(windowId)
+                }
             },
             modifier = Modifier.fillMaxSize()
         )

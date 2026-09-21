@@ -613,6 +613,7 @@ class TradingViewModel : ViewModel() {
             persistAllGroupsToPrefs(updated, activeGroupId = state.activeGroupId, context = context)
             state.copy(groups = updated)
         }
+        PersistentWebViewPool.triggerImmediateResize()
     }
 
     /**
@@ -721,11 +722,12 @@ class TradingViewModel : ViewModel() {
                 }
             )
         }
+        PersistentWebViewPool.triggerImmediateResize()
     }
 
     /**
      * 隐藏窗口：剩余可见窗口自动等比拉伸
-     * 关键性能优化：暂停隐藏窗口的 JS 定时器与渲染，毫秒级腾出 GPU 算力并触发极速重排
+     * 关键性能优化：保留常驻 WebView 实例不挂起，立即触发 Chromium 与 TradingView 极速重排，杜绝 4-5 秒延迟
      */
     fun hideWindow(windowId: Int) {
         _uiState.update { state ->
@@ -744,10 +746,11 @@ class TradingViewModel : ViewModel() {
                 }
             )
         }
+        PersistentWebViewPool.triggerImmediateResize()
     }
 
     /**
-     * 恢复隐藏的窗口
+     * 恢复隐藏的窗口：瞬间亮屏与极速对齐重排
      */
     fun restoreWindow(windowId: Int) {
         PersistentWebViewPool.setWindowActive(windowId, true)
@@ -758,6 +761,8 @@ class TradingViewModel : ViewModel() {
                 }
             )
         }
+        PersistentWebViewPool.triggerImmediateResize(windowId)
+        PersistentWebViewPool.triggerImmediateResize()
     }
 
     /**
@@ -772,6 +777,7 @@ class TradingViewModel : ViewModel() {
                 windows = state.windows.map { it.copy(isHidden = false, isMaximized = false) }
             )
         }
+        PersistentWebViewPool.triggerImmediateResize()
     }
 
     /**

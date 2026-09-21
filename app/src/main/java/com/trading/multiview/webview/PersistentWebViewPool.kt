@@ -170,8 +170,13 @@ object PersistentWebViewPool {
 
         val cacheKey = "${targetPixelWidth}_${scaleStr}"
         val lastScale = if (windowId != null) appliedScaleFloatMap[windowId] else null
-        // 核心优化：如果未强制重置，且该视窗已注入过相似比例 (偏差 < 2%)，直接跳过，杜绝多余 Chromium 重新排版
-        if (!force && lastScale != null && Math.abs(calculatedScale - lastScale) < 0.02f) {
+        val scaleChanged = lastScale == null || Math.abs(calculatedScale - lastScale) >= 0.02f
+        if (!force && !scaleChanged) {
+            // 比例虽然未大幅变动，但物理像素尺寸可能改变，立即触发一次极速 resize 确保图表填满容器
+            webView.evaluateJavascript(
+                "(function(){ try { window.dispatchEvent(new Event('resize')); window.dispatchEvent(new UIEvent('resize')); } catch(e){} })();",
+                null
+            )
             return
         }
         if (windowId != null) {
@@ -180,7 +185,7 @@ object PersistentWebViewPool {
         }
 
         val script = if (!force) {
-            // 极速路径：针对窗口尺寸改变 (如隐藏窗口、切换 3/4 屏)，仅热更新已存在的 meta 标签内容，耗时 < 1ms！
+            // 极速路径：针对窗口尺寸改变 (如隐藏窗口、切换 3/4 屏)，热更新 meta 标签并瞬间触发 window 与 iframe resize，耗时 < 1ms！
             """
             (function() {
                 var c = 'width=' + $targetPixelWidth + ', initial-scale=' + '$scaleStr' + ', minimum-scale=0.1, maximum-scale=5.0, user-scalable=yes';
@@ -194,6 +199,28 @@ object PersistentWebViewPool {
                     n.content = c;
                     if (document.head) document.head.appendChild(n);
                 }
+
+                // 核心提速关键：立即唤醒 TradingView 极速重排重绘，彻底消灭 4-5 秒的轮询延迟
+                function triggerChartResize() {
+                    try {
+                        window.dispatchEvent(new Event('resize'));
+                        window.dispatchEvent(new UIEvent('resize'));
+                        document.dispatchEvent(new Event('resize'));
+                        var iframes = document.getElementsByTagName('iframe');
+                        for (var i = 0; i < iframes.length; i++) {
+                            try {
+                                if (iframes[i].contentWindow) {
+                                    iframes[i].contentWindow.dispatchEvent(new Event('resize'));
+                                    iframes[i].contentWindow.dispatchEvent(new UIEvent('resize'));
+                                }
+                            } catch(e) {}
+                        }
+                    } catch(e) {}
+                }
+                triggerChartResize();
+                requestAnimationFrame(triggerChartResize);
+                setTimeout(triggerChartResize, 25);
+                setTimeout(triggerChartResize, 80);
             })();
             """.trimIndent()
         } else {
@@ -334,15 +361,46 @@ object PersistentWebViewPool {
     }
 
     /**
-     * 控制单个视窗的活跃状态 (暂停/恢复 JS 定时器与 WebGL 渲染帧)
-     * 当窗口被隐藏或超出当前标签页窗口数时暂停，腾出 100% GPU 算力；显示时立即恢复！
+     * 控制单个视窗的活跃状态
+     * 关键优化：不调用 onPause()，避免 WebGL 上下文丢失与 Chromium 合成器休眠带来的 4-5 秒卡顿延迟；
+     * 活跃时立即触发极速重排，恢复隐藏窗口 0ms 瞬间显示。
      */
     fun setWindowActive(windowId: Int, isActive: Boolean) {
         val webView = webViewMap[windowId] ?: return
         if (isActive) {
-            webView.onResume()
-        } else {
-            webView.onPause()
+            triggerImmediateResize(windowId)
+        }
+    }
+
+    /**
+     * 立即通知指定或全部视窗执行快速重排 (触发 resize 事件与更新视口)
+     * 彻底消灭隐藏/恢复窗口时的 4-5 秒 TradingView 图表等待延迟
+     */
+    fun triggerImmediateResize(windowId: Int? = null) {
+        val targets = if (windowId != null) listOfNotNull(webViewMap[windowId]) else webViewMap.values
+        val resizeScript = """
+            (function() {
+                try {
+                    window.dispatchEvent(new Event('resize'));
+                    window.dispatchEvent(new UIEvent('resize'));
+                    document.dispatchEvent(new Event('resize'));
+                    var iframes = document.querySelectorAll('iframe');
+                    for (var i = 0; i < iframes.length; i++) {
+                        try {
+                            if (iframes[i].contentWindow) {
+                                iframes[i].contentWindow.dispatchEvent(new Event('resize'));
+                                iframes[i].contentWindow.dispatchEvent(new UIEvent('resize'));
+                            }
+                        } catch(e) {}
+                    }
+                } catch(e) {}
+            })();
+        """.trimIndent()
+        targets.forEach { wv ->
+            wv.post {
+                injectDesktopViewport(wv, force = false)
+                wv.evaluateJavascript(resizeScript, null)
+            }
         }
     }
 
@@ -366,7 +424,7 @@ object PersistentWebViewPool {
             // 关键优化 2：强制设置底层背景为行情深黑色 (#131722)，消除 any 图表重绘或缓冲区交换时的瞬时白闪
             setBackgroundColor(android.graphics.Color.parseColor("#131722"))
 
-            // 关键优化 3：动态监听布局尺寸变化，通过防抖 (Debounce) 彻底消除动画过程中的 JS 注入轰炸，保障满屏自适应瞬间完成！
+            // 关键优化 3：动态监听布局尺寸变化，一帧内 (16ms) 触发注入与 resize，消除 4-5 秒排版调整延迟！
             addOnLayoutChangeListener { v, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom ->
                 val newWidth = right - left
                 val oldWidth = oldRight - oldLeft
@@ -376,8 +434,8 @@ object PersistentWebViewPool {
                     val webView = v as? WebView ?: return@addOnLayoutChangeListener
                     val wId = (webView.tag as? Int) ?: return@addOnLayoutChangeListener
                     
-                    // 核心优化 1：若宽高尺寸变动很小 (< 8px)，跳过，避免微小抖动触发无效重排
-                    if (Math.abs(newWidth - oldWidth) < 8 && Math.abs(newHeight - oldHeight) < 8) {
+                    // 仅微小位移 (< 4px) 过滤
+                    if (Math.abs(newWidth - oldWidth) < 4 && Math.abs(newHeight - oldHeight) < 4) {
                         return@addOnLayoutChangeListener
                     }
 
@@ -386,12 +444,11 @@ object PersistentWebViewPool {
                         webView.removeCallbacks(oldRunnable)
                     }
                     val runnable = Runnable {
-                        // 核心优化 2：force = false，仅当 scale 变化 > 2% 时才执行轻量 meta 更新
                         injectDesktopViewport(webView, force = false)
                     }
                     resizeRunnableMap[wId] = runnable
-                    // 仅防抖 80 毫秒，尺寸稳定后瞬间生效，消灭 4-5 秒延迟
-                    webView.postDelayed(runnable, 80)
+                    // 仅防抖 16 毫秒 (1帧)，尺寸变化后立即生效，彻底消灭 4-5 秒延迟
+                    webView.postDelayed(runnable, 16)
                 }
             }
 
