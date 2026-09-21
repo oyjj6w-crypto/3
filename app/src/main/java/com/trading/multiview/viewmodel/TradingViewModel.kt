@@ -840,11 +840,12 @@ class TradingViewModel : ViewModel() {
     }
 
     /**
-     * 隐藏/显示画线 (Ctrl+Alt+H)：默认 3 个窗口全部生效，也可由用户选择对其中 1 个或 2 个窗口生效
+     * 隐藏/显示画线 (Ctrl+Alt+H)：默认对当前标签页内全部窗口 (3/4个窗口) 生效，也可由用户自定义选择目标和延迟 (默认 0ms)
      */
-    fun triggerHideDrawings(targets: Set<Int> = setOf(1, 2, 3), context: Context? = null) {
-        val validTargets = targets.filter { it in 1..3 }.toSet().ifEmpty { setOf(1, 2, 3) }
-        PersistentWebViewPool.dispatchTradingViewAction("hide", validTargets)
+    fun triggerHideDrawings(targets: Set<Int>? = null, delayMs: Long = 0L, context: Context? = null) {
+        val count = _uiState.value.currentWindowCount
+        val validTargets = (targets ?: (1..count).toSet()).filter { it in 1..count }.toSet().ifEmpty { (1..count).toSet() }
+        PersistentWebViewPool.dispatchTradingViewAction("hide", validTargets, customDelayMs = delayMs)
         context?.let {
             val winNames = validTargets.sorted().joinToString(", ") { "窗口$it" }
             android.widget.Toast.makeText(it, "已向 $winNames 触发: 隐藏/显示画线 (Ctrl+Alt+H)", android.widget.Toast.LENGTH_SHORT).show()
@@ -872,7 +873,7 @@ class TradingViewModel : ViewModel() {
                 isMagnetActive = nextState
             )
         }
-        PersistentWebViewPool.dispatchSingleTradingViewAction(windowId, "magnet")
+        PersistentWebViewPool.dispatchSingleTradingViewAction(windowId, "magnet", customDelayMs = 0L)
         context?.let {
             val text = if (isNowActive) "窗口 $windowId 已开启磁力吸附" else "窗口 $windowId 已关闭磁力吸附"
             android.widget.Toast.makeText(it, text, android.widget.Toast.LENGTH_SHORT).show()
@@ -880,19 +881,24 @@ class TradingViewModel : ViewModel() {
     }
 
     /**
-     * 全部视窗同步：磁力吸附切换 (Magnet / Ctrl)
+     * 全部视窗同步：磁力吸附切换 (Magnet / Ctrl)：默认对当前标签页全部窗口生效，延迟默认 0ms
      */
-    fun triggerToggleMagnet(context: Context? = null) {
+    fun triggerToggleMagnet(targets: Set<Int>? = null, delayMs: Long = 0L, context: Context? = null) {
+        val count = _uiState.value.currentWindowCount
+        val validTargets = (targets ?: (1..count).toSet()).filter { it in 1..count }.toSet().ifEmpty { (1..count).toSet() }
         val nextActive = !_uiState.value.isMagnetActive
         _uiState.update { state ->
             state.copy(
                 isMagnetActive = nextActive,
-                windows = state.windows.map { it.copy(isMagnetActive = nextActive) }
+                windows = state.windows.map { win ->
+                    if (win.id in validTargets) win.copy(isMagnetActive = nextActive) else win
+                }
             )
         }
-        PersistentWebViewPool.dispatchTradingViewAction("magnet")
+        PersistentWebViewPool.dispatchTradingViewAction("magnet", validTargets, customDelayMs = delayMs)
         context?.let {
-            val text = if (nextActive) "已同步向全部 3 个窗口开启磁力吸附" else "已同步向全部 3 个窗口关闭磁力吸附"
+            val winNames = validTargets.sorted().joinToString(", ") { "窗口$it" }
+            val text = if (nextActive) "已向 $winNames 开启磁力吸附" else "已向 $winNames 关闭磁力吸附"
             android.widget.Toast.makeText(it, text, android.widget.Toast.LENGTH_SHORT).show()
         }
     }
@@ -901,21 +907,23 @@ class TradingViewModel : ViewModel() {
      * 全部视窗同步：翻转K线图 - 单图/默认
      */
     fun triggerInvertChart(context: Context? = null) {
-        PersistentWebViewPool.dispatchTradingViewAction("invert")
+        PersistentWebViewPool.dispatchTradingViewAction("invert", customDelayMs = 0L)
         context?.let {
-            android.widget.Toast.makeText(it, "已同步向全部 3 个窗口触发: 翻转K线图 (Alt+I)", android.widget.Toast.LENGTH_SHORT).show()
+            android.widget.Toast.makeText(it, "已同步向全部窗口触发: 翻转K线图 (Alt+I)", android.widget.Toast.LENGTH_SHORT).show()
         }
     }
 
     /**
-     * 4图布局翻转 K 线图 (Alt+I)：默认 3 个窗口全部生效，也可由用户选择对其中 1 个或 2 个窗口生效，支持自定义延迟 (默认 200ms)
+     * 4图布局翻转 K 线图 (Alt+I)：默认对当前标签页内 3/4 个窗口都生效，单击直接执行，延迟默认 0ms
      */
-    fun triggerInvert4Charts(targets: Set<Int> = setOf(1, 2, 3), delayMs: Long = 200L, context: Context? = null) {
-        val validTargets = targets.filter { it in 1..3 }.toSet().ifEmpty { setOf(1, 2, 3) }
+    fun triggerInvert4Charts(targets: Set<Int>? = null, delayMs: Long = 0L, context: Context? = null) {
+        val count = _uiState.value.currentWindowCount
+        val validTargets = (targets ?: (1..count).toSet()).filter { it in 1..count }.toSet().ifEmpty { (1..count).toSet() }
         PersistentWebViewPool.dispatchTradingViewAction("invert4", validTargets, customDelayMs = delayMs)
         context?.let {
             val winNames = validTargets.sorted().joinToString(", ") { "窗口$it" }
-            android.widget.Toast.makeText(it, "已向 $winNames 触发 4 布局依次翻转 K 线 (延迟 ${delayMs}ms)", android.widget.Toast.LENGTH_SHORT).show()
+            val delayNotice = if (delayMs == 0L) "极速翻转" else "延迟 ${delayMs}ms"
+            android.widget.Toast.makeText(it, "已向 $winNames 触发 4 布局依次翻转 K 线 ($delayNotice)", android.widget.Toast.LENGTH_SHORT).show()
         }
     }
 

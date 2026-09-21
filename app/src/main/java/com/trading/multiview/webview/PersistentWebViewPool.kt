@@ -611,18 +611,18 @@ object PersistentWebViewPool {
      */
     fun dispatchTradingViewAction(
         action: String,
-        selectedWindowIds: Set<Int> = setOf(1, 2, 3),
-        customDelayMs: Long = 200L,
+        selectedWindowIds: Set<Int> = setOf(1, 2, 3, 4),
+        customDelayMs: Long = 0L,
         onProgress: ((Int, Int) -> Unit)? = null
     ) {
         val handler = Handler(Looper.getMainLooper())
-        // 保证按窗口 1 -> 2 -> 3 顺序推进，且只执行用户选中的窗口
-        val windowIds = selectedWindowIds.toList().filter { it in 1..3 }.sorted()
-        // 4图翻转每个窗口内部有4个子图串行处理，根据用户设定的自定义延迟 (默认 200ms，为原默认400ms的二分之一) 动态计算窗口间排队延时
+        // 保证按窗口 1 -> 2 -> 3 -> 4 顺序推进，且只执行用户选中的窗口
+        val windowIds = selectedWindowIds.toList().filter { it in 1..4 }.sorted()
+        // 4图翻转每个窗口内部有4个子图串行处理，根据用户设定的自定义延迟 (默认 0ms) 动态计算窗口间排队延时
         val stepDelay = when {
-            action == "invert4" -> (4 * (customDelayMs * 2 + 60) + 100).coerceAtLeast(500L)
+            action == "invert4" -> if (customDelayMs == 0L) 30L else (4 * (customDelayMs * 2 + 60) + 100).coerceAtLeast(300L)
             action.startsWith("timeframe_") -> 1000L
-            else -> 400L
+            else -> if (customDelayMs == 0L) 20L else 400L
         }
         windowIds.forEachIndexed { index, windowId ->
             handler.postDelayed({
@@ -642,10 +642,10 @@ object PersistentWebViewPool {
 
     /**
      * 向指定 1 个视窗派发 TradingView 快捷功能 (方案 C 独立控制)
-     * @param windowId 目标窗口 ID (1, 2, 3)
+     * @param windowId 目标窗口 ID (1, 2, 3, 4)
      * @param action "hide" (隐藏画线), "invert" (翻转K线), "magnet" (磁力吸附)
      */
-    fun dispatchSingleTradingViewAction(windowId: Int, action: String, customDelayMs: Long = 200L) {
+    fun dispatchSingleTradingViewAction(windowId: Int, action: String, customDelayMs: Long = 0L) {
         val webView = webViewMap[windowId]
         if (webView != null) {
             val script = buildActionExecutionScript(action, customDelayMs)
@@ -697,13 +697,13 @@ object PersistentWebViewPool {
         }, currentDelay + 100L)
     }
 
-    private fun buildActionExecutionScript(action: String, customDelayMs: Long = 200L): String {
+    private fun buildActionExecutionScript(action: String, customDelayMs: Long = 0L): String {
         return """
             (function() {
                 try {
                     var action = '$action';
                     var customDelay = $customDelayMs;
-                    var focusDelay = (action.indexOf('invert') === 0) ? customDelay : 400;
+                    var focusDelay = (customDelay > 0) ? customDelay : ((action === 'hide' || action === 'magnet' || action.indexOf('invert') === 0) ? 0 : 300);
                     
                     // 磁吸直接单独触发，不需要遍历所有子K线图
                     if (action === 'magnet') {
@@ -846,7 +846,7 @@ object PersistentWebViewPool {
                             target.focus();
                         }
 
-                        // 【安全延迟 400ms】：让 TradingView 内部完完整整地将焦点状态转移至当前 active 子图
+                        // 安全延迟等待：若延迟设为 0ms 则以最小 5ms 微任务直接推进
                         setTimeout(function() {
                             if (action === 'hide') {
                                 var opts = { key: 'h', code: 'KeyH', keyCode: 72, which: 72, altKey: true, ctrlKey: true, bubbles: true, cancelable: true, composed: true };
@@ -854,12 +854,17 @@ object PersistentWebViewPool {
                                 target.dispatchEvent(kd);
                                 document.dispatchEvent(kd);
                                 window.dispatchEvent(kd);
+                                var keyHold = (customDelay > 0) ? Math.min(50, customDelay) : 10;
                                 setTimeout(function() {
                                     var ku = new KeyboardEvent('keyup', opts);
                                     target.dispatchEvent(ku);
                                     document.dispatchEvent(ku);
                                     window.dispatchEvent(ku);
-                                }, 50);
+                                    setTimeout(function() {
+                                        processPoint(idx + 1);
+                                    }, customDelay);
+                                }, keyHold);
+                                return;
                             } else if (action.indexOf('timeframe_') === 0) {
                                 var tfVal = action.substring(10);
 
@@ -963,12 +968,12 @@ object PersistentWebViewPool {
                                 var opts = { key: 'i', code: 'KeyI', keyCode: 73, which: 73, altKey: true, bubbles: true, cancelable: true, composed: true };
                                 var kd = new KeyboardEvent('keydown', opts);
                                 target.dispatchEvent(kd);
-                                var keyHold = Math.min(60, Math.max(25, Math.floor(customDelay / 4)));
+                                var keyHold = (customDelay > 0) ? Math.min(60, Math.max(15, Math.floor(customDelay / 4))) : 10;
                                 setTimeout(function() {
                                     var ku = new KeyboardEvent('keyup', opts);
                                     target.dispatchEvent(ku);
 
-                                    // 每个子图翻转完毕后，稍候自定义延迟 (默认 200ms) 推进到下一个子图
+                                    // 每个子图翻转完毕后，稍候自定义延迟 (默认 0ms) 推进到下一个子图
                                     setTimeout(function() {
                                         processPoint(idx + 1);
                                     }, customDelay);
@@ -979,8 +984,8 @@ object PersistentWebViewPool {
                             // 处理完毕后，再给浏览器与内核渲染静默空闲
                             setTimeout(function() {
                                 processPoint(idx + 1);
-                            }, focusDelay);
-                        }, focusDelay);
+                            }, Math.max(5, focusDelay));
+                        }, Math.max(5, focusDelay));
                     }
 
                     processPoint(0);

@@ -85,6 +85,7 @@ fun TradingMultiViewScreen(
     var showInvertDialog by remember { mutableStateOf(false) }
     var showHideDrawingsDialog by remember { mutableStateOf(false) }
     var showMagnetDialog by remember { mutableStateOf(false) }
+    var showGlobalZoomDialog by remember { mutableStateOf(false) }
 
     // 初始化时加载本地存储的自定义分组
     LaunchedEffect(Unit) {
@@ -290,7 +291,7 @@ fun TradingMultiViewScreen(
                         )
                     }
 
-                    // 1. 隐藏/恢复画线 (Ctrl+Alt+H)
+                    // 1. 隐藏/恢复画线 (Ctrl+Alt+H)：单击直接执行(0ms延迟)，长按弹出选择窗口
                     Box(
                         modifier = Modifier
                             .size(24.dp)
@@ -299,18 +300,21 @@ fun TradingMultiViewScreen(
                                 if (showHideDrawingsDialog) Color(0xFF2563EB)
                                 else Color(0xFF1E293B).copy(alpha = 0.7f)
                             )
-                            .clickable { showHideDrawingsDialog = true },
+                            .combinedClickable(
+                                onClick = { viewModel.triggerHideDrawings(delayMs = 0L, context = context) },
+                                onLongClick = { showHideDrawingsDialog = true }
+                            ),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
                             imageVector = Icons.Default.VisibilityOff,
-                            contentDescription = "选择窗口: 隐藏/恢复画线 (Ctrl+Alt+H)",
+                            contentDescription = "隐藏/恢复画线 (单击执行，长按选择窗口)",
                             tint = if (showHideDrawingsDialog) Color.White else Color(0xFF38BDF8),
                             modifier = Modifier.size(15.dp)
                         )
                     }
 
-                    // 2. 磁力吸附切换 (Magnet / Ctrl)：默认全都不生效，等用户选择其中一个窗口生效
+                    // 2. 磁力吸附切换 (Magnet / Ctrl)：单击直接执行(0ms延迟)，长按弹出选择窗口
                     val activeMagnetWin = uiState.windows.find { it.isMagnetActive }
                     val isAnyMagnetActive = activeMagnetWin != null
                     Box(
@@ -327,18 +331,21 @@ fun TradingMultiViewScreen(
                                 color = if (showMagnetDialog) Color.White else if (isAnyMagnetActive) Color(0xFFFB7185) else Color.Transparent,
                                 shape = RoundedCornerShape(4.dp)
                             )
-                            .clickable { showMagnetDialog = true },
+                            .combinedClickable(
+                                onClick = { viewModel.triggerToggleMagnet(delayMs = 0L, context = context) },
+                                onLongClick = { showMagnetDialog = true }
+                            ),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
                             imageVector = Icons.Default.CenterFocusStrong,
-                            contentDescription = "选择窗口: 磁力吸附切换 (Magnet)",
+                            contentDescription = "磁力吸附切换 (单击执行，长按选择窗口)",
                             tint = if (showMagnetDialog) Color.White else if (isAnyMagnetActive) Color(0xFFFB7185) else Color(0xFFCBD5E1),
                             modifier = Modifier.size(15.dp)
                         )
                     }
 
-                    // 3. 4图翻转 K线 (Alt+I)：默认对3个窗口4布局翻转，亦可选择对其中1个或2个窗口翻转
+                    // 3. 4图翻转 K线 (Alt+I)：默认0ms延迟，单击直接对全部3/4个窗口执行翻转，长按弹出选择窗口
                     Box(
                         modifier = Modifier
                             .size(24.dp)
@@ -347,7 +354,10 @@ fun TradingMultiViewScreen(
                                 if (showInvertDialog) Color(0xFF059669)
                                 else Color(0xFF1E293B).copy(alpha = 0.7f)
                             )
-                            .clickable { showInvertDialog = true },
+                            .combinedClickable(
+                                onClick = { viewModel.triggerInvert4Charts(delayMs = 0L, context = context) },
+                                onLongClick = { showInvertDialog = true }
+                            ),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
@@ -359,7 +369,10 @@ fun TradingMultiViewScreen(
                         )
                     }
 
-                    // 5. 网址配置按钮 (从右侧控制区移至此处，尺寸调整为 24.dp 以保持动作组高度一致)
+                    // 网址按钮与k线图翻转按钮隔开一个按钮的距离 (按钮24dp+间距3dp=27dp)
+                    Spacer(modifier = Modifier.width(27.dp))
+
+                    // 4. 网址配置按钮
                     Box(
                         modifier = Modifier
                             .size(24.dp)
@@ -380,34 +393,44 @@ fun TradingMultiViewScreen(
                             modifier = Modifier.size(13.dp)
                         )
                     }
+
+                    // 5. 全局缩放按钮：放到网址按钮后，两个按钮紧挨 (依靠 spacedBy(3.dp) 紧密相依)
+                    // 单击循环切换固定分辨率基准，长按弹出全局缩放与分辨率选择对话框
+                    Box(
+                        modifier = Modifier
+                            .size(24.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(
+                                if (showGlobalZoomDialog) Color(0xFF0284C7)
+                                else Color(0xFF0F2338)
+                            )
+                            .border(
+                                width = 1.dp,
+                                color = if (showGlobalZoomDialog) Color(0xFF38BDF8) else Color(0xFF0284C7),
+                                shape = RoundedCornerShape(4.dp)
+                            )
+                            .combinedClickable(
+                                onClick = { viewModel.cycleFixedPixelWidth(context) },
+                                onLongClick = { showGlobalZoomDialog = true }
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Computer,
+                            contentDescription = "全局缩放与桌面基准像素 (单击切换，长按选择窗口/调整)",
+                            tint = if (showGlobalZoomDialog) Color.White else Color(0xFF38BDF8),
+                            modifier = Modifier.size(14.dp)
+                        )
+                    }
                 }
 
                 Spacer(modifier = Modifier.width(6.dp))
 
-                // 右侧：全局控制区 (全局刷新仅留图标 + 网址配置仅留图标，全部统一 30dp 高度)
+                // 右侧：全局控制区 (全局刷新 + 屏幕旋转，全部统一 30dp 高度)
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    // 顶部栏固定像素快捷胶囊：仅电脑图标，点击在 960 / 1280 / 1440 / 1920 循环切换
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .height(30.dp)
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(Color(0xFF0F2338))
-                            .border(1.dp, Color(0xFF0284C7), RoundedCornerShape(6.dp))
-                            .clickable { viewModel.cycleFixedPixelWidth(context) }
-                            .padding(horizontal = 8.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Computer,
-                            contentDescription = "切换桌面基准像素",
-                            tint = Color(0xFF38BDF8),
-                            modifier = Modifier.size(14.dp)
-                        )
-                    }
-
                     // 全局一键刷新按钮：标准 30dp x 30dp 方形，圆角 6dp，与左侧保持严格一致
                     Box(
                         modifier = Modifier
@@ -661,7 +684,7 @@ fun TradingMultiViewScreen(
             windowCount = uiState.currentWindowCount,
             onDismiss = { showHideDrawingsDialog = false },
             onConfirm = { targets ->
-                viewModel.triggerHideDrawings(targets, context)
+                viewModel.triggerHideDrawings(targets, delayMs = 0L, context = context)
                 showHideDrawingsDialog = false
             }
         )
@@ -674,6 +697,10 @@ fun TradingMultiViewScreen(
             onSelectWindow = { winId ->
                 viewModel.triggerToggleWindowMagnet(winId, context)
                 showMagnetDialog = false
+            },
+            onToggleAll = {
+                viewModel.triggerToggleMagnet(delayMs = 0L, context = context)
+                showMagnetDialog = false
             }
         )
     }
@@ -685,6 +712,27 @@ fun TradingMultiViewScreen(
             onConfirm = { targets, delayMs ->
                 viewModel.triggerInvert4Charts(targets, delayMs, context)
                 showInvertDialog = false
+            }
+        )
+    }
+
+    if (showGlobalZoomDialog) {
+        GlobalZoomSelectDialog(
+            currentPixelWidth = uiState.fixedPixelWidth,
+            currentGlobalZoom = uiState.globalZoomPercent,
+            windows = uiState.activeWindowsForGroup,
+            onDismiss = { showGlobalZoomDialog = false },
+            onSelectPixelWidth = { width ->
+                viewModel.setFixedPixelWidth(width, context)
+            },
+            onSetGlobalZoom = { zoom ->
+                viewModel.setGlobalZoom(zoom)
+            },
+            onSetWindowZoom = { winId, zoom ->
+                viewModel.setWindowZoom(winId, zoom)
+            },
+            onResetZoom = {
+                viewModel.resetGlobalZoom()
             }
         )
     }
@@ -1312,7 +1360,7 @@ fun HideDrawingsSyncDialog(
 }
 
 /**
- * 4图翻转 K线选择对话框 (支持当前标签页配置的 3 或 4 窗口，支持自定义延迟 ms，默认 200ms 为原默认值的 1/2)
+ * 4图翻转 K线选择对话框 (支持当前标签页配置的 3 或 4 窗口，支持自定义延迟 ms，默认 0ms 极速响应)
  */
 @Composable
 fun Invert4SyncDialog(
@@ -1321,7 +1369,7 @@ fun Invert4SyncDialog(
     onConfirm: (Set<Int>, Long) -> Unit
 ) {
     var selectedWindows by remember(windowCount) { mutableStateOf((1..windowCount).toSet()) }
-    var delayText by remember { mutableStateOf("200") }
+    var delayText by remember { mutableStateOf("0") }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -1400,7 +1448,7 @@ fun Invert4SyncDialog(
                     }
                 }
 
-                // 自定义延迟 ms 输入框 (默认 200ms，为原默认400ms的二分之一)
+                // 自定义延迟 ms 输入框 (默认 0ms)
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1419,7 +1467,7 @@ fun Invert4SyncDialog(
                             fontWeight = FontWeight.Medium
                         )
                         Text(
-                            text = "默认 200ms (原默认值的 1/2)",
+                            text = "默认 0ms (极速直接执行)",
                             color = Color(0xFF64748B),
                             fontSize = 9.sp
                         )
@@ -1440,7 +1488,7 @@ fun Invert4SyncDialog(
                             contentAlignment = Alignment.Center
                         ) {
                             BasicTextField(
-                                value = delayText,
+                                delayText,
                                 onValueChange = { newText ->
                                     if (newText.all { it.isDigit() } && newText.length <= 5) {
                                         delayText = newText
@@ -1476,7 +1524,7 @@ fun Invert4SyncDialog(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    listOf(100, 200, 300, 400).forEach { preset ->
+                    listOf(0, 50, 100, 200).forEach { preset ->
                         val isCurrent = delayText == preset.toString()
                         Box(
                             modifier = Modifier
@@ -1510,7 +1558,7 @@ fun Invert4SyncDialog(
                         .clip(RoundedCornerShape(6.dp))
                         .background(Color(0xFF047857))
                         .clickable {
-                            val parsedDelay = delayText.toLongOrNull()?.coerceAtLeast(30L) ?: 200L
+                            val parsedDelay = delayText.toLongOrNull()?.coerceAtLeast(0L) ?: 0L
                             onConfirm(selectedWindows, parsedDelay)
                         },
                     contentAlignment = Alignment.Center
@@ -1528,13 +1576,14 @@ fun Invert4SyncDialog(
 }
 
 /**
- * 磁力吸附选择对话框 (默认全都不生效，等用户选择其中 1 个窗口生效)
+ * 磁力吸附选择对话框 (长按顶部磁吸按钮弹出，支持针对单窗口或全部窗口同步生效)
  */
 @Composable
 fun MagnetSelectDialog(
     windows: List<WindowState>,
     onDismiss: () -> Unit,
-    onSelectWindow: (Int) -> Unit
+    onSelectWindow: (Int) -> Unit,
+    onToggleAll: () -> Unit
 ) {
     Dialog(
         onDismissRequest = onDismiss,
@@ -1552,14 +1601,34 @@ fun MagnetSelectDialog(
                 modifier = Modifier.padding(12.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                // 3 个独立窗口磁吸选择按钮
+                // 标题
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "磁力吸附切换 (Magnet)",
+                        color = Color.White,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "默认0ms",
+                        color = Color(0xFF94A3B8),
+                        fontSize = 10.sp
+                    )
+                }
+
+                // 独立窗口磁吸选择按钮 (自适应当前窗口数)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    (1..3).forEach { winId ->
-                        val isWinMagnetActive = windows.find { it.id == winId }?.isMagnetActive == true
+                    windows.forEach { win ->
+                        val winId = win.id
+                        val isWinMagnetActive = win.isMagnetActive
                         Column(
                             horizontalAlignment = Alignment.CenterHorizontally,
                             modifier = Modifier
@@ -1598,6 +1667,347 @@ fun MagnetSelectDialog(
                                 fontWeight = FontWeight.Normal
                             )
                         }
+                    }
+                }
+
+                // 全部窗口同步切换磁吸
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(34.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(Color(0xFFE11D48).copy(alpha = 0.85f))
+                        .clickable { onToggleAll() },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "全部窗口同步切换 (0ms)",
+                        color = Color.White,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 全局缩放与桌面基准像素选择对话框 (长按顶部全局缩放按钮弹出)
+ */
+@Composable
+fun GlobalZoomSelectDialog(
+    currentPixelWidth: Int,
+    currentGlobalZoom: Int,
+    windows: List<WindowState>,
+    onDismiss: () -> Unit,
+    onSelectPixelWidth: (Int) -> Unit,
+    onSetGlobalZoom: (Int) -> Unit,
+    onSetWindowZoom: (Int, Int) -> Unit,
+    onResetZoom: () -> Unit
+) {
+    // 0 代表全部窗口，1..N 代表具体窗口
+    var selectedTargetId by remember { mutableStateOf(0) }
+
+    val activeZoomPercent = if (selectedTargetId == 0) {
+        currentGlobalZoom
+    } else {
+        windows.find { it.id == selectedTargetId }?.zoomPercent ?: 100
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Card(
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF111827)),
+            border = BorderStroke(1.dp, Color(0xFF374151)),
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier
+                .width(340.dp)
+                .padding(16.dp)
+        ) {
+            Column(
+                modifier = Modifier.padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                // 顶部标题
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Computer,
+                            contentDescription = null,
+                            tint = Color(0xFF38BDF8),
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Text(
+                            text = "全局缩放与桌面基准配置",
+                            color = Color.White,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .size(22.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFF1F2937))
+                            .clickable { onDismiss() },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "关闭",
+                            tint = Color(0xFF94A3B8),
+                            modifier = Modifier.size(12.dp)
+                        )
+                    }
+                }
+
+                // 模块 1: 桌面基准像素 (Fixed Viewport)
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "桌面基准分辨率:",
+                            color = Color(0xFFE2E8F0),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Text(
+                            text = "当前: ${currentPixelWidth}px",
+                            color = Color(0xFF38BDF8),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                    ) {
+                        listOf(
+                            960 to "960 紧凑",
+                            1280 to "1280 标准",
+                            1440 to "1440 高清",
+                            1920 to "1920 超清"
+                        ).forEach { (presetWidth, label) ->
+                            val isSelected = currentPixelWidth == presetWidth
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(if (isSelected) Color(0xFF0369A1) else Color(0xFF1E293B))
+                                    .border(
+                                        1.dp,
+                                        if (isSelected) Color(0xFF38BDF8) else Color(0xFF334155),
+                                        RoundedCornerShape(6.dp)
+                                    )
+                                    .clickable { onSelectPixelWidth(presetWidth) }
+                                    .padding(vertical = 6.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = label,
+                                    color = if (isSelected) Color.White else Color(0xFF94A3B8),
+                                    fontSize = 9.sp,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                    textAlign = TextAlign.Center
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Divider(color = Color(0xFF1E293B), thickness = 1.dp)
+
+                // 模块 2: 网页缩放控制 (Zoom Level)
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        text = "选择应用缩放的目标视窗:",
+                        color = Color(0xFFE2E8F0),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+
+                    // 目标视窗选择 Pills
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        val targets = listOf(0 to "全部窗口") + windows.map { it.id to "窗口 ${it.id}" }
+                        targets.forEach { (targetId, title) ->
+                            val isSelected = selectedTargetId == targetId
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .background(if (isSelected) Color(0xFF1E3A8A) else Color(0xFF1E293B))
+                                    .border(
+                                        0.5.dp,
+                                        if (isSelected) Color(0xFF60A5FA) else Color(0xFF334155),
+                                        RoundedCornerShape(4.dp)
+                                    )
+                                    .clickable { selectedTargetId = targetId }
+                                    .padding(vertical = 5.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = title,
+                                    color = if (isSelected) Color.White else Color(0xFF94A3B8),
+                                    fontSize = 10.sp,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                )
+                            }
+                        }
+                    }
+
+                    // 缩放百分比微调控制
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(Color(0xFF1E293B))
+                            .border(1.dp, Color(0xFF334155), RoundedCornerShape(6.dp))
+                            .padding(horizontal = 8.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = "缩放比例:",
+                            color = Color(0xFFCBD5E1),
+                            fontSize = 11.sp
+                        )
+
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            // -10%
+                            Box(
+                                modifier = Modifier
+                                    .size(24.dp)
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .background(Color(0xFF334155))
+                                    .clickable {
+                                        val newZoom = (activeZoomPercent - 10).coerceIn(30, 300)
+                                        if (selectedTargetId == 0) onSetGlobalZoom(newZoom)
+                                        else onSetWindowZoom(selectedTargetId, newZoom)
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(text = "-", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                            }
+
+                            Text(
+                                text = "${activeZoomPercent}%",
+                                color = Color(0xFF38BDF8),
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.width(42.dp),
+                                textAlign = TextAlign.Center
+                            )
+
+                            // +10%
+                            Box(
+                                modifier = Modifier
+                                    .size(24.dp)
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .background(Color(0xFF334155))
+                                    .clickable {
+                                        val newZoom = (activeZoomPercent + 10).coerceIn(30, 300)
+                                        if (selectedTargetId == 0) onSetGlobalZoom(newZoom)
+                                        else onSetWindowZoom(selectedTargetId, newZoom)
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(text = "+", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+
+                    // 预设比例快捷按钮
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        listOf(75, 90, 100, 110, 125).forEach { preset ->
+                            val isCurrent = activeZoomPercent == preset
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .background(if (isCurrent) Color(0xFF0369A1) else Color(0xFF1E293B))
+                                    .border(
+                                        0.5.dp,
+                                        if (isCurrent) Color(0xFF38BDF8) else Color(0xFF334155),
+                                        RoundedCornerShape(4.dp)
+                                    )
+                                    .clickable {
+                                        if (selectedTargetId == 0) onSetGlobalZoom(preset)
+                                        else onSetWindowZoom(selectedTargetId, preset)
+                                    }
+                                    .padding(vertical = 4.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "${preset}%",
+                                    color = if (isCurrent) Color.White else Color(0xFF94A3B8),
+                                    fontSize = 9.sp,
+                                    fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // 底部一键自适应与完成按钮
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(34.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(Color(0xFF1E293B))
+                            .border(1.dp, Color(0xFF475569), RoundedCornerShape(6.dp))
+                            .clickable { onResetZoom() },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "重置为 100%",
+                            color = Color(0xFFCBD5E1),
+                            fontSize = 11.sp
+                        )
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(34.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(Color(0xFF0284C7))
+                            .clickable { onDismiss() },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "完成",
+                            color = Color.White,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
                     }
                 }
             }
