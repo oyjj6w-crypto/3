@@ -42,7 +42,6 @@ import { HiddenWindowsDock } from './components/HiddenWindowsDock';
 import { CodeExplorerModal } from './components/CodeExplorerModal';
 import { TradingViewSimulator } from './components/TradingViewSimulator';
 import { UserScriptModal } from './components/UserScriptModal';
-import { PerformanceMonitorModal } from './components/PerformanceMonitorModal';
 import { DEFAULT_SCRIPT_OPTIONS, ScriptOptions } from './utils/scriptGenerator';
 import { generateAndroidProjectZip, triggerDownload } from './utils/zipGenerator';
 import { PRESET_GROUPS, loadSavedGroups, saveCustomGroups } from './data/windowGroups';
@@ -731,16 +730,6 @@ export default function App() {
 
         {/* Right Action Buttons */}
         <div className="flex items-center gap-2">
-          {/* 16 WebView 实例实时性能监控按钮 */}
-          <button
-            onClick={() => setIsPerformanceModalOpen(true)}
-            className="flex items-center gap-1.5 px-2 py-1 md:px-2.5 md:py-1.5 rounded-lg bg-emerald-950/50 hover:bg-emerald-900/60 border border-emerald-500/40 text-emerald-300 hover:text-emerald-200 text-xs font-semibold shadow transition-all cursor-pointer"
-            title="打开 16 WebView 实例实时调度与内存预算监控中心"
-          >
-            <Activity className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
-            <span>16实例监控</span>
-          </button>
-
           {activeAppMode === 'tampermonkey' ? (
             <>
               <button
@@ -1175,17 +1164,6 @@ export default function App() {
                 >
                   <RotateCw className="w-3.5 h-3.5 text-sky-400" />
                 </button>
-
-                {/* 16 WebView 实例实时性能监控按钮 */}
-                <button
-                  type="button"
-                  onClick={() => setIsPerformanceModalOpen(true)}
-                  className="h-[30px] px-3 flex items-center gap-1.5 rounded-md bg-emerald-950 hover:bg-emerald-900 border border-emerald-500/80 text-emerald-300 hover:text-emerald-200 transition-colors shadow-sm cursor-pointer text-xs font-mono"
-                  title="查看 16 WebView 实例实时性能与内存监控 (vivo Pad 3 Pro 深度优化)"
-                >
-                  <Activity className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
-                  <span className="font-bold whitespace-nowrap">16实例监控</span>
-                </button>
               </div>
             </div>
 
@@ -1427,18 +1405,6 @@ export default function App() {
         isOpen={isCodeModalOpen}
         initialTab={modalInitialTab}
         onClose={() => setIsCodeModalOpen(false)}
-      />
-
-      {/* ================= 16 WebView 实例实时性能与内存调度监控中心 ================= */}
-      <PerformanceMonitorModal
-        isOpen={isPerformanceModalOpen}
-        onClose={() => setIsPerformanceModalOpen(false)}
-        instances={webviewInstances}
-        activeGroupId={activeGroupId}
-        totalMemoryMb={totalMemoryMb}
-        averageLatencyMs={averageLatencyMs}
-        onEvictIdleInstances={handleEvictIdleInstances}
-        onForceActiveInstance={handleForceActiveInstance}
       />
 
       {/* ================= 保存当前三窗口为新分组对话框 (Save Group Modal) ================= */}

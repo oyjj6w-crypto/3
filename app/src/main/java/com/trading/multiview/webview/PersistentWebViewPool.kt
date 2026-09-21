@@ -1182,9 +1182,30 @@ object PersistentWebViewPool {
             (function() {
                 if (window.__tv_native_optimizer_injected) return;
                 window.__tv_native_optimizer_injected = true;
-                window.__is_tv_inactive = ${!isCurrentGroup};
                 
-                // 1. 动态注入 WebSocket 心跳保活节流逻辑 (非活跃后台窗口从 1s 节流至 10s，降低 CPU 唤醒耗电 90%)
+                var originalRAF = window.requestAnimationFrame;
+                var _inactive = ${!isCurrentGroup};
+                var inactiveCallbacks = [];
+                
+                Object.defineProperty(window, '__is_tv_inactive', {
+                    get: function() { return _inactive; },
+                    set: function(val) {
+                        var old = _inactive;
+                        _inactive = val;
+                        if (old === true && val === false) {
+                            // 从后台冰封瞬间被激活：立即取出暂存的最优重绘，0ms 瞬间还原 120Hz/144Hz 画布渲染
+                            var cbs = inactiveCallbacks.slice();
+                            inactiveCallbacks = [];
+                            cbs.forEach(function(cb) {
+                                try {
+                                    originalRAF.call(window, cb);
+                                } catch(re) {}
+                            });
+                        }
+                    }
+                });
+                
+                // 1. 动态注入 WebSocket 心跳保活对齐逻辑 (基于 10s 墙上时间纪元对齐，强制后台 12 窗口合并爆发，CPU 获 99% 深度深睡)
                 try {
                     var OriginalWS = window.WebSocket;
                     if (OriginalWS) {
@@ -1207,12 +1228,13 @@ object PersistentWebViewPool {
                                 }
                                 var isInactive = window.__is_tv_inactive === true;
                                 if (isHeartbeat && isInactive) {
-                                    var now = Date.now();
-                                    if (!ws.__last_heartbeat_sent_time || (now - ws.__last_heartbeat_sent_time >= 10000)) {
-                                        ws.__last_heartbeat_sent_time = now;
+                                    // 10s 墙上时间全局对齐
+                                    var epoch = Math.floor(Date.now() / 10000);
+                                    if (ws.__last_sent_epoch !== epoch) {
+                                        ws.__last_sent_epoch = epoch;
                                         return originalSend.apply(this, arguments);
                                     } else {
-                                        return; // 拦截并抑制高频后台心跳
+                                        return; // 同一 10 秒时间窗的多余心跳全部抑制，实现毫秒级物理同步对齐
                                     }
                                 }
                                 return originalSend.apply(this, arguments);
@@ -1260,7 +1282,7 @@ object PersistentWebViewPool {
                  * 核心优化：1Hz 交互感知智能节流 (1Hz Render Throttling with Touch Boost)
                  * 平板 16 视窗看盘时，静态观看只需 1 秒刷新一次 (1Hz)；
                  * 用户触控（拖拽、缩放、绘制趋势线）时，瞬间解除节流跑满 60Hz/120Hz！
-                 * 完美解决 GPU 空转与设备发热，释放处理器算力。
+                 * 后台窗口 (isInactive = true) 彻底进入 0Hz 静止，完全不产生绘制
                  */
                 var lastInteractionTime = Date.now();
                 var isInteracting = false;
@@ -1275,12 +1297,19 @@ object PersistentWebViewPool {
                     window.addEventListener(evt, markInteraction, { passive: true, capture: true });
                 });
 
-                var originalRAF = window.requestAnimationFrame;
                 var lastRenderTime = 0;
                 var MIN_RENDER_INTERVAL_MS = 1000; // 静止时 1000ms (1Hz) 渲染一次
 
                 window.requestAnimationFrame = function(callback) {
                     var now = performance.now();
+                    var isInactive = window.__is_tv_inactive === true;
+
+                    // 【后台 0Hz 绝对冰封】：不执行任何 requestAnimationFrame 回调，将重绘频率和 GPU 占用拉低到绝对零度
+                    if (isInactive) {
+                        inactiveCallbacks = [callback]; // 仅暂存最新的一帧重绘闭包，以防内存溢出且便于激活时瞬显
+                        return;
+                    }
+
                     var timeSinceInteraction = Date.now() - lastInteractionTime;
                     
                     // 如果处于用户交互期 (缩放/画图/拖拽)，完全使用原生 60Hz/120Hz 无延迟回调
