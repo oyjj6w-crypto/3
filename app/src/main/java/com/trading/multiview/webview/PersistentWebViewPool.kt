@@ -91,6 +91,43 @@ object PersistentWebViewPool {
         saveWindowUrlForGroup(currentGroupId, windowId, url, title, context)
     }
 
+    fun getDefaultUrlForGroup(groupId: String, windowId: Int): String {
+        return when (groupId) {
+            "preset_1" -> {
+                when (windowId) {
+                    1 -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:BTCUSDT&interval=15&theme=dark"
+                    2 -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:ETHUSDT&interval=15&theme=dark"
+                    3 -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:SOLUSDT&interval=15&theme=dark"
+                    else -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:BNBUSDT&interval=15&theme=dark"
+                }
+            }
+            "preset_2" -> {
+                when (windowId) {
+                    1 -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:BTCUSDT&interval=60&theme=dark"
+                    2 -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:ETHUSDT&interval=60&theme=dark"
+                    3 -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:SOLUSDT&interval=60&theme=dark"
+                    else -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:BNBUSDT&interval=60&theme=dark"
+                }
+            }
+            "preset_3" -> {
+                when (windowId) {
+                    1 -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:BTCUSDT&interval=240&theme=dark"
+                    2 -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:ETHUSDT&interval=240&theme=dark"
+                    3 -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:SOLUSDT&interval=240&theme=dark"
+                    else -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:BNBUSDT&interval=240&theme=dark"
+                }
+            }
+            else -> {
+                when (windowId) {
+                    1 -> "https://www.tradingview.com"
+                    2 -> "https://www.binance.com"
+                    3 -> "https://www.okx.com"
+                    else -> "https://dexscreener.com"
+                }
+            }
+        }
+    }
+
     // 默认看盘标的预设 (默认加载 TradingView 官网 www.tradingview.com)
     val DEFAULT_URLS = mapOf(
         1 to "https://www.tradingview.com",
@@ -586,13 +623,9 @@ object PersistentWebViewPool {
         }
     }
 
-    fun getWebView(windowId: Int): WebView? {
-        return webViewMap[windowId]
-    }
-
     fun reloadWindow(windowId: Int) {
-        appliedScaleMap.remove(windowId)
-        webViewMap[windowId]?.reload()
+        appliedScaleMap.remove("${currentGroupId}_$windowId")
+        getWebView(windowId)?.reload()
     }
 
     /**
@@ -601,7 +634,7 @@ object PersistentWebViewPool {
      * @param zoomPercent 缩放百分比 (50% ~ 250%)
      */
     fun setZoom(windowId: Int, zoomPercent: Int) {
-        val webView = webViewMap[windowId] ?: return
+        val webView = getWebView(windowId) ?: return
         val clampedZoom = zoomPercent.coerceIn(50, 250)
         currentZoomPercent = clampedZoom
         webView.settings.textZoom = clampedZoom
@@ -612,7 +645,7 @@ object PersistentWebViewPool {
      * 针对指定视窗重置回标准自适应全景显示 (Auto-Fit Overview)
      */
     fun triggerAutoFit(windowId: Int) {
-        val webView = webViewMap[windowId] ?: return
+        val webView = getWebView(windowId) ?: return
         currentZoomPercent = 100
         webView.settings.textZoom = 100
         injectDesktopViewport(webView, 100, force = true)
@@ -623,7 +656,7 @@ object PersistentWebViewPool {
      * 默认开启桌面模式 (enableDesktop = true)，UA 为标准 PC Chrome
      */
     fun setDesktopMode(windowId: Int, enableDesktop: Boolean) {
-        val webView = webViewMap[windowId] ?: return
+        val webView = getWebView(windowId) ?: return
         webView.settings.apply {
             if (enableDesktop) {
                 userAgentString = PC_DESKTOP_USER_AGENT
@@ -635,7 +668,7 @@ object PersistentWebViewPool {
                 loadWithOverviewMode = false
             }
         }
-        appliedScaleMap.remove(windowId)
+        appliedScaleMap.remove("${currentGroupId}_$windowId")
         if (enableDesktop) {
             injectDesktopViewport(webView, currentZoomPercent, force = true)
         }
@@ -643,7 +676,7 @@ object PersistentWebViewPool {
     }
 
     fun goBack(windowId: Int): Boolean {
-        val wv = webViewMap[windowId]
+        val wv = getWebView(windowId)
         return if (wv != null && wv.canGoBack()) {
             wv.goBack()
             true
@@ -653,7 +686,7 @@ object PersistentWebViewPool {
     }
 
     fun goForward(windowId: Int): Boolean {
-        val wv = webViewMap[windowId]
+        val wv = getWebView(windowId)
         return if (wv != null && wv.canGoForward()) {
             wv.goForward()
             true
@@ -663,11 +696,11 @@ object PersistentWebViewPool {
     }
 
     fun canGoBack(windowId: Int): Boolean {
-        return webViewMap[windowId]?.canGoBack() == true
+        return getWebView(windowId)?.canGoBack() == true
     }
 
     fun canGoForward(windowId: Int): Boolean {
-        return webViewMap[windowId]?.canGoForward() == true
+        return getWebView(windowId)?.canGoForward() == true
     }
 
     /**
@@ -692,14 +725,14 @@ object PersistentWebViewPool {
      */
     fun loadCustomUrl(windowId: Int, url: String, forceReload: Boolean = false): Boolean {
         val formatted = formatUrl(url)
-        val webView = webViewMap[windowId] ?: return false
+        val webView = getWebView(windowId) ?: return false
         // 关键持久化：记录用户输入的网址
         saveWindowUrl(windowId, formatted)
         val current = webView.url ?: ""
         if (!forceReload && isSameUrl(current, formatted)) {
             return false
         }
-        appliedScaleMap.remove(windowId)
+        appliedScaleMap.remove("${currentGroupId}_$windowId")
         webView.loadUrl(formatted)
         return true
     }
@@ -730,7 +763,7 @@ object PersistentWebViewPool {
         }
         windowIds.forEachIndexed { index, windowId ->
             handler.postDelayed({
-                val webView = webViewMap[windowId]
+                val webView = getWebView(windowId)
                 if (webView != null) {
                     val script = buildActionExecutionScript(action, customDelayMs)
                     webView.evaluateJavascript(script, null)
@@ -750,7 +783,7 @@ object PersistentWebViewPool {
      * @param action "hide" (隐藏画线), "invert" (翻转K线), "magnet" (磁力吸附)
      */
     fun dispatchSingleTradingViewAction(windowId: Int, action: String, customDelayMs: Long = 0L) {
-        val webView = webViewMap[windowId]
+        val webView = getWebView(windowId)
         if (webView != null) {
             val script = buildActionExecutionScript(action, customDelayMs)
             webView.evaluateJavascript(script, null)

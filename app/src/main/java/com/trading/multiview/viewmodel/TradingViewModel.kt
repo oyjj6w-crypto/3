@@ -1,6 +1,7 @@
 package com.trading.multiview.viewmodel
 
 import android.content.Context
+import android.webkit.WebView
 import androidx.lifecycle.ViewModel
 import com.trading.multiview.webview.PersistentWebViewPool
 import kotlinx.coroutines.flow.MutableStateFlow
