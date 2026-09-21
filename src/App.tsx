@@ -1301,7 +1301,7 @@ export default function App() {
               <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
                 {/* 版本号与更新时间 (放在地址栏刷新按钮前面) */}
                 <div className="flex flex-col items-end text-[9px] font-mono text-slate-500 mr-1 leading-tight shrink-0 select-none">
-                  <span className="font-bold text-sky-500/80">v2.5.0</span>
+                  <span className="font-bold text-sky-500/80">v2.6.0</span>
                   <span className="text-[8px] opacity-75">2026-09-21 14:30</span>
                 </div>
 
