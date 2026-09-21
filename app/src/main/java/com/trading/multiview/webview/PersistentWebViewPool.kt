@@ -407,19 +407,38 @@ object PersistentWebViewPool {
         this.appContext = appCtx
         if (isInitialized) return
         
-        // 关键优化：16 独立 WebView 实例（4 分组 × 4 视窗）一次性常驻内存预热！
-        // 彻底杜绝切换标签页时重新加载 URL、等待 K 线重绘与指标重新计算
-        val groupIds = listOf("preset_1", "preset_2", "preset_3", "preset_4")
-        groupIds.forEach { gId ->
-            listOf(1, 2, 3, 4).forEach { windowId ->
-                val key = "${gId}_$windowId"
-                val webView = createConfiguredWebView(appCtx, key)
-                val savedUrl = getSavedWindowUrlForGroup(appCtx, gId, windowId)
-                val initialUrl = if (!savedUrl.isNullOrBlank()) savedUrl else getDefaultUrlForGroup(gId, windowId)
-                webView.loadUrl(initialUrl)
-                webViewMap[key] = webView
-            }
+        // 1. 优先加载当前活跃的分组 (默认 "preset_1")，确保用户瞬间进入可用的完美工作流
+        val primaryGroupId = currentGroupId
+        listOf(1, 2, 3, 4).forEach { windowId ->
+            val key = "${primaryGroupId}_$windowId"
+            val webView = createConfiguredWebView(appCtx, key)
+            val savedUrl = getSavedWindowUrlForGroup(appCtx, primaryGroupId, windowId)
+            val initialUrl = if (!savedUrl.isNullOrBlank()) savedUrl else getDefaultUrlForGroup(primaryGroupId, windowId)
+            webView.loadUrl(initialUrl)
+            webViewMap[key] = webView
         }
+
+        // 2. 剩余标签页进行时序激活调度 (每隔 10s 激活一个标签页的 4 窗口实例，在后台静默预温长连接)
+        val otherGroupIds = listOf("preset_1", "preset_2", "preset_3", "preset_4").filter { it != primaryGroupId }
+        val handler = android.os.Handler(android.os.Looper.getMainLooper())
+        
+        otherGroupIds.forEachIndexed { index, gId ->
+            val delayMs = (index + 1) * 10000L // 每 10 秒顺延一个分组
+            handler.postDelayed({
+                // 安全校验：可能在 10s 延迟期间，该分组已经被用户手动切换提前创建了
+                listOf(1, 2, 3, 4).forEach { windowId ->
+                    val key = "${gId}_$windowId"
+                    if (!webViewMap.containsKey(key)) {
+                        val webView = createConfiguredWebView(appCtx, key)
+                        val savedUrl = getSavedWindowUrlForGroup(appCtx, gId, windowId)
+                        val initialUrl = if (!savedUrl.isNullOrBlank()) savedUrl else getDefaultUrlForGroup(gId, windowId)
+                        webView.loadUrl(initialUrl)
+                        webViewMap[key] = webView
+                    }
+                }
+            }, delayMs)
+        }
+
         isInitialized = true
     }
 
@@ -1151,31 +1170,10 @@ object PersistentWebViewPool {
                     var style = document.createElement('style');
                     style.id = 'tv-native-multiwindow-optimizer';
                     style.innerHTML = `
-                        /* 1. 锁定收藏画图浮动工具栏至正底部居中 (留出底部原生栏间隙，改至 38px 防止遮挡画图栏等 DOM) */
-                        div[data-name="drawing-toolbar-favorite"],
-                        div[class*="floating-toolbar-react-widgets"],
-                        div[class*="floating-toolbar"] {
-                            position: fixed !important;
-                            bottom: 38px !important;
-                            left: 50% !important;
-                            transform: translateX(-50%) !important;
-                            top: auto !important;
-                            right: auto !important;
-                            z-index: 9999 !important;
-                            opacity: 0.95 !important;
-                            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6) !important;
-                            border: 1px solid rgba(56, 189, 248, 0.35) !important;
-                            border-radius: 8px !important;
-                            background: rgba(19, 23, 34, 0.94) !important;
-                            backdrop-filter: blur(8px) !important;
-                            pointer-events: auto !important;
-                        }
-                        /* 2. 精准仅移除右侧自选股、新闻社交流与促销横幅，【严禁隐藏】任何底部 DOM，确保 Pine 编辑器与指标可用 */
+                        /* 1. 仅移除右侧自选股、社会化新闻面板以及各类广告弹窗，100% 保持 K 线、底部栏、画图栏原生完整性 */
                         div[class*="widgetbar-pages"],
-                        div[data-name="watchlist-widget"],
                         div[data-name="news-widget"],
                         div[data-name="details-widget"],
-                        div[class*="widgetbar-widget"],
                         div[class*="social-panel"],
                         div[class*="toast-container"],
                         div[class*="tv-dialog__floating-wrapper--promo"],
@@ -1194,25 +1192,7 @@ object PersistentWebViewPool {
                     `;
                     (document.head || document.documentElement).appendChild(style);
                 } catch(e) {}
-                
-                function lockToolbar() {
-                    try {
-                        var tb = document.querySelector('div[data-name="drawing-toolbar-favorite"]') ||
-                                 document.querySelector('div[class*="floating-toolbar-react-widgets"]');
-                        if (tb) {
-                            tb.style.setProperty('position', 'fixed', 'important');
-                            tb.style.setProperty('bottom', '38px', 'important');
-                            tb.style.setProperty('left', '50%', 'important');
-                            tb.style.setProperty('transform', 'translateX(-50%)', 'important');
-                            tb.style.setProperty('top', 'auto', 'important');
-                            tb.style.setProperty('right', 'auto', 'important');
-                            tb.style.setProperty('z-index', '9999', 'important');
-                        }
-                    } catch(e) {}
-                }
-                lockToolbar();
-                setInterval(lockToolbar, 2000);
-
+ 
                 /**
                  * 核心优化：1Hz 交互感知智能节流 (1Hz Render Throttling with Touch Boost)
                  * 平板 16 视窗看盘时，静态观看只需 1 秒刷新一次 (1Hz)；

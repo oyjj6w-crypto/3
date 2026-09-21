@@ -376,8 +376,10 @@ class TradingViewModel : ViewModel() {
             // 3. 读取并恢复 3 个视窗的真实网址与标题 (最高优先级：直接读取用户在窗口中输入的 saved_window_url_X)
             val targetGroup = loadedGroups.find { it.id == validActiveGroupId }
             val currentWindows = _uiState.value.windows.map { win ->
-                val savedUrl = prefs.getString("${KEY_WINDOW_URL_PREFIX}${win.id}", null)?.takeIf { it.isNotBlank() }
-                val savedTitle = prefs.getString("${KEY_WINDOW_TITLE_PREFIX}${win.id}", null)
+                val savedUrl = prefs.getString("${KEY_WINDOW_URL_PREFIX}${validActiveGroupId}_${win.id}", null)?.takeIf { it.isNotBlank() }
+                    ?: prefs.getString("${KEY_WINDOW_URL_PREFIX}${win.id}", null)?.takeIf { it.isNotBlank() }
+                val savedTitle = prefs.getString("${KEY_WINDOW_TITLE_PREFIX}${validActiveGroupId}_${win.id}", null)?.takeIf { it.isNotBlank() }
+                    ?: prefs.getString("${KEY_WINDOW_TITLE_PREFIX}${win.id}", null)
                 val groupItem = targetGroup?.items?.getOrNull(win.id - 1)
 
                 val targetUrl = savedUrl ?: groupItem?.url?.takeIf { it.isNotBlank() } ?: win.currentUrl
