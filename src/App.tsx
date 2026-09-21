@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { motion } from 'motion/react';
 import {
   Tablet,
   RotateCw,
@@ -34,7 +35,8 @@ import {
   Magnet,
   ArrowUpDown,
   Activity,
-  Cpu
+  Cpu,
+  ChevronsRight
 } from 'lucide-react';
 import { WindowConfig, OrientationMode, WindowGroup, WebviewInstanceStat } from './types';
 import { TradingWindow } from './components/TradingWindow';
@@ -158,6 +160,116 @@ export default function App() {
   const [showTimeframeMenu, setShowTimeframeMenu] = useState<boolean>(false);
   const [customTfInput, setCustomTfInput] = useState<string>('');
   const [actionToast, setActionToast] = useState<string | null>(null);
+
+  // 新增：网页整版缩放锁定、标签页重排序与延时参数状态
+  const [isPageZoomEnabled, setIsPageZoomEnabled] = useState<boolean>(false);
+  const [isReorderModalOpen, setIsReorderModalOpen] = useState<boolean>(false);
+  const [tabSwitchDelay, setTabSwitchDelay] = useState<number>(() => {
+    const saved = localStorage.getItem('tab_switch_delay');
+    return saved ? parseFloat(saved) : 2;
+  });
+
+  // 隐藏画图与最新 K 线物理分发的 Click/Long-press 控制状态及弹窗状态
+  const hideDrawingsTimer = useRef<NodeJS.Timeout | null>(null);
+  const isHideDrawingsLongPress = useRef<boolean>(false);
+  const [showHideDrawingsIndividualModal, setShowHideDrawingsIndividualModal] = useState<boolean>(false);
+
+  const latestKlineTimer = useRef<NodeJS.Timeout | null>(null);
+  const isLatestKlineLongPress = useRef<boolean>(false);
+  const [showLatestKlineIndividualModal, setShowLatestKlineIndividualModal] = useState<boolean>(false);
+
+  const plusButtonTimer = useRef<NodeJS.Timeout | null>(null);
+  const isPlusButtonLongPress = useRef<boolean>(false);
+
+  // Plus 按钮 Click / Long-press 逻辑支持手机与桌面双端
+  const handlePlusTouchStart = () => {
+    isPlusButtonLongPress.current = false;
+    plusButtonTimer.current = setTimeout(() => {
+      isPlusButtonLongPress.current = true;
+      setIsReorderModalOpen(true);
+    }, 600);
+  };
+  const handlePlusTouchEnd = (e: React.TouchEvent) => {
+    if (plusButtonTimer.current) clearTimeout(plusButtonTimer.current);
+    if (isPlusButtonLongPress.current) {
+      e.preventDefault();
+    }
+  };
+  const handlePlusMouseDown = () => {
+    isPlusButtonLongPress.current = false;
+    plusButtonTimer.current = setTimeout(() => {
+      isPlusButtonLongPress.current = true;
+      setIsReorderModalOpen(true);
+    }, 600);
+  };
+  const handlePlusMouseUp = () => {
+    if (plusButtonTimer.current) clearTimeout(plusButtonTimer.current);
+  };
+  const handlePlusClick = () => {
+    if (!isPlusButtonLongPress.current) {
+      setIsSaveGroupModalOpen(true);
+    }
+  };
+
+  // 隐藏画图 Click / Long-press 逻辑支持
+  const handleHideDrawingsTouchStart = () => {
+    isHideDrawingsLongPress.current = false;
+    hideDrawingsTimer.current = setTimeout(() => {
+      isHideDrawingsLongPress.current = true;
+      setShowHideDrawingsIndividualModal(true);
+    }, 600);
+  };
+  const handleHideDrawingsTouchEnd = (e: React.TouchEvent) => {
+    if (hideDrawingsTimer.current) clearTimeout(hideDrawingsTimer.current);
+    if (isHideDrawingsLongPress.current) {
+      e.preventDefault();
+    }
+  };
+  const handleHideDrawingsMouseDown = () => {
+    isHideDrawingsLongPress.current = false;
+    hideDrawingsTimer.current = setTimeout(() => {
+      isHideDrawingsLongPress.current = true;
+      setShowHideDrawingsIndividualModal(true);
+    }, 600);
+  };
+  const handleHideDrawingsMouseUp = () => {
+    if (hideDrawingsTimer.current) clearTimeout(hideDrawingsTimer.current);
+  };
+  const handleHideDrawingsClick = () => {
+    if (!isHideDrawingsLongPress.current) {
+      handleTriggerHideDrawings();
+    }
+  };
+
+  // 最新 K 线 Click / Long-press 逻辑支持
+  const handleLatestKlineTouchStart = () => {
+    isLatestKlineLongPress.current = false;
+    latestKlineTimer.current = setTimeout(() => {
+      isLatestKlineLongPress.current = true;
+      setShowLatestKlineIndividualModal(true);
+    }, 600);
+  };
+  const handleLatestKlineTouchEnd = (e: React.TouchEvent) => {
+    if (latestKlineTimer.current) clearTimeout(latestKlineTimer.current);
+    if (isLatestKlineLongPress.current) {
+      e.preventDefault();
+    }
+  };
+  const handleLatestKlineMouseDown = () => {
+    isLatestKlineLongPress.current = false;
+    latestKlineTimer.current = setTimeout(() => {
+      isLatestKlineLongPress.current = true;
+      setShowLatestKlineIndividualModal(true);
+    }, 600);
+  };
+  const handleLatestKlineMouseUp = () => {
+    if (latestKlineTimer.current) clearTimeout(latestKlineTimer.current);
+  };
+  const handleLatestKlineClick = () => {
+    if (!isLatestKlineLongPress.current) {
+      handleTriggerAction('latest_kline');
+    }
+  };
 
   // 方式1重命名分组状态：双击或点击编辑进入内联修改
   const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
@@ -284,6 +396,17 @@ export default function App() {
     }, 1000);
     return () => clearInterval(uptimeTimer);
   }, []);
+
+  // 每次切换标签页，自动等待 tabSwitchDelay 秒后触发一次隐藏/显示画线
+  useEffect(() => {
+    if (!activeGroupId) return;
+    
+    const timer = setTimeout(() => {
+      handleTriggerAction('hide');
+    }, tabSwitchDelay * 1000);
+
+    return () => clearTimeout(timer);
+  }, [activeGroupId, tabSwitchDelay]);
 
   // Maximize / Restore Toggle
   const handleToggleMaximize = (id: number) => {
@@ -466,10 +589,40 @@ export default function App() {
     );
   };
 
-  // 模拟油猴插件快捷键同步向 3 视窗派发：先模拟激活视窗，再派发对应快捷键
-  const handleTriggerHideDrawings = () => {
-    setActionToast('已同步向 3 个窗口触发: 隐藏/显示画线 (Ctrl+Alt+H)');
+  // 统一物理激活与模拟快捷键指令分发中心 (Android 与 Web 双端融合支持)
+  const handleTriggerAction = (action: 'hide' | 'latest_kline' | 'invert' | 'magnet' | 'invert4' | 'invert8', windowId?: number) => {
+    let actionLabel = "";
+    if (action === 'hide') actionLabel = "隐藏/显示画线 (Ctrl+Alt+H)";
+    else if (action === 'latest_kline') actionLabel = "移至最新K线 (Alt+Shift+Right)";
+    else if (action === 'invert') actionLabel = "翻转K线 (Alt+I)";
+    else if (action === 'invert4') actionLabel = "4图布局依次翻转 K线 (Alt+I)";
+    else if (action === 'invert8') actionLabel = "8图布局依次翻转 K线 (Alt+I)";
+    else if (action === 'magnet') actionLabel = "磁力吸附切换 (Magnet)";
+
+    if (windowId !== undefined) {
+      setActionToast(`已向 窗口 W${windowId} 单独触发: ${actionLabel}`);
+      if (typeof window !== 'undefined' && (window as any).Android) {
+        try {
+          (window as any).Android.dispatchSingleTradingViewAction(windowId, action);
+        } catch (e) {
+          console.error('Android bridge error:', e);
+        }
+      }
+    } else {
+      setActionToast(`已同步向全部 3 个窗口触发: ${actionLabel}`);
+      if (typeof window !== 'undefined' && (window as any).Android) {
+        try {
+          (window as any).Android.dispatchTradingViewAction(action);
+        } catch (e) {
+          console.error('Android bridge error:', e);
+        }
+      }
+    }
     setTimeout(() => setActionToast(null), 2500);
+  };
+
+  const handleTriggerHideDrawings = () => {
+    handleTriggerAction('hide');
   };
 
   const handleTriggerToggleMagnet = () => {
@@ -481,29 +634,24 @@ export default function App() {
         isMagnetActive: nextVal,
       }))
     );
-    setActionToast(nextVal ? '已同步向全部 3 个窗口开启磁力吸附' : '已同步向全部 3 个窗口关闭磁力吸附');
-    setTimeout(() => setActionToast(null), 2500);
+    handleTriggerAction('magnet');
   };
 
   const handleTriggerInvertChart = () => {
-    setActionToast('已同步向 3 个窗口触发: 翻转 K 线图 (Alt+I)');
-    setTimeout(() => setActionToast(null), 2500);
+    handleTriggerAction('invert');
   };
 
   const handleTriggerInvert4Charts = () => {
-    setActionToast('已同步向 3 个窗口触发: 4图布局依次翻转 K 线 (Alt+I)');
-    setTimeout(() => setActionToast(null), 3000);
+    handleTriggerAction('invert4');
   };
 
   const handleTriggerInvert8Charts = () => {
-    setActionToast('已同步向 3 个窗口触发: 8图布局依次翻转 K 线 (Alt+I)');
-    setTimeout(() => setActionToast(null), 3500);
+    handleTriggerAction('invert8');
   };
 
   // 单个窗口独立控制触发 (方案 C 独享)
   const handleSingleTriggerHideDrawings = (id: number) => {
-    setActionToast(`已向 窗口 ${id} 单独触发: 隐藏/显示画线 (Ctrl+Alt+H)`);
-    setTimeout(() => setActionToast(null), 2500);
+    handleTriggerAction('hide', id);
   };
 
   const handleSingleTriggerToggleMagnet = (id: number) => {
@@ -511,8 +659,7 @@ export default function App() {
       prev.map((win) => {
         if (win.id === id) {
           const nextActive = !win.isMagnetActive;
-          setActionToast(`已向 窗口 ${id} 单独${nextActive ? '开启' : '关闭'}磁力吸附`);
-          setTimeout(() => setActionToast(null), 2500);
+          handleTriggerAction('magnet', id);
           return { ...win, isMagnetActive: nextActive };
         }
         return win;
@@ -521,8 +668,7 @@ export default function App() {
   };
 
   const handleSingleTriggerInvert = (id: number) => {
-    setActionToast(`已向 窗口 ${id} 单独触发: 翻转 K 线 (Alt+I)`);
-    setTimeout(() => setActionToast(null), 2500);
+    handleTriggerAction('invert', id);
   };
 
   const handleTriggerGlobalTimeframe = (tf: string) => {
@@ -914,9 +1060,13 @@ export default function App() {
                 {/* 保存当前三窗口为新分组按钮：高度统一为 30px x 30px，与标签高度完全齐平 */}
                 <button
                   type="button"
-                  onClick={() => setIsSaveGroupModalOpen(true)}
-                  className="w-[30px] h-[30px] flex items-center justify-center rounded-md bg-emerald-950/80 border border-emerald-700/60 text-emerald-300 hover:bg-emerald-900 hover:text-white transition-colors shrink-0 shadow-sm cursor-pointer"
-                  title="保存当前 3 视窗为新分组"
+                  onTouchStart={handlePlusTouchStart}
+                  onTouchEnd={handlePlusTouchEnd}
+                  onMouseDown={handlePlusMouseDown}
+                  onMouseUp={handlePlusMouseUp}
+                  onClick={handlePlusClick}
+                  className="w-[30px] h-[30px] flex items-center justify-center rounded-md bg-emerald-950/80 border border-emerald-700/60 text-emerald-300 hover:bg-emerald-900 hover:text-white transition-colors shrink-0 shadow-sm cursor-pointer select-none"
+                  title="点击：保存当前3视窗为新分组；长按：调整标签页/分组前后顺序"
                 >
                   <Plus className="w-4 h-4 text-emerald-400" />
                 </button>
@@ -971,17 +1121,17 @@ export default function App() {
                 ))}
               </div>
 
-              {/* ================= 油猴快捷 3 视窗动作组 (隐藏画线 · 磁力吸附 · 翻转K线) ================= */}
-              <div className="flex items-center gap-1.5 bg-[#101827] border border-blue-600/40 rounded-md p-1 shrink-0">
-                {/* T. 周期选择 (T字按钮) */}
+              {/* ================= 油猴快捷 3 视窗动作组 (无边框极简扁平化设计) ================= */}
+              <div className="flex items-center gap-1 shrink-0">
+                {/* T. 周期选择 (T字按钮)：标准 w-[30px] h-[30px] */}
                 <div className="relative">
                   <button
                     type="button"
                     onClick={() => setShowTimeframeMenu(!showTimeframeMenu)}
-                    className={`w-7 h-7 flex items-center justify-center rounded transition-colors cursor-pointer text-xs font-bold ${
+                    className={`w-[30px] h-[30px] flex items-center justify-center rounded-md transition-colors cursor-pointer text-xs font-bold ${
                       showTimeframeMenu
-                        ? 'bg-blue-600 text-white'
-                        : 'bg-slate-800/80 hover:bg-slate-700 text-sky-400 hover:text-sky-300'
+                        ? 'bg-blue-600/30 text-blue-400 shadow-[0_0_8px_rgba(59,130,246,0.2)]'
+                        : 'bg-transparent text-slate-300 hover:text-sky-300 hover:bg-slate-800/50'
                     }`}
                     title="全部 3 窗口同步触发：切换 K 线周期"
                   >
@@ -989,7 +1139,7 @@ export default function App() {
                   </button>
 
                   {showTimeframeMenu && (
-                    <div className="absolute top-9 left-0 z-50 w-72 bg-[#111827] border border-slate-700 rounded-lg shadow-2xl p-3 flex flex-col gap-2.5 font-sans">
+                    <div className="absolute top-9 left-0 z-50 w-72 bg-[#111827] border border-slate-700 rounded-lg shadow-2xl p-3 flex flex-col gap-2.5 font-sans text-slate-200">
                       {/* 标题与关闭按钮 */}
                       <div className="flex items-center justify-between pb-1 border-b border-slate-800">
                         <span className="text-xs font-semibold text-slate-200">⏱️ 同步切换周期 (全部 3 窗口)</span>
@@ -1094,72 +1244,96 @@ export default function App() {
                   )}
                 </div>
 
-                {/* 1. 隐藏/恢复画线 (Ctrl+Alt+H) */}
+                {/* 1. 隐藏/恢复画线 (单按 W1-W3 分发，长按弹窗选择)：标准 w-[30px] h-[30px] */}
                 <button
                   type="button"
-                  onClick={handleTriggerHideDrawings}
-                  className="w-7 h-7 flex items-center justify-center rounded bg-slate-800/80 hover:bg-slate-700 text-sky-400 hover:text-sky-300 transition-colors cursor-pointer"
-                  title="全部 3 窗口同步触发：隐藏/恢复画线 (Ctrl+Alt+H)"
+                  onTouchStart={handleHideDrawingsTouchStart}
+                  onTouchEnd={handleHideDrawingsTouchEnd}
+                  onMouseDown={handleHideDrawingsMouseDown}
+                  onMouseUp={handleHideDrawingsMouseUp}
+                  onClick={handleHideDrawingsClick}
+                  className="w-[30px] h-[30px] flex items-center justify-center rounded-md bg-transparent hover:bg-slate-800/50 text-slate-300 hover:text-sky-300 transition-colors cursor-pointer select-none"
+                  title="点击：同步隐藏3视窗画线；长按：选择针对单窗隐藏 (Ctrl+Alt+H)"
                 >
                   <EyeOff className="w-3.5 h-3.5" />
                 </button>
 
-                {/* 2. 磁力吸附切换 (Magnet / Ctrl) */}
+                {/* 2. 磁力吸附切换：标准 w-[30px] h-[30px] */}
                 <button
                   type="button"
                   onClick={handleTriggerToggleMagnet}
-                  className={`w-7 h-7 flex items-center justify-center rounded transition-colors cursor-pointer ${
+                  className={`w-[30px] h-[30px] flex items-center justify-center rounded-md transition-colors cursor-pointer ${
                     isMagnetActive
-                      ? 'bg-rose-950 border border-rose-500 text-rose-300'
-                      : 'bg-slate-800/80 hover:bg-slate-700 text-slate-300'
+                      ? 'bg-rose-600/20 text-rose-400 shadow-[0_0_8px_rgba(244,63,94,0.2)]'
+                      : 'bg-transparent text-slate-300 hover:text-sky-300 hover:bg-slate-800/50'
                   }`}
                   title="全部 3 窗口同步触发：磁力吸附切换 (Magnet / Ctrl)"
                 >
                   <Magnet className="w-3.5 h-3.5" />
                 </button>
 
-                {/* 3. 4图布局依次翻转K线 (Alt+I) */}
+                {/* 3. 翻转K线图 (Alt+I)：标准 w-[30px] h-[30px] */}
                 <button
                   type="button"
-                  onClick={handleTriggerInvert4Charts}
-                  className="w-7 h-7 flex items-center justify-center rounded bg-slate-800/80 hover:bg-slate-700 text-emerald-400 hover:text-emerald-300 transition-colors cursor-pointer font-mono font-bold text-xs"
-                  title="全部 3 窗口同步触发：4图纵向布局，依次激活并翻转 K 线 (Alt+I)"
+                  onClick={handleTriggerInvertChart}
+                  className="w-[30px] h-[30px] flex items-center justify-center rounded-md bg-transparent hover:bg-slate-800/50 text-slate-300 hover:text-sky-300 transition-colors cursor-pointer font-mono font-bold text-xs"
+                  title="全部 3 窗口同步翻转 K 线 (Alt+I)"
                 >
-                  4
+                  翻
                 </button>
 
-                {/* 5. 网址配置按钮 (移动至翻转 K 线 4 按钮的后面，保持 w-7 h-7 的动作组标准尺寸) */}
+                {/* 4. 网页整版缩放锁定 (锁按钮)：标准 w-[30px] h-[30px] */}
                 <button
                   type="button"
-                  onClick={() => setShowAddressConfigPanel((prev) => !prev)}
-                  className={`w-7 h-7 flex items-center justify-center rounded transition-colors cursor-pointer ${
-                    showAddressConfigPanel
-                      ? 'bg-sky-900 text-white'
-                      : 'bg-slate-800/80 hover:bg-slate-700 text-sky-400 hover:text-sky-300'
+                  onClick={() => setIsPageZoomEnabled(!isPageZoomEnabled)}
+                  className={`w-[30px] h-[30px] flex items-center justify-center rounded-md transition-colors cursor-pointer ${
+                    isPageZoomEnabled
+                      ? 'bg-amber-600/30 text-amber-400 shadow-[0_0_8px_rgba(245,158,11,0.2)]'
+                      : 'bg-transparent text-slate-300 hover:text-sky-300 hover:bg-slate-800/50'
                   }`}
-                  title={showAddressConfigPanel ? '收起 3 窗口网址配置面板' : '展开 3 窗口统一网址配置面板'}
+                  title={isPageZoomEnabled ? "退出网页整版缩放锁定" : "整版缩放锁定：开启后允许整体缩放网页，再次点击或页面任意处点击可还原"}
                 >
-                  <SlidersHorizontal className="w-3.5 h-3.5" />
+                  <Maximize className="w-3.5 h-3.5" />
                 </button>
               </div>
 
-              {/* 右侧：全局一键刷新 + 屏幕旋转 + 16实例监控 */}
+              {/* 右侧：版本信息 + 全局一键刷新 + 地址配置 + 屏幕旋转 */}
               <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-                {/* 全局一键刷新按钮：高度 30px x 30px，与左侧保持严格一致 */}
+                {/* 版本号与更新时间 (放在地址栏刷新按钮前面) */}
+                <div className="flex flex-col items-end text-[9px] font-mono text-slate-500 mr-1 leading-tight shrink-0 select-none">
+                  <span className="font-bold text-sky-500/80">v2.5.0</span>
+                  <span className="text-[8px] opacity-75">2026-09-21 14:30</span>
+                </div>
+
+                {/* 全局一键刷新按钮 */}
                 <button
                   type="button"
                   onClick={handleGlobalRefresh}
-                  className="w-[30px] h-[30px] flex items-center justify-center rounded-md bg-slate-900 hover:bg-slate-800 border border-slate-700/80 text-slate-300 hover:text-sky-300 transition-colors shadow-sm cursor-pointer"
+                  className="w-[30px] h-[30px] flex items-center justify-center rounded-md bg-transparent hover:bg-slate-800/50 text-slate-300 hover:text-sky-300 transition-colors shadow-sm cursor-pointer"
                   title="全局刷新全部视窗"
                 >
                   <RefreshCw className="w-3.5 h-3.5 text-sky-400" />
                 </button>
 
-                {/* 屏幕旋转按钮：标准 30px x 30px 方形，高度齐平，支持在模拟平板中一键横/竖屏切换 */}
+                {/* 地址按钮 (放在刷新和旋转的中间) */}
+                <button
+                  type="button"
+                  onClick={() => setShowAddressConfigPanel((prev) => !prev)}
+                  className={`w-[30px] h-[30px] flex items-center justify-center rounded-md transition-colors cursor-pointer ${
+                    showAddressConfigPanel
+                      ? 'bg-sky-600/30 text-sky-400 shadow-[0_0_8px_rgba(56,189,248,0.2)]'
+                      : 'bg-transparent text-slate-300 hover:text-sky-300 hover:bg-slate-800/50'
+                  }`}
+                  title={showAddressConfigPanel ? '收起 3 窗口网址配置面板' : '展开 3 窗口统一网址配置面板'}
+                >
+                  <SlidersHorizontal className="w-3.5 h-3.5" />
+                </button>
+
+                {/* 屏幕旋转按钮 */}
                 <button
                   type="button"
                   onClick={() => setOrientation((prev) => (prev === 'landscape' ? 'portrait' : 'landscape'))}
-                  className="w-[30px] h-[30px] flex items-center justify-center rounded-md bg-slate-900/80 border border-slate-700/80 text-slate-300 hover:bg-slate-800 hover:text-white transition-colors cursor-pointer"
+                  className="w-[30px] h-[30px] flex items-center justify-center rounded-md bg-transparent hover:bg-slate-800/50 text-slate-300 hover:text-sky-300 transition-colors cursor-pointer"
                   title="旋转屏幕（切换横屏/竖屏）"
                 >
                   <RotateCw className="w-3.5 h-3.5 text-sky-400" />
@@ -1492,6 +1666,216 @@ export default function App() {
                 <span>保存并加入分组标签</span>
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* 标签页重排序与延时参数配置面板 */}
+      {isReorderModalOpen && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-[#0f172a] border border-slate-800 rounded-xl p-5 w-full max-w-md shadow-2xl text-slate-200">
+            <div className="flex justify-between items-center pb-3 border-b border-slate-800">
+              <div className="flex items-center gap-2">
+                <SlidersHorizontal className="w-4 h-4 text-sky-400" />
+                <h3 className="font-bold text-sm text-slate-100">标签页排序与自动化设置</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsReorderModalOpen(false)}
+                className="text-slate-400 hover:text-white text-base leading-none"
+              >
+                &times;
+              </button>
+            </div>
+
+            <div className="py-4 space-y-4">
+              {/* 1. 自动等待秒数配置 */}
+              <div className="bg-[#1e293b]/30 border border-slate-800 rounded-lg p-3 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-slate-300">切换标签等待秒数</span>
+                  <span className="font-mono text-xs text-sky-400 font-bold">{tabSwitchDelay} 秒</span>
+                </div>
+                <input
+                  type="range"
+                  min="0.5"
+                  max="10"
+                  step="0.5"
+                  value={tabSwitchDelay}
+                  onChange={(e) => {
+                    const val = parseFloat(e.target.value);
+                    setTabSwitchDelay(val);
+                    localStorage.setItem('tab_switch_delay', val.toString());
+                  }}
+                  className="w-full accent-sky-500 cursor-pointer"
+                />
+                <p className="text-[10px] text-slate-500 leading-tight">
+                  切换标签页后，默认等待指定秒数自动执行一次“隐藏 K 线画图”动作以净化图表。
+                </p>
+              </div>
+
+              {/* 2. 标签页前后顺序调整 */}
+              <div className="space-y-2">
+                <span className="text-xs font-semibold text-slate-300 block">调整标签页前后顺序</span>
+                <div className="space-y-1.5 max-h-60 overflow-y-auto no-scrollbar">
+                  {groups.map((group, index) => (
+                    <div
+                      key={group.id}
+                      className={`flex items-center justify-between p-2 rounded-lg border ${
+                        activeGroupId === group.id
+                          ? 'bg-sky-950/40 border-sky-600/60 text-sky-200'
+                          : 'bg-[#1e293b]/50 border-slate-800 text-slate-300'
+                      }`}
+                    >
+                      <span className="font-mono font-bold text-xs truncate max-w-[200px]">
+                        {index + 1}. {group.name}
+                      </span>
+
+                      <div className="flex items-center gap-1">
+                        {/* Up button */}
+                        <button
+                          type="button"
+                          disabled={index === 0}
+                          onClick={() => {
+                            const nextGroups = [...groups];
+                            const temp = nextGroups[index];
+                            nextGroups[index] = nextGroups[index - 1];
+                            nextGroups[index - 1] = temp;
+                            setGroups(nextGroups);
+                            saveCustomGroups(nextGroups);
+                          }}
+                          className="w-7 h-7 flex items-center justify-center rounded bg-slate-800 hover:bg-slate-700 text-slate-300 disabled:opacity-30 disabled:pointer-events-none transition-colors text-[10px]"
+                          title="向前移动"
+                        >
+                          ▲
+                        </button>
+
+                        {/* Down button */}
+                        <button
+                          type="button"
+                          disabled={index === groups.length - 1}
+                          onClick={() => {
+                            const nextGroups = [...groups];
+                            const temp = nextGroups[index];
+                            nextGroups[index] = nextGroups[index + 1];
+                            nextGroups[index + 1] = temp;
+                            setGroups(nextGroups);
+                            saveCustomGroups(nextGroups);
+                          }}
+                          className="w-7 h-7 flex items-center justify-center rounded bg-slate-800 hover:bg-slate-700 text-slate-300 disabled:opacity-30 disabled:pointer-events-none transition-colors text-[10px]"
+                          title="向后移动"
+                        >
+                          ▼
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-end pt-3 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => setIsReorderModalOpen(false)}
+                className="px-4 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold transition-colors cursor-pointer"
+              >
+                保存并完成
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 隐藏画线：单独窗口选择弹窗 */}
+      {showHideDrawingsIndividualModal && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+          <div className="bg-[#0f172a] border border-slate-800 rounded-xl p-4 w-full max-w-xs shadow-2xl text-slate-200">
+            <h3 className="font-bold text-xs uppercase tracking-wider text-sky-400 mb-3 text-center">
+              选择隐藏画线的目标窗口
+            </h3>
+            <div className="flex flex-col gap-2">
+              {[1, 2, 3].map((winId) => (
+                <button
+                  key={winId}
+                  onClick={() => {
+                    handleTriggerAction('hide', winId);
+                    setShowHideDrawingsIndividualModal(false);
+                  }}
+                  className="py-2 px-4 rounded bg-[#1e293b] hover:bg-sky-600 hover:text-white transition-colors text-xs font-mono font-bold cursor-pointer"
+                >
+                  W{winId} 窗口 ({windows.find(w => w.id === winId)?.symbol || 'TradingView'})
+                </button>
+              ))}
+              <button
+                onClick={() => setShowHideDrawingsIndividualModal(false)}
+                className="mt-2 py-1.5 px-4 rounded border border-slate-700/80 hover:bg-slate-800 text-slate-400 text-xs cursor-pointer"
+              >
+                取消
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 移至最新K线：单独窗口选择弹窗 */}
+      {showLatestKlineIndividualModal && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+          <div className="bg-[#0f172a] border border-slate-800 rounded-xl p-4 w-full max-w-xs shadow-2xl text-slate-200">
+            <h3 className="font-bold text-xs uppercase tracking-wider text-amber-400 mb-3 text-center">
+              选择移至最新 K 线的窗口
+            </h3>
+            <div className="flex flex-col gap-2">
+              {[1, 2, 3].map((winId) => (
+                <button
+                  key={winId}
+                  onClick={() => {
+                    handleTriggerAction('latest_kline', winId);
+                    setShowLatestKlineIndividualModal(false);
+                  }}
+                  className="py-2 px-4 rounded bg-[#1e293b] hover:bg-amber-600 hover:text-white transition-colors text-xs font-mono font-bold cursor-pointer"
+                >
+                  W{winId} 窗口 ({windows.find(w => w.id === winId)?.symbol || 'TradingView'})
+                </button>
+              ))}
+              <button
+                onClick={() => setShowLatestKlineIndividualModal(false)}
+                className="mt-2 py-1.5 px-4 rounded border border-slate-700/80 hover:bg-slate-800 text-slate-400 text-xs cursor-pointer"
+              >
+                取消
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Draggable Floating Button: Alt + Shift + Right Arrow (Move to latest K-line) */}
+      <motion.button
+        drag
+        dragMomentum={false}
+        onTouchStart={handleLatestKlineTouchStart}
+        onTouchEnd={handleLatestKlineTouchEnd}
+        onMouseDown={handleLatestKlineMouseDown}
+        onMouseUp={handleLatestKlineMouseUp}
+        onClick={handleLatestKlineClick}
+        className="fixed z-40 right-4 bottom-32 w-12 h-12 rounded-full bg-amber-600 text-white flex items-center justify-center shadow-lg shadow-amber-950/40 hover:bg-amber-500 cursor-grab active:cursor-grabbing select-none border border-amber-500/30"
+        title="长按：配置单窗；单按：全部视窗同步滚动至最新 K 线 (Alt+Shift+Right)"
+      >
+        <ChevronsRight className="w-5 h-5" />
+      </motion.button>
+
+      {/* 网页整版缩放锁定状态提示与点击任意处退出遮罩 */}
+      {isPageZoomEnabled && (
+        <div
+          className="fixed inset-0 bg-amber-500/5 backdrop-blur-[0.5px] border-4 border-amber-500/40 z-30 pointer-events-auto flex items-start justify-center cursor-pointer"
+          onClick={() => {
+            setIsPageZoomEnabled(false);
+            setActionToast('已退出网页整版缩放锁定');
+            setTimeout(() => setActionToast(null), 2000);
+          }}
+        >
+          <div className="mt-2 bg-[#1e1b4b] border border-amber-500/60 rounded-full px-4 py-1.5 text-[11px] font-sans font-bold text-amber-300 shadow-2xl flex items-center gap-2 animate-bounce">
+            <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+            <span>整版网页缩放锁定中 (屏幕已锁定，点击任意位置还原并解锁)</span>
           </div>
         </div>
       )}
