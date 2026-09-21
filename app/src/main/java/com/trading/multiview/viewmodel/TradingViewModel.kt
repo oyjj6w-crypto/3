@@ -224,6 +224,7 @@ class TradingViewModel : ViewModel() {
 
         // 更新后台 WebView 线程池中的活跃组 ID (支持 16 独立实例常驻)
         PersistentWebViewPool.currentGroupId = groupId
+        PersistentWebViewPool.updateWebviewLifecycleStates()
         val targetGroup = updatedGroups.find { it.id == groupId } ?: return
         val targetWindowCount = targetGroup.windowCount
 

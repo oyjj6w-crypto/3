@@ -505,6 +505,22 @@ object PersistentWebViewPool {
         }
     }
 
+    /**
+     * 动态感知并更新 16 实例的前台/后台生命周期状态
+     * 保证只有当前活跃组的 4 个窗口为活跃状态，其余 12 个后台组窗口
+     * 自动在 JS 侧被标记为 window.__is_tv_inactive = true，从而完美触发 10s 心跳节流！
+     */
+    fun updateWebviewLifecycleStates() {
+        val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+        mainHandler.post {
+            webViewMap.forEach { (key, webView) ->
+                val isCurrentGroup = key.startsWith("${currentGroupId}_")
+                val inactiveStateScript = "window.__is_tv_inactive = ${!isCurrentGroup};"
+                webView.evaluateJavascript(inactiveStateScript, null)
+            }
+        }
+    }
+
     @SuppressLint("SetJavaScriptEnabled")
     private fun createConfiguredWebView(context: Context, key: String): WebView {
         val parts = key.split("_")
@@ -1161,11 +1177,58 @@ object PersistentWebViewPool {
      */
     fun injectTradingViewOptimizer(webView: WebView, url: String?) {
         if (url == null || (!url.contains("tradingview.com") && !url.contains("s.tradingview.com"))) return
+        val isCurrentGroup = webViewMap.entries.find { it.value == webView }?.key?.startsWith("${currentGroupId}_") ?: true
         val optimizerScript = """
             (function() {
                 if (window.__tv_native_optimizer_injected) return;
                 window.__tv_native_optimizer_injected = true;
+                window.__is_tv_inactive = ${!isCurrentGroup};
                 
+                // 1. 动态注入 WebSocket 心跳保活节流逻辑 (非活跃后台窗口从 1s 节流至 10s，降低 CPU 唤醒耗电 90%)
+                try {
+                    var OriginalWS = window.WebSocket;
+                    if (OriginalWS) {
+                        window.WebSocket = function(url, protocols) {
+                            var ws = new OriginalWS(url, protocols);
+                            var originalSend = ws.send;
+                            ws.send = function(data) {
+                                var isHeartbeat = false;
+                                if (typeof data === 'string') {
+                                    var lower = data.toLowerCase();
+                                    if (
+                                        lower.includes('ping') || 
+                                        lower.includes('heartbeat') || 
+                                        lower.includes('~h~') || 
+                                        data === '2' || 
+                                        data === '3'
+                                    ) {
+                                        isHeartbeat = true;
+                                    }
+                                }
+                                var isInactive = window.__is_tv_inactive === true;
+                                if (isHeartbeat && isInactive) {
+                                    var now = Date.now();
+                                    if (!ws.__last_heartbeat_sent_time || (now - ws.__last_heartbeat_sent_time >= 10000)) {
+                                        ws.__last_heartbeat_sent_time = now;
+                                        return originalSend.apply(this, arguments);
+                                    } else {
+                                        return; // 拦截并抑制高频后台心跳
+                                    }
+                                }
+                                return originalSend.apply(this, arguments);
+                            };
+                            try {
+                                if (OriginalWS.prototype) {
+                                    ws.prototype = OriginalWS.prototype;
+                                }
+                            } catch(pe) {}
+                            return ws;
+                        };
+                    }
+                } catch(wse) {
+                    console.error('WS optimizer inject failed:', wse);
+                }
+
                 try {
                     var style = document.createElement('style');
                     style.id = 'tv-native-multiwindow-optimizer';
