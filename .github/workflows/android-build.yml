@@ -51,68 +51,16 @@ jobs:
         run: |
           mkdir -p app
           if [ ! -f "app/debug.keystore" ]; then
-            echo "debug.keystore not found, recreating fixed keystore..."
-            cat << 'EOF' > /tmp/fixed_key.pem
------BEGIN PRIVATE KEY-----
-MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC6zVCPuaUm4luf
-SXcw4Lo9v540A+uqJWcG1yaGdqFU1XmzLIOz6JwZk7TeDmM08nFlCnhPvwxwwg4W
-xkSyVM6l5BC3mEu3+2FP0hPlhdCzXKb54O2PoUL+athNpQpNtu/Gt8crERE6HYaD
-puybxrj7BfVs3tZTc/0UchrP1NOyoiM9qtkye0u3DMqtyhkP2ul0MzEQzd+S0lL4
-Lm3TcyG0f9nndqLo6yO+F0ILjtWeq5NW86XXX+3Dt+cXH0zbkExs3UkgC+Rqv0Tz
-4Dkva2r+fOQHj2GycVNRBC1u0yPgbIwIVaIW3aQcucogbcuPS1QgCVBlYt+1N74F
-11KREp7jAgMBAAECggEACTtlIxZtEEz5KmE3CkvdisGPra21Wm+PfyeMg825irxs
-vWbSlX1GSkh0S4jjf0hSHxIKUyYPFPtBEpJbgPB4MKA+XvoyqhXfdq3umDqy4ZS0
-BL8Ijpq6wqqSttMUfVpU9Xm7jYOLNVeSEqt0Vo9pDELqMyZzV+4U7B2LQmU8hORD
-PSHvdriCQVdjaM+LutI/umq8OwNZGZsXpUZdz9O71LrkQAim5uX2VjsW3etcgQTY
-y+c5zSEfgKfKx7oz7rjL1f3WkT6NiUF7f1NdSTSRfD7m8Ct9POTXlpj4v6gBYdY+
-K3wV9Xp8Fjc+kx2I0WHvQ4T/wXmglmTAqc/6cUWFNQKBgQDrcAM7IzNm5ySpyS9B
-CfjvTrwczu8gJ2lEsIZmnV4Rj1uRFW0v4Y/33m6yv2ddQAwoSMaa94wJzpLKq7go
-QiUNo7EHjVcVICrjIU0PTDYbW9k6xdDKpubOksuE9oxsoHYltjgQA98ZJ1A2RMF8
-+xXb4/QQsuRCG20K+9mM2f3uJwKBgQDLHeStptyj9iwwZDGFmKodl+HDhzEi699J
-7Miiz7q/xX5EBCwHMZWvunzqyhtGrknSo1v8iN5nR9Xf1zUDqFEIpmNI7Dr+shcg
-KZLCdc1iCxvdOX2fPY4Jgof/JHEFXRbvTgCS1kCGA6FOEpLYSwnuNAjAEa7f/c4X
-8YX5meJ65QKBgQDZ/EkRjSL/iM26YirdViVlNQoYxkRDChp+Xc7i3ZuGOKx4JVWF
-+pt4zTrDR1Kl1TIsbk1sl/zR67Cf8+Q7ahqyiTfUnTnetnze9StLGa4TILR9pUAP
-Ef8rjmDfSAN2ZA9gFVnNAjijKnIq/PgFBtkTUfjdKTUMPCZ2//5KWl+xCwKBgGns
-d/H7P7sdyOOfjJfQCn8OUsUF/qDogvRpUCRf0lLp6jQMPO2vdRFEXpqOtXTBtWvs
-ly72LY2Mz8NA1rvGjiPFqadA0m86bobuR0Oz7VyA0JIoxhNCJY1eDhAHcA1NA4Xe
-lrv8kX+R6w/s7blwQIiBiEKpthnHoS+pW6XUE2DlAoGAQ/RzlRVzovh15G1NPKxY
-PfAazs9Z+uVQiDn3b67Zz6c2JEJLJDpi6hV9FT3VlE4qHPjWQOD+TxS/fS/KEs/z
-i32cjlooRs+l0kwziBaT0Eg+IAtNzhMaRr8WYWqphbGgAyV197qt45CJ3tV3zI6z
-OmW0ZYUPguUTL95yqc+SuvQ=
------END PRIVATE KEY-----
-EOF
-            cat << 'EOF' > /tmp/fixed_cert.pem
------BEGIN CERTIFICATE-----
-MIIDUTCCAjmgAwIBAgIUQbyV40gqayvzvta3UwHIc+dB61MwDQYJKoZIhvcNAQEL
-BQAwNzEWMBQGA1UEAwwNQW5kcm9pZCBEZWJ1ZzEQMA4GA1UECgwHQW5kcm9pZDEL
-MAkGA1UEBhMCVVMwIBcNMjYwOTIxMDM1MTIxWhgPMjA1NDAyMDYwMzUxMjFaMDcx
-FjAUBgNVBAMMDUFuZHJvaWQgRGVidWcxEDAOBgNVBAoMB0FuZHJvaWQxCzAJBgNV
-BAYTAlVTMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAus1Qj7mlJuJb
-n0l3MOC6Pb+eNAPrqiVnBtcmhnahVNV5syyDs+icGZO03g5jNPJxZQp4T78McMIO
-FsZEslTOpeQQt5hLt/thT9IT5YXQs1ym+eDtj6FC/mrYTaUKTbbvxrfHKxEROh2G
-g6bsm8a4+wX1bN7WU3P9FHIaz9TTsqIjParZMntLtwzKrcoZD9rpdDMxEM3fktJS
-+C5t03MhtH/Z53ai6OsjvhdCC47VnquTVvOl11/tw7fnFx9M25BMbN1JIAvkar9E
-8+A5L2tq/nzkB49hsnFTUQQtbtMj4GyMCFWiFt2kHLnKIG3Lj0tUIAlQZWLftTe+
-BddSkRKe4wIDAQABo1MwUTAdBgNVHQ4EFgQUuhqW2s+KmpedhedWXGap16Zlmwcw
-HwYDVR0jBBgwFoAUuhqW2s+KmpedhedWXGap16ZlmwcwDwYDVR0TAQH/BAUwAwEB
-/zANBgkqhkiG9w0BAQsFAAOCAQEAhBQ/wo7jKe5db2BXo7IVXPtc1uW6YjEc5E4q
-klwusILV2gXkfidwfyJmhXxBZlKGMaFuYa4vXztkn9G/gFbS0chf6eGwup4N8mjE
-SepVlXYGUNOmUKvsuRwqkivM5uWjL1gw+jJ/48XCB2zCBI4J+yOYdQjmn1s1Mn3V
-56UyuKrgAFegYrxe3Y5M0JUsXhDylY35wfcrV/KezPJa3TLYjEwY4PZd7n7V/Z75
-XgmTSWW2Lt/8X8jCbDtbK42yrTKFt10JC1vrIjMzf70/oD7XqSMmkoFytN0Luckb
-TyZg1T5ajQPUeCS7X61prvjJZ+VmqzgJhi4+aay+cWJRlsnqSw==
------END CERTIFICATE-----
-EOF
-            openssl pkcs12 -export \
-              -in /tmp/fixed_cert.pem \
-              -inkey /tmp/fixed_key.pem \
-              -out app/debug.keystore \
-              -name androiddebugkey \
-              -password pass:android
-            rm -f /tmp/fixed_key.pem /tmp/fixed_cert.pem
+            if [ -f "app/debug.keystore.base64" ]; then
+              echo "Restoring debug.keystore from base64..."
+              base64 -d app/debug.keystore.base64 > app/debug.keystore
+            else
+              echo "Generating debug.keystore via keytool..."
+              keytool -genkey -v -keystore app/debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+            fi
           fi
-          echo "debug.keystore is present: $(ls -la app/debug.keystore)"
+          echo "Debug keystore ready:"
+          ls -lh app/debug.keystore
 
       - name: Assemble Debug APK
         run: ./gradlew assembleDebug --stacktrace --no-daemon
