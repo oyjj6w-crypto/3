@@ -24,6 +24,7 @@ data class TabGroup(
     val isPreset: Boolean = false,
     val description: String = "",
     val windowCount: Int = 3, // 每个标签页独立设置：3 或 4 个独立窗口
+    val zoomPercent: Int = 100, // 每个标签页独立记忆保存的缩放比例 (50% ~ 250%)
     val items: List<TabGroupItem>
 )
 
@@ -123,7 +124,8 @@ data class MultiViewUiState(
     val globalZoomPercent: Int = 100,
     val isGlobalUrlCollapsed: Boolean = true,
     val fixedPixelWidth: Int = 1280, // 固定像素桌面视口基准 (默认 1280px 标准 PC)
-    val isMagnetActive: Boolean = false // 磁力吸附切换状态
+    val isMagnetActive: Boolean = false, // 磁力吸附切换状态
+    val isTrackpadEnabled: Boolean = false // 虚拟触控板/鼠标面板开关
 ) {
     // 当前标签页集合对象
     val currentGroup: TabGroup?
@@ -231,6 +233,10 @@ class TradingViewModel : ViewModel() {
         val targetGroup = updatedGroups.find { it.id == groupId } ?: return
         val targetWindowCount = targetGroup.windowCount
 
+        // 读取目标标签页独立保存的缩放比例并应用
+        val targetGroupZoom = PersistentWebViewPool.getSavedZoomForGroup(context, groupId)
+        PersistentWebViewPool.currentZoomPercent = targetGroupZoom
+
         // 方案 A: 从 SharedPreferences 中读取该标签页每个窗口之前是否被用户隐藏
         val prefs = context?.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
@@ -251,13 +257,15 @@ class TradingViewModel : ViewModel() {
                     title = PersistentWebViewPool.getSavedWindowTitleForGroup(null, groupId, windowId) ?: targetItem.title,
                     symbol = targetItem.symbol,
                     currentUrl = targetUrl,
-                    isHidden = isHidden
+                    isHidden = isHidden,
+                    zoomPercent = targetGroupZoom
                 )
             }
             state.copy(
                 groups = updatedGroups,
                 windows = updatedWindows,
-                activeGroupId = groupId
+                activeGroupId = groupId,
+                globalZoomPercent = targetGroupZoom
             )
         }
 
@@ -269,8 +277,9 @@ class TradingViewModel : ViewModel() {
             PersistentWebViewPool.setWindowActive(winId, active)
         }
 
-        // 重新请求并触发当前活跃的所有窗口进行 resize 适配物理尺寸，消除拉合卡顿
+        // 重新请求并触发当前活跃的所有窗口进行 resize 适配物理尺寸与应用当前标签页缩放比例
         (1..targetWindowCount).forEach { winId ->
+            PersistentWebViewPool.setZoom(winId, targetGroupZoom)
             PersistentWebViewPool.triggerImmediateResize(winId)
         }
 
@@ -279,16 +288,22 @@ class TradingViewModel : ViewModel() {
     }
 
     /**
-     * 3 个窗口网页同时全局缩放调节 (设置 textZoom 或 initialScale，提供快捷 +/- 缩放调整)
+     * 当前标签页 3/4 个窗口网页独立全局缩放调节 (独立持久化至当前标签页)
      */
     fun setGlobalZoom(zoomPercent: Int) {
         val clamped = zoomPercent.coerceIn(50, 250)
+        val activeGroupId = _uiState.value.activeGroupId
+        PersistentWebViewPool.saveZoomForGroup(activeGroupId, clamped)
         val count = _uiState.value.currentWindowCount
         (1..count).forEach { windowId ->
             PersistentWebViewPool.setZoom(windowId, clamped)
         }
         _uiState.update { state ->
+            val updatedGroups = state.groups.map { g ->
+                if (g.id == activeGroupId) g.copy(zoomPercent = clamped) else g
+            }
             state.copy(
+                groups = updatedGroups,
                 globalZoomPercent = clamped,
                 windows = state.windows.map { it.copy(zoomPercent = clamped) }
             )
@@ -306,11 +321,20 @@ class TradingViewModel : ViewModel() {
     }
 
     fun resetGlobalZoom() {
+        val activeGroupId = _uiState.value.activeGroupId
+        PersistentWebViewPool.saveZoomForGroup(activeGroupId, 100)
         setGlobalZoom(100)
         val count = _uiState.value.currentWindowCount
         (1..count).forEach { windowId ->
             PersistentWebViewPool.triggerAutoFit(windowId)
         }
+    }
+
+    /**
+     * 切换虚拟触控板/光标面板显示状态
+     */
+    fun toggleTrackpad() {
+        _uiState.update { it.copy(isTrackpadEnabled = !it.isTrackpadEnabled) }
     }
 
     /**
@@ -393,9 +417,9 @@ class TradingViewModel : ViewModel() {
             val targetGroup = loadedGroups.find { it.id == validActiveGroupId }
             val currentWindows = _uiState.value.windows.map { win ->
                 val savedUrl = prefs.getString("${KEY_WINDOW_URL_PREFIX}${validActiveGroupId}_${win.id}", null)?.takeIf { it.isNotBlank() }
-                    ?: prefs.getString("${KEY_WINDOW_URL_PREFIX}${win.id}", null)?.takeIf { it.isNotBlank() }
+                    ?: (if (validActiveGroupId == "preset_1") prefs.getString("${KEY_WINDOW_URL_PREFIX}${win.id}", null)?.takeIf { it.isNotBlank() } else null)
                 val savedTitle = prefs.getString("${KEY_WINDOW_TITLE_PREFIX}${validActiveGroupId}_${win.id}", null)?.takeIf { it.isNotBlank() }
-                    ?: prefs.getString("${KEY_WINDOW_TITLE_PREFIX}${win.id}", null)
+                    ?: (if (validActiveGroupId == "preset_1") prefs.getString("${KEY_WINDOW_TITLE_PREFIX}${win.id}", null) else null)
                 val groupItem = targetGroup?.items?.getOrNull(win.id - 1)
 
                 val targetUrl = savedUrl ?: groupItem?.url?.takeIf { it.isNotBlank() } ?: win.currentUrl
@@ -428,15 +452,21 @@ class TradingViewModel : ViewModel() {
                 )
             }
 
-            // 4. 读取并恢复固定像素基准
+            // 4. 读取并恢复固定像素基准与当前活跃标签页的专属缩放比例
             val savedPixelWidth = prefs.getInt(KEY_FIXED_PIXEL_WIDTH, 1280)
             PersistentWebViewPool.setFixedPixelWidth(savedPixelWidth)
+            val savedGroupZoom = PersistentWebViewPool.getSavedZoomForGroup(context, validActiveGroupId)
+            PersistentWebViewPool.currentZoomPercent = savedGroupZoom
+            (1..4).forEach { winId ->
+                PersistentWebViewPool.setZoom(winId, savedGroupZoom)
+            }
 
             _uiState.update { state ->
                 state.copy(
                     groups = loadedGroups,
-                    windows = currentWindows,
+                    windows = currentWindows.map { it.copy(zoomPercent = savedGroupZoom) },
                     activeGroupId = validActiveGroupId,
+                    globalZoomPercent = savedGroupZoom,
                     fixedPixelWidth = savedPixelWidth
                 )
             }
@@ -474,6 +504,7 @@ class TradingViewModel : ViewModel() {
                 val isPreset = obj.optBoolean("isPreset", false)
                 val desc = obj.optString("description", "")
                 val windowCount = obj.optInt("windowCount", 3).coerceIn(3, 4)
+                val zoomPercent = obj.optInt("zoomPercent", 100).coerceIn(50, 250)
                 val itemsArray = obj.getJSONArray("items")
                 val items = mutableListOf<TabGroupItem>()
                 for (j in 0 until itemsArray.length()) {
@@ -494,6 +525,7 @@ class TradingViewModel : ViewModel() {
                         isPreset = isPreset,
                         description = desc,
                         windowCount = windowCount,
+                        zoomPercent = zoomPercent,
                         items = items
                     )
                 )
@@ -570,6 +602,7 @@ class TradingViewModel : ViewModel() {
                     put("isPreset", group.isPreset)
                     put("description", group.description)
                     put("windowCount", group.windowCount)
+                    put("zoomPercent", group.zoomPercent)
                     val itemsArr = JSONArray()
                     group.items.forEach { item ->
                         val itemObj = JSONObject().apply {

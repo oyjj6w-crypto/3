@@ -410,7 +410,30 @@ fun TradingMultiViewScreen(
                         )
                     }
 
-
+                    // 5. 原生虚拟鼠标/触控板开关按钮 (单击切换光标触控板浮层开启/关闭)
+                    Box(
+                        modifier = Modifier
+                            .size(30.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(
+                                if (uiState.isTrackpadEnabled) Color(0xFF6366F1)
+                                else Color(0xFF1E293B)
+                            )
+                            .border(
+                                width = 1.dp,
+                                color = if (uiState.isTrackpadEnabled) Color(0xFFA5B4FC) else Color(0xFF334155),
+                                shape = RoundedCornerShape(6.dp)
+                            )
+                            .clickable { viewModel.toggleTrackpad() },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Mouse,
+                            contentDescription = "虚拟触控板/光标",
+                            tint = if (uiState.isTrackpadEnabled) Color.White else Color(0xFFCBD5E1),
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
                 }
 
                 Spacer(modifier = Modifier.width(6.dp))
@@ -427,14 +450,14 @@ fun TradingMultiViewScreen(
                         modifier = Modifier.padding(end = 4.dp)
                     ) {
                         Text(
-                            text = "v2.6.0",
+                            text = "v2.7.0",
                             color = Color(0xFF64748B),
                             fontSize = 9.sp,
                             fontFamily = FontFamily.Monospace,
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = "2026-09-21 14:30",
+                            text = "2026-09-22 10:00",
                             color = Color(0xFF475569),
                             fontSize = 8.sp,
                             fontFamily = FontFamily.Monospace
@@ -702,6 +725,12 @@ fun TradingMultiViewScreen(
                 modifier = Modifier.size(20.dp)
             )
         }
+
+        // 6. 原生虚拟鼠标与触控板浮层
+        VirtualMouseOverlay(
+            isEnabled = uiState.isTrackpadEnabled,
+            onClose = { viewModel.toggleTrackpad() }
+        )
     }
 
     if (showSaveDialog) {

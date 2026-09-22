@@ -47,7 +47,7 @@ object PersistentWebViewPool {
         return try {
             val prefs = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             prefs.getString("${KEY_WINDOW_URL_PREFIX}${groupId}_$windowId", null)?.takeIf { it.isNotBlank() }
-                ?: prefs.getString("${KEY_WINDOW_URL_PREFIX}$windowId", null)?.takeIf { it.isNotBlank() }
+                ?: (if (groupId == "preset_1") prefs.getString("${KEY_WINDOW_URL_PREFIX}$windowId", null)?.takeIf { it.isNotBlank() } else null)
         } catch (e: Exception) {
             null
         }
@@ -58,7 +58,7 @@ object PersistentWebViewPool {
         return try {
             val prefs = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             prefs.getString("${KEY_WINDOW_TITLE_PREFIX}${groupId}_$windowId", null)?.takeIf { it.isNotBlank() }
-                ?: prefs.getString("${KEY_WINDOW_TITLE_PREFIX}$windowId", null)?.takeIf { it.isNotBlank() }
+                ?: (if (groupId == "preset_1") prefs.getString("${KEY_WINDOW_TITLE_PREFIX}$windowId", null)?.takeIf { it.isNotBlank() } else null)
         } catch (e: Exception) {
             null
         }
@@ -73,6 +73,27 @@ object PersistentWebViewPool {
             if (!title.isNullOrBlank()) {
                 editor.putString("${KEY_WINDOW_TITLE_PREFIX}${groupId}_$windowId", title)
             }
+            editor.apply()
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    fun getSavedZoomForGroup(context: Context? = null, groupId: String): Int {
+        val ctx = context ?: appContext ?: return 100
+        return try {
+            val prefs = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            prefs.getInt("group_${groupId}_zoom", 100).coerceIn(50, 250)
+        } catch (e: Exception) {
+            100
+        }
+    }
+
+    fun saveZoomForGroup(groupId: String, zoom: Int, context: Context? = null) {
+        val ctx = context ?: appContext ?: return
+        try {
+            val editor = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+            editor.putInt("group_${groupId}_zoom", zoom.coerceIn(50, 250))
             editor.apply()
         } catch (e: Exception) {
             e.printStackTrace()
@@ -530,6 +551,7 @@ object PersistentWebViewPool {
 
     @SuppressLint("SetJavaScriptEnabled")
     private fun createConfiguredWebView(context: Context, key: String): WebView {
+        val ownerGroupId = key.substringBeforeLast("_")
         val parts = key.split("_")
         val windowId = parts.lastOrNull()?.toIntOrNull() ?: 1
         return WebView(context).apply {
@@ -610,8 +632,10 @@ object PersistentWebViewPool {
                     view?.let { injectDesktopViewport(it, force = true) }
                     if (url != null && url != lastReportedUrl) {
                         lastReportedUrl = url
-                        saveWindowUrl(windowId, url, view?.title ?: "")
-                        onUrlChanged?.invoke(windowId, url, view?.title ?: "")
+                        saveWindowUrlForGroup(ownerGroupId, windowId, url, view?.title ?: "", context)
+                        if (ownerGroupId == currentGroupId) {
+                            onUrlChanged?.invoke(windowId, url, view?.title ?: "")
+                        }
                     }
                 }
 
@@ -623,8 +647,10 @@ object PersistentWebViewPool {
                     }
                     if (url != null && url != lastReportedUrl) {
                         lastReportedUrl = url
-                        saveWindowUrl(windowId, url, view?.title ?: "")
-                        onUrlChanged?.invoke(windowId, url, view?.title ?: "")
+                        saveWindowUrlForGroup(ownerGroupId, windowId, url, view?.title ?: "", context)
+                        if (ownerGroupId == currentGroupId) {
+                            onUrlChanged?.invoke(windowId, url, view?.title ?: "")
+                        }
                     }
                 }
 
@@ -632,8 +658,10 @@ object PersistentWebViewPool {
                     super.doUpdateVisitedHistory(view, url, isReload)
                     if (url != null && url != lastReportedUrl) {
                         lastReportedUrl = url
-                        saveWindowUrl(windowId, url, view?.title ?: "")
-                        onUrlChanged?.invoke(windowId, url, view?.title ?: "")
+                        saveWindowUrlForGroup(ownerGroupId, windowId, url, view?.title ?: "", context)
+                        if (ownerGroupId == currentGroupId) {
+                            onUrlChanged?.invoke(windowId, url, view?.title ?: "")
+                        }
                     }
                 }
 
@@ -649,10 +677,12 @@ object PersistentWebViewPool {
             webChromeClient = object : WebChromeClient() {
                 override fun onReceivedTitle(view: WebView?, title: String?) {
                     super.onReceivedTitle(view, title)
-                    // 关键优化 3：TradingView / Binance 每次 K 线数据更新更正（每十几秒）都会动态更新 document.title（如价格 68500 BTCUSDT）
                     // 仅通知 onTitleChanged 更新标签栏文字，坚决不触发 onUrlChanged，杜绝 Compose 全局重组与 WebView 重载闪烁！
                     if (!title.isNullOrBlank()) {
-                        onTitleChanged?.invoke(windowId, title)
+                        saveWindowUrlForGroup(ownerGroupId, windowId, url ?: "", title, context)
+                        if (ownerGroupId == currentGroupId) {
+                            onTitleChanged?.invoke(windowId, title)
+                        }
                     }
                 }
 
@@ -678,6 +708,7 @@ object PersistentWebViewPool {
         val webView = getWebView(windowId) ?: return
         val clampedZoom = zoomPercent.coerceIn(50, 250)
         currentZoomPercent = clampedZoom
+        saveZoomForGroup(currentGroupId, clampedZoom, appContext)
         webView.settings.textZoom = clampedZoom
         injectDesktopViewport(webView, clampedZoom, force = true)
     }
@@ -688,6 +719,7 @@ object PersistentWebViewPool {
     fun triggerAutoFit(windowId: Int) {
         val webView = getWebView(windowId) ?: return
         currentZoomPercent = 100
+        saveZoomForGroup(currentGroupId, 100, appContext)
         webView.settings.textZoom = 100
         injectDesktopViewport(webView, 100, force = true)
     }
@@ -1209,6 +1241,198 @@ object PersistentWebViewPool {
      */
     fun injectTradingViewEnhancer(webView: WebView, url: String?) {
         // 用户已要求删除网页内的浮动工具栏，保持看盘界面完全纯净无遮挡
+    }
+
+    // =========================================================================
+    // 原生虚拟鼠标 / 触控板事件派发引擎 (Virtual Mouse Dispatch Engine)
+    // 直接向处于光标下方的 TradingView WebView 派发真实 MotionEvent (TOOL_TYPE_MOUSE)
+    // 完美触发 TradingView 官方十字光标交叉悬停 (Crosshair Hover)、OHLC 数值浮层与滚轮缩放
+    // =========================================================================
+
+    /**
+     * 根据屏幕全局绝对坐标 (screenX, screenY)，定位当前处于其下方的活跃视窗 (windowId, WebView)
+     */
+    fun findWebViewAtScreenPoint(screenX: Float, screenY: Float): Pair<Int, WebView>? {
+        val loc = IntArray(2)
+        for (windowId in 1..4) {
+            val wv = getWebView(windowId) ?: continue
+            if (!wv.isShown || wv.width <= 0 || wv.height <= 0) continue
+            wv.getLocationOnScreen(loc)
+            val vx = loc[0].toFloat()
+            val vy = loc[1].toFloat()
+            val vw = wv.width.toFloat()
+            val vh = wv.height.toFloat()
+            if (screenX >= vx && screenX <= vx + vw && screenY >= vy && screenY <= vy + vh) {
+                return Pair(windowId, wv)
+            }
+        }
+        return null
+    }
+
+    /**
+     * 模拟真实鼠标移动悬停 (ACTION_HOVER_MOVE)，触发 TradingView 的原生十字光标 (Crosshair) 与 OHLC 数值浮层
+     */
+    fun dispatchVirtualMouseHover(screenX: Float, screenY: Float): Boolean {
+        val target = findWebViewAtScreenPoint(screenX, screenY) ?: return false
+        val loc = IntArray(2)
+        target.second.getLocationOnScreen(loc)
+        val localX = screenX - loc[0]
+        val localY = screenY - loc[1]
+        val now = android.os.SystemClock.uptimeMillis()
+        val event = android.view.MotionEvent.obtain(
+            now, now,
+            android.view.MotionEvent.ACTION_HOVER_MOVE,
+            localX, localY,
+            0
+        ).apply {
+            source = android.view.InputDevice.SOURCE_MOUSE
+        }
+        val res = target.second.dispatchGenericMotionEvent(event)
+        event.recycle()
+        return res
+    }
+
+    /**
+     * 模拟真实鼠标单击 (左键或右键)
+     */
+    fun dispatchVirtualMouseClick(screenX: Float, screenY: Float, isRightClick: Boolean = false): Boolean {
+        val target = findWebViewAtScreenPoint(screenX, screenY) ?: return false
+        val loc = IntArray(2)
+        target.second.getLocationOnScreen(loc)
+        val localX = screenX - loc[0]
+        val localY = screenY - loc[1]
+        val downTime = android.os.SystemClock.uptimeMillis()
+        val btn = if (isRightClick) android.view.MotionEvent.BUTTON_SECONDARY else android.view.MotionEvent.BUTTON_PRIMARY
+
+        val downEvent = android.view.MotionEvent.obtain(
+            downTime, downTime,
+            android.view.MotionEvent.ACTION_DOWN,
+            localX, localY,
+            0
+        ).apply {
+            source = android.view.InputDevice.SOURCE_MOUSE
+            buttonState = btn
+        }
+        target.second.dispatchTouchEvent(downEvent)
+        downEvent.recycle()
+
+        val upTime = downTime + 40
+        val upEvent = android.view.MotionEvent.obtain(
+            downTime, upTime,
+            android.view.MotionEvent.ACTION_UP,
+            localX, localY,
+            0
+        ).apply {
+            source = android.view.InputDevice.SOURCE_MOUSE
+            buttonState = 0
+        }
+        val res = target.second.dispatchTouchEvent(upEvent)
+        upEvent.recycle()
+        return res
+    }
+
+    /**
+     * 模拟真实鼠标按下 (用于拖拽画线、拖动图表或移动锚点)
+     */
+    fun dispatchVirtualMouseDown(screenX: Float, screenY: Float): Boolean {
+        val target = findWebViewAtScreenPoint(screenX, screenY) ?: return false
+        val loc = IntArray(2)
+        target.second.getLocationOnScreen(loc)
+        val localX = screenX - loc[0]
+        val localY = screenY - loc[1]
+        val now = android.os.SystemClock.uptimeMillis()
+        val downEvent = android.view.MotionEvent.obtain(
+            now, now,
+            android.view.MotionEvent.ACTION_DOWN,
+            localX, localY,
+            0
+        ).apply {
+            source = android.view.InputDevice.SOURCE_MOUSE
+            buttonState = android.view.MotionEvent.BUTTON_PRIMARY
+        }
+        val res = target.second.dispatchTouchEvent(downEvent)
+        downEvent.recycle()
+        return res
+    }
+
+    /**
+     * 模拟真实鼠标拖动移动
+     */
+    fun dispatchVirtualMouseMove(screenX: Float, screenY: Float): Boolean {
+        val target = findWebViewAtScreenPoint(screenX, screenY) ?: return false
+        val loc = IntArray(2)
+        target.second.getLocationOnScreen(loc)
+        val localX = screenX - loc[0]
+        val localY = screenY - loc[1]
+        val now = android.os.SystemClock.uptimeMillis()
+        val moveEvent = android.view.MotionEvent.obtain(
+            now, now,
+            android.view.MotionEvent.ACTION_MOVE,
+            localX, localY,
+            0
+        ).apply {
+            source = android.view.InputDevice.SOURCE_MOUSE
+            buttonState = android.view.MotionEvent.BUTTON_PRIMARY
+        }
+        val res = target.second.dispatchTouchEvent(moveEvent)
+        moveEvent.recycle()
+        return res
+    }
+
+    /**
+     * 模拟真实鼠标抬起
+     */
+    fun dispatchVirtualMouseUp(screenX: Float, screenY: Float): Boolean {
+        val target = findWebViewAtScreenPoint(screenX, screenY) ?: return false
+        val loc = IntArray(2)
+        target.second.getLocationOnScreen(loc)
+        val localX = screenX - loc[0]
+        val localY = screenY - loc[1]
+        val now = android.os.SystemClock.uptimeMillis()
+        val upEvent = android.view.MotionEvent.obtain(
+            now, now,
+            android.view.MotionEvent.ACTION_UP,
+            localX, localY,
+            0
+        ).apply {
+            source = android.view.InputDevice.SOURCE_MOUSE
+            buttonState = 0
+        }
+        val res = target.second.dispatchTouchEvent(upEvent)
+        upEvent.recycle()
+        return res
+    }
+
+    /**
+     * 模拟真实鼠标滚轮滑动 (ACTION_SCROLL)，TradingView 原生响应缩放或平移 K 线
+     * @param scrollDeltaY 正数向上滚 (放大)，负数向下滚 (缩小)
+     */
+    fun dispatchVirtualMouseScroll(screenX: Float, screenY: Float, scrollDeltaY: Float): Boolean {
+        val target = findWebViewAtScreenPoint(screenX, screenY) ?: return false
+        val loc = IntArray(2)
+        target.second.getLocationOnScreen(loc)
+        val localX = screenX - loc[0]
+        val localY = screenY - loc[1]
+        val now = android.os.SystemClock.uptimeMillis()
+        val props = arrayOf(android.view.MotionEvent.PointerProperties().apply {
+            id = 0
+            toolType = android.view.MotionEvent.TOOL_TYPE_MOUSE
+        })
+        val coords = arrayOf(android.view.MotionEvent.PointerCoords().apply {
+            x = localX
+            y = localY
+            setAxisValue(android.view.MotionEvent.AXIS_VSCROLL, scrollDeltaY)
+        })
+        val event = android.view.MotionEvent.obtain(
+            now, now,
+            android.view.MotionEvent.ACTION_SCROLL,
+            1, props, coords,
+            0, 0, 1.0f, 1.0f, 0, 0,
+            android.view.InputDevice.SOURCE_MOUSE, 0
+        )
+        val res = target.second.dispatchGenericMotionEvent(event)
+        event.recycle()
+        return res
     }
 
     fun destroyAll() {
