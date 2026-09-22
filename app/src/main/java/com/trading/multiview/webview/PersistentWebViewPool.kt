@@ -1270,6 +1270,34 @@ object PersistentWebViewPool {
     }
 
     /**
+     * 辅助构造标准鼠标输入事件 (包含 PointerProperties TOOL_TYPE_MOUSE 与 buttonState)
+     */
+    private fun createMouseEvent(
+        action: Int,
+        downTime: Long,
+        eventTime: Long,
+        x: Float,
+        y: Float,
+        buttonState: Int = 0
+    ): MotionEvent {
+        val props = arrayOf(MotionEvent.PointerProperties().apply {
+            id = 0
+            toolType = MotionEvent.TOOL_TYPE_MOUSE
+        })
+        val coords = arrayOf(MotionEvent.PointerCoords().apply {
+            this.x = x
+            this.y = y
+        })
+        return MotionEvent.obtain(
+            downTime, eventTime,
+            action,
+            1, props, coords,
+            0, buttonState, 1.0f, 1.0f, 0, 0,
+            android.view.InputDevice.SOURCE_MOUSE, 0
+        )
+    }
+
+    /**
      * 模拟真实鼠标移动悬停 (ACTION_HOVER_MOVE)，触发 TradingView 的原生十字光标 (Crosshair) 与 OHLC 数值浮层
      */
     fun dispatchVirtualMouseHover(screenX: Float, screenY: Float): Boolean {
@@ -1278,15 +1306,15 @@ object PersistentWebViewPool {
         target.second.getLocationOnScreen(loc)
         val localX = screenX - loc[0]
         val localY = screenY - loc[1]
-        val now = android.os.SystemClock.uptimeMillis()
-        val event = android.view.MotionEvent.obtain(
-            now, now,
-            android.view.MotionEvent.ACTION_HOVER_MOVE,
-            localX, localY,
-            0
-        ).apply {
-            source = android.view.InputDevice.SOURCE_MOUSE
-        }
+        val now = SystemClock.uptimeMillis()
+        val event = createMouseEvent(
+            action = MotionEvent.ACTION_HOVER_MOVE,
+            downTime = now,
+            eventTime = now,
+            x = localX,
+            y = localY,
+            buttonState = 0
+        )
         val res = target.second.dispatchGenericMotionEvent(event)
         event.recycle()
         return res
@@ -1301,31 +1329,29 @@ object PersistentWebViewPool {
         target.second.getLocationOnScreen(loc)
         val localX = screenX - loc[0]
         val localY = screenY - loc[1]
-        val downTime = android.os.SystemClock.uptimeMillis()
-        val btn = if (isRightClick) android.view.MotionEvent.BUTTON_SECONDARY else android.view.MotionEvent.BUTTON_PRIMARY
+        val downTime = SystemClock.uptimeMillis()
+        val btn = if (isRightClick) MotionEvent.BUTTON_SECONDARY else MotionEvent.BUTTON_PRIMARY
 
-        val downEvent = android.view.MotionEvent.obtain(
-            downTime, downTime,
-            android.view.MotionEvent.ACTION_DOWN,
-            localX, localY,
-            0
-        ).apply {
-            source = android.view.InputDevice.SOURCE_MOUSE
+        val downEvent = createMouseEvent(
+            action = MotionEvent.ACTION_DOWN,
+            downTime = downTime,
+            eventTime = downTime,
+            x = localX,
+            y = localY,
             buttonState = btn
-        }
+        )
         target.second.dispatchTouchEvent(downEvent)
         downEvent.recycle()
 
         val upTime = downTime + 40
-        val upEvent = android.view.MotionEvent.obtain(
-            downTime, upTime,
-            android.view.MotionEvent.ACTION_UP,
-            localX, localY,
-            0
-        ).apply {
-            source = android.view.InputDevice.SOURCE_MOUSE
+        val upEvent = createMouseEvent(
+            action = MotionEvent.ACTION_UP,
+            downTime = downTime,
+            eventTime = upTime,
+            x = localX,
+            y = localY,
             buttonState = 0
-        }
+        )
         val res = target.second.dispatchTouchEvent(upEvent)
         upEvent.recycle()
         return res
@@ -1340,16 +1366,15 @@ object PersistentWebViewPool {
         target.second.getLocationOnScreen(loc)
         val localX = screenX - loc[0]
         val localY = screenY - loc[1]
-        val now = android.os.SystemClock.uptimeMillis()
-        val downEvent = android.view.MotionEvent.obtain(
-            now, now,
-            android.view.MotionEvent.ACTION_DOWN,
-            localX, localY,
-            0
-        ).apply {
-            source = android.view.InputDevice.SOURCE_MOUSE
-            buttonState = android.view.MotionEvent.BUTTON_PRIMARY
-        }
+        val now = SystemClock.uptimeMillis()
+        val downEvent = createMouseEvent(
+            action = MotionEvent.ACTION_DOWN,
+            downTime = now,
+            eventTime = now,
+            x = localX,
+            y = localY,
+            buttonState = MotionEvent.BUTTON_PRIMARY
+        )
         val res = target.second.dispatchTouchEvent(downEvent)
         downEvent.recycle()
         return res
@@ -1364,16 +1389,15 @@ object PersistentWebViewPool {
         target.second.getLocationOnScreen(loc)
         val localX = screenX - loc[0]
         val localY = screenY - loc[1]
-        val now = android.os.SystemClock.uptimeMillis()
-        val moveEvent = android.view.MotionEvent.obtain(
-            now, now,
-            android.view.MotionEvent.ACTION_MOVE,
-            localX, localY,
-            0
-        ).apply {
-            source = android.view.InputDevice.SOURCE_MOUSE
-            buttonState = android.view.MotionEvent.BUTTON_PRIMARY
-        }
+        val now = SystemClock.uptimeMillis()
+        val moveEvent = createMouseEvent(
+            action = MotionEvent.ACTION_MOVE,
+            downTime = now,
+            eventTime = now,
+            x = localX,
+            y = localY,
+            buttonState = MotionEvent.BUTTON_PRIMARY
+        )
         val res = target.second.dispatchTouchEvent(moveEvent)
         moveEvent.recycle()
         return res
@@ -1388,16 +1412,15 @@ object PersistentWebViewPool {
         target.second.getLocationOnScreen(loc)
         val localX = screenX - loc[0]
         val localY = screenY - loc[1]
-        val now = android.os.SystemClock.uptimeMillis()
-        val upEvent = android.view.MotionEvent.obtain(
-            now, now,
-            android.view.MotionEvent.ACTION_UP,
-            localX, localY,
-            0
-        ).apply {
-            source = android.view.InputDevice.SOURCE_MOUSE
+        val now = SystemClock.uptimeMillis()
+        val upEvent = createMouseEvent(
+            action = MotionEvent.ACTION_UP,
+            downTime = now,
+            eventTime = now,
+            x = localX,
+            y = localY,
             buttonState = 0
-        }
+        )
         val res = target.second.dispatchTouchEvent(upEvent)
         upEvent.recycle()
         return res
