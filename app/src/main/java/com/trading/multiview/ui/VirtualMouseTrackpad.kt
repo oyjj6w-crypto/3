@@ -5,6 +5,8 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -21,6 +23,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
@@ -31,14 +34,18 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.trading.multiview.webview.PersistentWebViewPool
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 /**
  * 原生虚拟光标与悬浮触控板 (Virtual Mouse & Precision Trackpad)
  * 专为 TradingView 多视窗优化：
- * 1. 移动光标直接派发真实 ACTION_HOVER_MOVE，完美激活 TradingView 官方十字光标、时间轴与 OHLC 数值浮层；
- * 2. 独立左键、右键菜单、按住拖拽 (自由画线/平移) 与滚轮无级缩放；
- * 3. 悬浮面板支持自由拖拽移动至任意角落，不遮挡任何看盘视窗。
+ * 1. 触控板滑动驱动真实 ACTION_HOVER_MOVE，完美激活 TradingView 十字光标与 OHLC；
+ * 2. 触控板轻点触发左键单击，长按 500ms 触发右键上下文菜单；
+ * 3. 独立左键、右键、按住画线/平移、滚轮无级缩放与 Del 快捷键删除画线/指标；
+ * 4. 悬浮面板支持自由拖拽移动至任意角落。
  */
 @Composable
 fun BoxScope.VirtualMouseOverlay(
@@ -76,9 +83,6 @@ fun BoxScope.VirtualMouseOverlay(
 
     // 是否处于“按住鼠标左键”状态 (用于自由画线与按住平移)
     var isHoldingDown by remember { mutableStateOf(false) }
-
-    // 触控板滑动防抖与单击判定
-    var hasMovedOnTrackpad by remember { mutableStateOf(false) }
 
     // =========================================================================
     // 1. 全局悬浮光标指示器 (Visual Cursor Indicator)
@@ -256,7 +260,8 @@ fun BoxScope.VirtualMouseOverlay(
             }
 
             // =====================================================================
-            // 触控板核心滑动感应区 (宽度 244dp x 高度 244dp 绝对正方形 1:1)
+            // 触控板核心滑动感应区 (正方形 244dp x 244dp)
+            // 支持：1. 单指滑动移动光标；2. 轻点直接触发左键单击；3. 长按500ms触发右键菜单
             // =====================================================================
             Box(
                 modifier = Modifier
@@ -266,43 +271,73 @@ fun BoxScope.VirtualMouseOverlay(
                     .background(Color(0xFF060911))
                     .border(1.dp, Color(0xFF1E293B), RoundedCornerShape(8.dp))
                     .pointerInput(sensitivity, isHoldingDown, screenWidthPx, screenHeightPx) {
-                        detectDragGestures(
-                            onDragStart = {
-                                hasMovedOnTrackpad = false
-                            },
-                            onDrag = { change, dragAmount ->
-                                change.consume()
-                                val moveDist = dragAmount.getDistance()
-                                if (moveDist > 0.5f) {
-                                    hasMovedOnTrackpad = true
-                                    val nextX = (cursorPosition.x + dragAmount.x * sensitivity)
-                                        .coerceIn(0f, screenWidthPx)
-                                    val nextY = (cursorPosition.y + dragAmount.y * sensitivity)
-                                        .coerceIn(0f, screenHeightPx)
-                                    cursorPosition = Offset(nextX, nextY)
+                        coroutineScope {
+                            awaitEachGesture {
+                                val down = awaitFirstDown(requireUnconsumed = false)
+                                val downPos = down.position
+                                var isDrag = false
+                                var longPressTriggered = false
 
-                                    val (absX, absY) = getAbsScreenPos(cursorPosition)
-                                    if (isHoldingDown) {
-                                        // 按压拖拽：派发 ACTION_MOVE 移动图表或绘制连线
-                                        PersistentWebViewPool.dispatchVirtualMouseMove(absX, absY)
-                                    } else {
-                                        // 悬停滑动：派发 ACTION_HOVER_MOVE 驱动 TradingView 十字光标与 OHLC
-                                        PersistentWebViewPool.dispatchVirtualMouseHover(absX, absY)
+                                // 启动 500ms 长按判定协程 (静止长按直接触发右键)
+                                val longPressJob = launch {
+                                    delay(500L)
+                                    if (!isDrag) {
+                                        longPressTriggered = true
+                                        val (absX, absY) = getAbsScreenPos(cursorPosition)
+                                        PersistentWebViewPool.dispatchVirtualMouseClick(
+                                            absX,
+                                            absY,
+                                            isRightClick = true
+                                        )
                                     }
                                 }
-                            },
-                            onDragEnd = {
-                                if (!hasMovedOnTrackpad) {
-                                    // 轻点触控板直接触发单击
-                                    val (absX, absY) = getAbsScreenPos(cursorPosition)
-                                    PersistentWebViewPool.dispatchVirtualMouseClick(
-                                        absX,
-                                        absY,
-                                        isRightClick = false
-                                    )
+
+                                while (true) {
+                                    val event = awaitPointerEvent(PointerEventPass.Main)
+                                    val change = event.changes.firstOrNull { it.id == down.id } ?: break
+
+                                    if (!change.pressed) {
+                                        // 手指抬起 (UP)
+                                        longPressJob.cancel()
+                                        if (!isDrag && !longPressTriggered) {
+                                            // 处于微动阈值内且未触发长按 -> 判定为“单击 (左键)”！
+                                            val (absX, absY) = getAbsScreenPos(cursorPosition)
+                                            PersistentWebViewPool.dispatchVirtualMouseClick(
+                                                absX,
+                                                absY,
+                                                isRightClick = false
+                                            )
+                                        }
+                                        change.consume()
+                                        break
+                                    }
+
+                                    val dragDistance = (change.position - downPos).getDistance()
+                                    if (dragDistance > 8f || isDrag) {
+                                        if (!isDrag) {
+                                            isDrag = true
+                                            longPressJob.cancel()
+                                        }
+                                        val dragAmount = change.position - change.previousPosition
+                                        val nextX = (cursorPosition.x + dragAmount.x * sensitivity)
+                                            .coerceIn(0f, screenWidthPx)
+                                        val nextY = (cursorPosition.y + dragAmount.y * sensitivity)
+                                            .coerceIn(0f, screenHeightPx)
+                                        cursorPosition = Offset(nextX, nextY)
+
+                                        val (absX, absY) = getAbsScreenPos(cursorPosition)
+                                        if (isHoldingDown) {
+                                            // 按压拖拽：派发 ACTION_MOVE 移动图表或绘制连线
+                                            PersistentWebViewPool.dispatchVirtualMouseMove(absX, absY)
+                                        } else {
+                                            // 悬停滑动：派发 ACTION_HOVER_MOVE 驱动 TradingView 十字光标与 OHLC
+                                            PersistentWebViewPool.dispatchVirtualMouseHover(absX, absY)
+                                        }
+                                        change.consume()
+                                    }
                                 }
                             }
-                        )
+                        }
                     },
                 contentAlignment = Alignment.Center
             ) {
@@ -318,7 +353,7 @@ fun BoxScope.VirtualMouseOverlay(
                         modifier = Modifier.size(28.dp)
                     )
                     Text(
-                        text = "单指滑动移动光标 · 轻点左键点击",
+                        text = "单指滑动移动 · 轻点左键 · 长按右键",
                         color = Color(0xFF64748B),
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Medium
@@ -327,7 +362,7 @@ fun BoxScope.VirtualMouseOverlay(
             }
 
             // =====================================================================
-            // 动作控制按键行 (左键 · 右键 · 按住拖拽 · 滚轮放大 · 滚轮缩小 · 归中)
+            // 动作控制按键行 (左键 · 右键 · 按住画线 · 滚轮放大 · 滚轮缩小 · Del快捷键)
             // =====================================================================
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -461,28 +496,37 @@ fun BoxScope.VirtualMouseOverlay(
                     )
                 }
 
-                // 光标居中 (Center)
+                // 删除快捷键 (Del / Backspace - 删除当前选中的画线或指标)
                 Box(
                     modifier = Modifier
                         .size(34.dp)
                         .clip(RoundedCornerShape(6.dp))
-                        .background(Color(0xFF1E293B))
-                        .border(1.dp, Color(0xFF475569), RoundedCornerShape(6.dp))
+                        .background(Color(0xFF2E1015))
+                        .border(1.dp, Color(0xFFEF4444).copy(alpha = 0.6f), RoundedCornerShape(6.dp))
                         .clickable {
-                            val centerX = screenWidthPx / 2f
-                            val centerY = screenHeightPx / 2f
-                            cursorPosition = Offset(centerX, centerY)
                             val (absX, absY) = getAbsScreenPos(cursorPosition)
-                            PersistentWebViewPool.dispatchVirtualMouseHover(absX, absY)
+                            PersistentWebViewPool.dispatchVirtualDeleteKey(absX, absY)
                         },
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.FilterCenterFocus,
-                        contentDescription = "居中",
-                        tint = Color(0xFFF59E0B),
-                        modifier = Modifier.size(16.dp)
-                    )
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Delete,
+                            contentDescription = "Del 删除所选",
+                            tint = Color(0xFFF87171),
+                            modifier = Modifier.size(13.dp)
+                        )
+                        Text(
+                            text = "Del",
+                            color = Color(0xFFF87171),
+                            fontSize = 8.sp,
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
                 }
             }
         }

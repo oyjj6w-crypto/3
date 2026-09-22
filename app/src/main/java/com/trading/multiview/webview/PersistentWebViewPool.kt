@@ -1629,6 +1629,45 @@ object PersistentWebViewPool {
         return res
     }
 
+    /**
+     * 模拟键盘快捷键 Delete / Backspace，用于删除当前选中的 TradingView 画线或指标
+     */
+    fun dispatchVirtualDeleteKey(screenX: Float, screenY: Float): Boolean {
+        val target = findWebViewAtScreenPoint(screenX, screenY) ?: return false
+        val wv = target.second
+
+        // 1. DOM 级派发 Delete 与 Backspace 键盘事件
+        val js = """
+            (function() {
+                try {
+                    var targetEl = document.activeElement || document.body;
+                    var delOpts = { key: 'Delete', code: 'Delete', keyCode: 46, which: 46, bubbles: true, cancelable: true, view: window };
+                    targetEl.dispatchEvent(new KeyboardEvent('keydown', delOpts));
+                    targetEl.dispatchEvent(new KeyboardEvent('keyup', delOpts));
+                    
+                    var bsOpts = { key: 'Backspace', code: 'Backspace', keyCode: 8, which: 8, bubbles: true, cancelable: true, view: window };
+                    targetEl.dispatchEvent(new KeyboardEvent('keydown', bsOpts));
+                    targetEl.dispatchEvent(new KeyboardEvent('keyup', bsOpts));
+                } catch(e) {}
+            })();
+        """.trimIndent()
+        wv.post { wv.evaluateJavascript(js, null) }
+
+        // 2. 原生 WebView 派发按键事件
+        val now = SystemClock.uptimeMillis()
+        val delDown = KeyEvent(now, now, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_FORWARD_DEL, 0)
+        val delUp = KeyEvent(now, now, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_FORWARD_DEL, 0)
+        wv.dispatchKeyEvent(delDown)
+        wv.dispatchKeyEvent(delUp)
+
+        val bsDown = KeyEvent(now, now, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DEL, 0)
+        val bsUp = KeyEvent(now, now, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DEL, 0)
+        wv.dispatchKeyEvent(bsDown)
+        wv.dispatchKeyEvent(bsUp)
+
+        return true
+    }
+
     fun destroyAll() {
         webViewMap.forEach { (_, webView) ->
             (webView.parent as? ViewGroup)?.removeView(webView)

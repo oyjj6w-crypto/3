@@ -94,7 +94,9 @@ fun TradingMultiViewScreen(
     var showGlobalZoomDialog by remember { mutableStateOf(false) }
     var showReorderDialog by remember { mutableStateOf(false) }
     var showLatestKlineDialog by remember { mutableStateOf(false) }
-    var floatingButtonOffset by remember { mutableStateOf(Offset(0f, 0f)) }
+    var latestKlineFloatingButtonOffsetY by remember { mutableStateOf(0f) }
+    var mouseFloatingButtonOffsetY by remember { mutableStateOf(-56f) }
+    var timeframeFloatingButtonOffsetY by remember { mutableStateOf(56f) }
 
     // 初始化时加载本地存储的自定义分组
     LaunchedEffect(Unit) {
@@ -269,31 +271,6 @@ fun TradingMultiViewScreen(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    // T. 周期选择 (T字按钮)
-                    Box(
-                        modifier = Modifier
-                            .size(30.dp)
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(
-                                if (showTimeframeDialog) Color(0xFF0284C7)
-                                else Color(0xFF1E293B)
-                            )
-                            .border(
-                                width = 1.dp,
-                                color = if (showTimeframeDialog) Color(0xFF38BDF8) else Color(0xFF334155),
-                                shape = RoundedCornerShape(6.dp)
-                            )
-                            .clickable { showTimeframeDialog = true },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = "T",
-                            color = if (showTimeframeDialog) Color.White else Color(0xFF38BDF8),
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-
                     // 1. 隐藏/恢复画线 (Ctrl+Alt+H)：单击直接执行(0ms延迟)，长按弹出选择窗口
                     Box(
                         modifier = Modifier
@@ -406,31 +383,6 @@ fun TradingMultiViewScreen(
                             imageVector = Icons.Default.Computer,
                             contentDescription = "全局缩放与桌面基准像素",
                             tint = if (showGlobalZoomDialog) Color.White else Color(0xFF38BDF8),
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
-
-                    // 5. 原生虚拟鼠标/触控板开关按钮 (单击切换光标触控板浮层开启/关闭)
-                    Box(
-                        modifier = Modifier
-                            .size(30.dp)
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(
-                                if (uiState.isTrackpadEnabled) Color(0xFF6366F1)
-                                else Color(0xFF1E293B)
-                            )
-                            .border(
-                                width = 1.dp,
-                                color = if (uiState.isTrackpadEnabled) Color(0xFFA5B4FC) else Color(0xFF334155),
-                                shape = RoundedCornerShape(6.dp)
-                            )
-                            .clickable { viewModel.toggleTrackpad() },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Mouse,
-                            contentDescription = "虚拟触控板/光标",
-                            tint = if (uiState.isTrackpadEnabled) Color.White else Color(0xFFCBD5E1),
                             modifier = Modifier.size(16.dp)
                         )
                     }
@@ -689,23 +641,28 @@ fun TradingMultiViewScreen(
         }
     }
 
-        // 5. 屏幕右侧浮动快捷移至最新K线按钮 (Alt+Shift+Right Arrow)，支持自由拖动
+        // 半圆外形定义 (半径 22dp 与回到最新K线按钮一致，向左弧形凸出，平贴固定在屏幕最右侧)
+        val rightEdgeSemiCircleShape = RoundedCornerShape(
+            topStart = 22.dp,
+            bottomStart = 22.dp,
+            topEnd = 0.dp,
+            bottomEnd = 0.dp
+        )
+
+        // 5. 屏幕最右侧蓝色半圆浮动按钮：快捷移至最新K线 (只能上下移动，不能左右移动，用蓝色)
         Box(
             modifier = Modifier
-                .offset { IntOffset(floatingButtonOffset.x.toInt(), floatingButtonOffset.y.toInt()) }
+                .offset { IntOffset(0, latestKlineFloatingButtonOffsetY.toInt()) }
                 .align(Alignment.CenterEnd)
-                .padding(end = 12.dp)
-                .size(44.dp)
-                .clip(CircleShape)
-                .background(Color(0xFF0284C7).copy(alpha = 0.85f))
-                .border(1.5.dp, Color.White, CircleShape)
+                .size(width = 24.dp, height = 44.dp)
+                .shadow(elevation = 6.dp, shape = rightEdgeSemiCircleShape)
+                .clip(rightEdgeSemiCircleShape)
+                .background(Color(0xFF0284C7)) // 蓝色
+                .border(1.dp, Color(0xFF38BDF8), rightEdgeSemiCircleShape)
                 .pointerInput(Unit) {
                     detectDragGestures { change, dragAmount ->
                         change.consume()
-                        floatingButtonOffset = Offset(
-                            x = floatingButtonOffset.x + dragAmount.x,
-                            y = floatingButtonOffset.y + dragAmount.y
-                        )
+                        latestKlineFloatingButtonOffsetY += dragAmount.y
                     }
                 }
                 .combinedClickable(
@@ -722,11 +679,74 @@ fun TradingMultiViewScreen(
                 imageVector = Icons.Default.FastForward,
                 contentDescription = "移至最新K线",
                 tint = Color.White,
-                modifier = Modifier.size(20.dp)
+                modifier = Modifier
+                    .padding(start = 2.dp)
+                    .size(17.dp)
             )
         }
 
-        // 6. 原生虚拟鼠标与触控板浮层
+        // 6. 屏幕最右侧绿色半圆浮动按钮：鼠标触控板开关 (只能上下移动，不能左右移动)
+        Box(
+            modifier = Modifier
+                .offset { IntOffset(0, mouseFloatingButtonOffsetY.toInt()) }
+                .align(Alignment.CenterEnd)
+                .size(width = 24.dp, height = 44.dp)
+                .shadow(elevation = 6.dp, shape = rightEdgeSemiCircleShape)
+                .clip(rightEdgeSemiCircleShape)
+                .background(Color(0xFF10B981)) // 绿色
+                .border(1.dp, Color(0xFF34D399), rightEdgeSemiCircleShape)
+                .pointerInput(Unit) {
+                    detectDragGestures { change, dragAmount ->
+                        change.consume()
+                        mouseFloatingButtonOffsetY += dragAmount.y
+                    }
+                }
+                .clickable {
+                    viewModel.toggleTrackpad()
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = Icons.Default.Mouse,
+                contentDescription = "虚拟触控板/光标",
+                tint = Color.White,
+                modifier = Modifier
+                    .padding(start = 2.dp)
+                    .size(15.dp)
+            )
+        }
+
+        // 7. 屏幕最右侧白色半圆浮动按钮：K线周期切换 (只能上下移动，不能左右移动)
+        Box(
+            modifier = Modifier
+                .offset { IntOffset(0, timeframeFloatingButtonOffsetY.toInt()) }
+                .align(Alignment.CenterEnd)
+                .size(width = 24.dp, height = 44.dp)
+                .shadow(elevation = 6.dp, shape = rightEdgeSemiCircleShape)
+                .clip(rightEdgeSemiCircleShape)
+                .background(Color.White) // 白色
+                .border(1.dp, Color(0xFFCBD5E1), rightEdgeSemiCircleShape)
+                .pointerInput(Unit) {
+                    detectDragGestures { change, dragAmount ->
+                        change.consume()
+                        timeframeFloatingButtonOffsetY += dragAmount.y
+                    }
+                }
+                .clickable {
+                    showTimeframeDialog = true
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = "T",
+                color = Color(0xFF0F172A),
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Black,
+                modifier = Modifier.padding(start = 2.dp)
+            )
+        }
+
+        // 8. 原生虚拟鼠标与触控板浮层
         VirtualMouseOverlay(
             isEnabled = uiState.isTrackpadEnabled,
             onClose = { viewModel.toggleTrackpad() }
