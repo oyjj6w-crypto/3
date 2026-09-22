@@ -522,18 +522,10 @@ object PersistentWebViewPool {
 
     /**
      * 动态感知并更新 16 实例的前台/后台生命周期状态
-     * 保证只有当前活跃组的 4 个窗口为活跃状态，其余 12 个后台组窗口
-     * 自动在 JS 侧被标记为 window.__is_tv_inactive = true，从而完美触发 10s 心跳节流！
+     * 原生 WebSocket 无需人为干预，保持长连接自然活跃与原生极速吞吐
      */
     fun updateWebviewLifecycleStates() {
-        val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
-        mainHandler.post {
-            webViewMap.forEach { (key, webView) ->
-                val isCurrentGroup = key.startsWith("${currentGroupId}_")
-                val inactiveStateScript = "window.__is_tv_inactive = ${!isCurrentGroup};"
-                webView.evaluateJavascript(inactiveStateScript, null)
-            }
-        }
+        // 原生 WebSocket 与 Blink 内核自然调度，无需 JS 状态干预
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -625,10 +617,9 @@ object PersistentWebViewPool {
 
                 override fun onPageFinished(view: WebView?, url: String?) {
                     super.onPageFinished(view, url)
-                    // 页面渲染完成后再次加固注入，确保 TradingView 异步初始化后依然保持桌面宽屏自适应与纯净优化
+                    // 页面渲染完成后再次加固注入，确保桌面宽屏自适应
                     view?.let {
                         injectDesktopViewport(it, force = true)
-                        injectTradingViewOptimizer(it, url)
                     }
                     if (url != null && url != lastReportedUrl) {
                         lastReportedUrl = url
@@ -1206,90 +1197,11 @@ object PersistentWebViewPool {
      * 2. 精准剥离非图表 DOM 节点 (自选股流、新闻热点、社交横幅、底部筛选器)，减负 60% 内存与重排
      * 3. 严格保护：K 线画布、均线/MACD/RSI 指标运算、左侧画图工具栏、底部浮动快捷栏
      */
+    /**
+     * TradingView DOM 优化 (根据用户需求，彻底还原原生 DOM，不再进行任何 DOM 树或样式拦截注入)
+     */
     fun injectTradingViewOptimizer(webView: WebView, url: String?) {
-        if (url == null || (!url.contains("tradingview.com") && !url.contains("s.tradingview.com"))) return
-        val isCurrentGroup = webViewMap.entries.find { it.value == webView }?.key?.startsWith("${currentGroupId}_") ?: true
-        val optimizerScript = """
-            (function() {
-                if (window.__tv_native_optimizer_injected) return;
-                window.__tv_native_optimizer_injected = true;
-                window.__is_tv_inactive = ${!isCurrentGroup};
-                
-                // 1. 动态注入 WebSocket 心跳保活对齐逻辑 (基于 10s 墙上时间纪元对齐，强制后台 12 窗口合并爆发，CPU 获 99% 深度深睡)
-                try {
-                    var OriginalWS = window.WebSocket;
-                    if (OriginalWS) {
-                        window.WebSocket = function(url, protocols) {
-                            var ws = new OriginalWS(url, protocols);
-                            var originalSend = ws.send;
-                            ws.send = function(data) {
-                                var isHeartbeat = false;
-                                if (typeof data === 'string') {
-                                    var lower = data.toLowerCase();
-                                    if (
-                                        lower.includes('ping') || 
-                                        lower.includes('heartbeat') || 
-                                        lower.includes('~h~') || 
-                                        data === '2' || 
-                                        data === '3'
-                                    ) {
-                                        isHeartbeat = true;
-                                    }
-                                }
-                                var isInactive = window.__is_tv_inactive === true;
-                                if (isHeartbeat && isInactive) {
-                                    // 10s 墙上时间全局对齐
-                                    var epoch = Math.floor(Date.now() / 10000);
-                                    if (ws.__last_sent_epoch !== epoch) {
-                                        ws.__last_sent_epoch = epoch;
-                                        return originalSend.apply(this, arguments);
-                                    } else {
-                                        return; // 同一 10 秒时间窗的多余心跳全部抑制，实现毫秒级物理同步对齐
-                                    }
-                                }
-                                return originalSend.apply(this, arguments);
-                            };
-                            try {
-                                if (OriginalWS.prototype) {
-                                    ws.prototype = OriginalWS.prototype;
-                                }
-                            } catch(pe) {}
-                            return ws;
-                        };
-                    }
-                } catch(wse) {
-                    console.error('WS optimizer inject failed:', wse);
-                }
-
-                try {
-                    var style = document.createElement('style');
-                    style.id = 'tv-native-multiwindow-optimizer';
-                    style.innerHTML = `
-                        /* 1. 仅移除右侧自选股、社会化新闻面板以及各类广告弹窗，100% 保持 K 线、底部栏、画图栏原生完整性 */
-                        div[class*="widgetbar-pages"],
-                        div[data-name="news-widget"],
-                        div[data-name="details-widget"],
-                        div[class*="social-panel"],
-                        div[class*="toast-container"],
-                        div[class*="tv-dialog__floating-wrapper--promo"],
-                        div[class*="banner-promo"],
-                        div[class*="tv-floating-tooltip--promo"] {
-                            display: none !important;
-                            visibility: hidden !important;
-                            pointer-events: none !important;
-                        }
-                        .chart-container,
-                        .layout__area--center,
-                        div[data-role="chart"] {
-                            width: 100% !important;
-                            height: 100% !important;
-                        }
-                    `;
-                    (document.head || document.documentElement).appendChild(style);
-                } catch(e) {}
-            })();
-        """.trimIndent()
-        webView.evaluateJavascript(optimizerScript, null)
+        // 用户已要求还原原生 DOM，保持页面原生完整性
     }
 
     /**
