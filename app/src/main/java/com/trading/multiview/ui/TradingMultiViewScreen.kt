@@ -144,7 +144,7 @@ fun TradingMultiViewScreen(
                                     RoundedCornerShape(6.dp)
                                 )
                                 .combinedClickable(
-                                    onClick = { viewModel.switchGroup(group.id) },
+                                    onClick = { viewModel.switchGroup(group.id, context) },
                                     onLongClick = {
                                         targetGroupForConfig = group
                                         showGroupConfigDialog = true
@@ -224,7 +224,7 @@ fun TradingMultiViewScreen(
                                     .size(24.dp)
                                     .clip(RoundedCornerShape(4.dp))
                                     .clickable {
-                                        if (isHidden) viewModel.restoreWindow(win.id)
+                                        if (isHidden) viewModel.restoreWindow(win.id, context)
                                         viewModel.toggleMaximize(win.id)
                                     },
                                 contentAlignment = Alignment.Center
@@ -244,9 +244,9 @@ fun TradingMultiViewScreen(
                                     .clip(RoundedCornerShape(4.dp))
                                     .clickable {
                                         if (isHidden) {
-                                            viewModel.restoreWindow(win.id)
+                                            viewModel.restoreWindow(win.id, context)
                                         } else {
-                                            viewModel.hideWindow(win.id)
+                                            viewModel.hideWindow(win.id, context)
                                         }
                                     },
                                 contentAlignment = Alignment.Center
@@ -410,31 +410,7 @@ fun TradingMultiViewScreen(
                         )
                     }
 
-                    // 5. 网页缩放锁定：锁定后禁止一切触摸或Pinch缩放
-                    val isLocked = uiState.isZoomLocked
-                    Box(
-                        modifier = Modifier
-                            .size(30.dp)
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(
-                                if (isLocked) Color(0xFFEF4444).copy(alpha = 0.2f)
-                                else Color(0xFF1E293B)
-                            )
-                            .border(
-                                width = 1.dp,
-                                color = if (isLocked) Color(0xFFEF4444) else Color(0xFF334155),
-                                shape = RoundedCornerShape(6.dp)
-                            )
-                            .clickable { viewModel.toggleZoomLock(context) },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = if (isLocked) Icons.Default.Lock else Icons.Default.LockOpen,
-                            contentDescription = "网页整版缩放锁定",
-                            tint = if (isLocked) Color(0xFFEF4444) else Color(0xFF38BDF8),
-                            modifier = Modifier.size(15.dp)
-                        )
-                    }
+
                 }
 
                 Spacer(modifier = Modifier.width(6.dp))
@@ -662,10 +638,6 @@ fun TradingMultiViewScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
-                .border(
-                    width = if (uiState.isZoomLocked) 2.dp else 0.dp,
-                    color = if (uiState.isZoomLocked) Color(0xFFEF4444) else Color.Transparent
-                )
         ) {
             Row(
                 modifier = Modifier.fillMaxSize(),
@@ -686,43 +658,6 @@ fun TradingMultiViewScreen(
                                 groupId = uiState.activeGroupId,
                                 windowId = window.id,
                                 zoomPercent = window.zoomPercent
-                            )
-                        }
-                    }
-                }
-            }
-
-            // 当开启网页整版缩放锁定时，覆盖一层手势拦截板，防止意外缩放/触控，并给用户以全局点击解锁的触控体验
-            if (uiState.isZoomLocked) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(Color.Black.copy(alpha = 0.25f))
-                        .clickable { viewModel.toggleZoomLock(context) },
-                    contentAlignment = Alignment.TopCenter
-                ) {
-                    Card(
-                        colors = CardDefaults.cardColors(containerColor = Color(0xFFEF4444)),
-                        shape = RoundedCornerShape(bottomStart = 8.dp, bottomEnd = 8.dp),
-                        elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
-                        modifier = Modifier.padding(horizontal = 16.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Lock,
-                                contentDescription = null,
-                                tint = Color.White,
-                                modifier = Modifier.size(14.dp)
-                            )
-                            Text(
-                                text = "网页整版缩放锁定中 (屏幕已锁定，点击任意位置还原并解锁)",
-                                color = Color.White,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold
                             )
                         }
                     }
@@ -888,56 +823,6 @@ fun TradingMultiViewScreen(
                         fontSize = 15.sp,
                         fontWeight = FontWeight.Bold
                     )
-
-                    // 1. 自动触发等待秒数配置
-                    Column(
-                        verticalArrangement = Arrangement.spacedBy(4.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(Color(0xFF1E293B).copy(alpha = 0.5f), RoundedCornerShape(6.dp))
-                            .padding(10.dp)
-                    ) {
-                        Text(
-                            text = "切换标签页时自动触发一次隐藏画图",
-                            color = Color(0xFF94A3B8),
-                            fontSize = 11.sp
-                        )
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text(text = "等待时间:", color = Color.White, fontSize = 12.sp)
-                            var delayInput by remember { mutableStateOf(uiState.autoHideDelaySeconds.toString()) }
-                            BasicTextField(
-                                value = delayInput,
-                                onValueChange = { delayInput = it },
-                                modifier = Modifier
-                                    .width(50.dp)
-                                    .height(24.dp)
-                                    .background(Color(0xFF0F172A), RoundedCornerShape(4.dp))
-                                    .border(1.dp, Color(0xFF475569), RoundedCornerShape(4.dp))
-                                    .padding(horizontal = 4.dp, vertical = 2.dp),
-                                textStyle = TextStyle(color = Color.White, fontSize = 12.sp, fontFamily = FontFamily.Monospace),
-                                singleLine = true,
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
-                            )
-                            Text(text = "秒", color = Color.White, fontSize = 12.sp)
-                            
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(4.dp))
-                                    .background(Color(0xFF0284C7))
-                                    .clickable {
-                                        val sec = delayInput.toFloatOrNull() ?: 2.0f
-                                        viewModel.setAutoHideDelaySeconds(sec, context)
-                                    }
-                                    .padding(horizontal = 8.dp, vertical = 4.dp)
-                            ) {
-                                Text(text = "保存", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                            }
-                        }
-                    }
 
                     // 2. 分组顺序调整
                     LazyColumn(

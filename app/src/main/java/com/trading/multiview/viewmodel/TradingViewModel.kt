@@ -123,9 +123,7 @@ data class MultiViewUiState(
     val globalZoomPercent: Int = 100,
     val isGlobalUrlCollapsed: Boolean = true,
     val fixedPixelWidth: Int = 1280, // 固定像素桌面视口基准 (默认 1280px 标准 PC)
-    val isMagnetActive: Boolean = false, // 磁力吸附切换状态
-    val isZoomLocked: Boolean = false, // 网页整版缩放锁定状态
-    val autoHideDelaySeconds: Float = 2.0f // 切换标签页后自动触发隐藏画线等待延迟 (秒)
+    val isMagnetActive: Boolean = false // 磁力吸附切换状态
 ) {
     // 当前标签页集合对象
     val currentGroup: TabGroup?
@@ -203,7 +201,7 @@ class TradingViewModel : ViewModel() {
      * 关键优化：在切换离开当前标签集合前，先自动同步记忆当前 3 个窗口中用户修改过的实时网址；
      * 确保后续切换回来时，展示的是用户在原标签页输入的网址，绝不回滚到默认网址！
      */
-    fun switchGroup(groupId: String) {
+    fun switchGroup(groupId: String, context: Context? = null) {
         val currentActiveId = _uiState.value.activeGroupId
         if (groupId == currentActiveId) return
 
@@ -233,6 +231,9 @@ class TradingViewModel : ViewModel() {
         val targetGroup = updatedGroups.find { it.id == groupId } ?: return
         val targetWindowCount = targetGroup.windowCount
 
+        // 方案 A: 从 SharedPreferences 中读取该标签页每个窗口之前是否被用户隐藏
+        val prefs = context?.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
         _uiState.update { state ->
             val updatedWindows = state.windows.mapIndexed { index, win ->
                 val windowId = index + 1
@@ -242,11 +243,15 @@ class TradingViewModel : ViewModel() {
                 val savedUrl = PersistentWebViewPool.getSavedWindowUrlForGroup(null, groupId, windowId)
                 val targetUrl = if (!savedUrl.isNullOrBlank()) savedUrl else targetItem.url
 
+                val isHiddenKey = "group_${groupId}_window_${windowId}_hidden"
+                val isHidden = prefs?.getBoolean(isHiddenKey, false) ?: false
+
                 // 核心性能突破：【绝不重新加载网页】，全 16 实例在后台持续保活连接，实现 0ms 闪切！
                 win.copy(
                     title = PersistentWebViewPool.getSavedWindowTitleForGroup(null, groupId, windowId) ?: targetItem.title,
                     symbol = targetItem.symbol,
-                    currentUrl = targetUrl
+                    currentUrl = targetUrl,
+                    isHidden = isHidden
                 )
             }
             state.copy(
@@ -256,22 +261,18 @@ class TradingViewModel : ViewModel() {
             )
         }
 
-        // 激活 4 视窗的显示状态
-        PersistentWebViewPool.setWindowActive(4, targetWindowCount >= 4)
+        // 激活 4 视窗的显示状态：不仅受 4 窗口配置限制，也受 isHidden 限制
+        (1..4).forEach { winId ->
+            val isHiddenKey = "group_${groupId}_window_${winId}_hidden"
+            val isHidden = prefs?.getBoolean(isHiddenKey, false) ?: false
+            val active = if (winId > targetWindowCount) false else !isHidden
+            PersistentWebViewPool.setWindowActive(winId, active)
+        }
 
         // 重新请求并触发当前活跃的所有窗口进行 resize 适配物理尺寸，消除拉合卡顿
         (1..targetWindowCount).forEach { winId ->
             PersistentWebViewPool.triggerImmediateResize(winId)
         }
-
-        // 每次切换标签页后，默认延迟一段时间后，自动对所有活动窗口执行一次隐藏画线，以免被大量画线遮挡视野
-        autoHideRunnable?.let { handler.removeCallbacks(it) }
-        val seconds = _uiState.value.autoHideDelaySeconds
-        val runnable = Runnable {
-            triggerHideDrawings(delayMs = 0L)
-        }
-        autoHideRunnable = runnable
-        handler.postDelayed(runnable, (seconds * 1000).toLong())
 
         // 持久化活跃分组与最新分组数据
         persistAllGroupsToPrefs(updatedGroups, activeGroupId = groupId)
@@ -401,6 +402,10 @@ class TradingViewModel : ViewModel() {
                 val targetTitle = savedTitle ?: groupItem?.title ?: win.title
                 val targetSymbol = groupItem?.symbol ?: win.symbol
 
+                // 方案 A: 读取该标签页下该视窗之前被用户保存的隐藏状态
+                val isHiddenKey = "group_${validActiveGroupId}_window_${win.id}_hidden"
+                val isHidden = prefs.getBoolean(isHiddenKey, false)
+
                 // 确保已挂载的底层常驻 WebView 加载目标真实网址
                 val webView = PersistentWebViewPool.getWebView(win.id)
                 if (webView != null) {
@@ -410,10 +415,16 @@ class TradingViewModel : ViewModel() {
                     }
                 }
 
+                // 激活/反激活常驻 WebView 的心跳/网络连接
+                val targetWindowCount = targetGroup?.windowCount ?: 3
+                val active = if (win.id > targetWindowCount) false else !isHidden
+                PersistentWebViewPool.setWindowActive(win.id, active)
+
                 win.copy(
                     currentUrl = targetUrl,
                     title = targetTitle,
-                    symbol = targetSymbol
+                    symbol = targetSymbol,
+                    isHidden = isHidden
                 )
             }
 
@@ -421,19 +432,12 @@ class TradingViewModel : ViewModel() {
             val savedPixelWidth = prefs.getInt(KEY_FIXED_PIXEL_WIDTH, 1280)
             PersistentWebViewPool.setFixedPixelWidth(savedPixelWidth)
 
-            // 读取并恢复整版缩放锁定及自动隐藏画线延迟
-            val savedAutoHideDelay = prefs.getFloat("auto_hide_delay_seconds", 2.0f)
-            val savedZoomLocked = prefs.getBoolean("is_zoom_locked", false)
-            PersistentWebViewPool.setZoomLock(savedZoomLocked)
-
             _uiState.update { state ->
                 state.copy(
                     groups = loadedGroups,
                     windows = currentWindows,
                     activeGroupId = validActiveGroupId,
-                    fixedPixelWidth = savedPixelWidth,
-                    autoHideDelaySeconds = savedAutoHideDelay,
-                    isZoomLocked = savedZoomLocked
+                    fixedPixelWidth = savedPixelWidth
                 )
             }
         } catch (e: Exception) {
@@ -771,13 +775,19 @@ class TradingViewModel : ViewModel() {
      * 隐藏窗口：剩余可见窗口自动等比拉伸
      * 关键性能优化：保留常驻 WebView 实例不挂起，立即触发 Chromium 与 TradingView 极速重排，杜绝 4-5 秒延迟
      */
-    fun hideWindow(windowId: Int) {
+    fun hideWindow(windowId: Int, context: Context? = null) {
         _uiState.update { state ->
             val visibleCount = state.visibleWindows.size
             if (visibleCount <= 1) return@update state // 至少保留一个窗口可见
 
             PersistentWebViewPool.setWindowActive(windowId, false)
             val newMaximizedId = if (state.maximizedWindowId == windowId) null else state.maximizedWindowId
+
+            // 持久化当前标签组中该窗口的隐藏状态为 true
+            context?.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                ?.edit()
+                ?.putBoolean("group_${state.activeGroupId}_window_${windowId}_hidden", true)
+                ?.apply()
 
             state.copy(
                 maximizedWindowId = newMaximizedId,
@@ -794,9 +804,15 @@ class TradingViewModel : ViewModel() {
     /**
      * 恢复隐藏的窗口：瞬间亮屏与极速对齐重排
      */
-    fun restoreWindow(windowId: Int) {
+    fun restoreWindow(windowId: Int, context: Context? = null) {
         PersistentWebViewPool.setWindowActive(windowId, true)
         _uiState.update { state ->
+            // 持久化当前标签组中该窗口的隐藏状态为 false
+            context?.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                ?.edit()
+                ?.putBoolean("group_${state.activeGroupId}_window_${windowId}_hidden", false)
+                ?.apply()
+
             state.copy(
                 windows = state.windows.map { win ->
                     if (win.id == windowId) win.copy(isHidden = false) else win
@@ -810,8 +826,18 @@ class TradingViewModel : ViewModel() {
     /**
      * 一键恢复全部窗口
      */
-    fun restoreAll() {
+    fun restoreAll(context: Context? = null) {
         val count = _uiState.value.currentWindowCount
+        val activeGroupId = _uiState.value.activeGroupId
+
+        context?.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)?.let { prefs ->
+            val editor = prefs.edit()
+            (1..count).forEach { winId ->
+                editor.putBoolean("group_${activeGroupId}_window_${winId}_hidden", false)
+            }
+            editor.apply()
+        }
+
         (1..count).forEach { PersistentWebViewPool.setWindowActive(it, true) }
         _uiState.update { state ->
             state.copy(
@@ -1128,47 +1154,7 @@ class TradingViewModel : ViewModel() {
         }
     }
 
-    /**
-     * 网页整版缩放锁定切换
-     */
-    fun toggleZoomLock(context: Context? = null) {
-        val nextState = !_uiState.value.isZoomLocked
-        PersistentWebViewPool.setZoomLock(nextState)
-        _uiState.update { it.copy(isZoomLocked = nextState) }
-        
-        val ctx = context ?: PersistentWebViewPool.appContext
-        if (ctx != null) {
-            try {
-                ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                    .edit()
-                    .putBoolean("is_zoom_locked", nextState)
-                    .apply()
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-            val text = if (nextState) "网页整版缩放已锁定（屏幕已锁定，点击上方锁按钮或红色外框还原解锁）" else "网页整版缩放已解锁"
-            android.widget.Toast.makeText(ctx, text, android.widget.Toast.LENGTH_SHORT).show()
-        }
-    }
 
-    /**
-     * 设置切换标签页后自动触发隐藏画线延迟 (秒) 并持久化
-     */
-    fun setAutoHideDelaySeconds(seconds: Float, context: Context? = null) {
-        val clamped = seconds.coerceIn(0.5f, 10.0f)
-        _uiState.update { it.copy(autoHideDelaySeconds = clamped) }
-        val ctx = context ?: PersistentWebViewPool.appContext
-        if (ctx != null) {
-            try {
-                ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                    .edit()
-                    .putFloat("auto_hide_delay_seconds", clamped)
-                    .apply()
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-        }
-    }
 
     /**
      * 调整标签页的前后顺序并持久化
