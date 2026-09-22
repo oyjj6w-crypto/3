@@ -1352,28 +1352,7 @@ object PersistentWebViewPool {
             (function() {
                 if (window.__tv_native_optimizer_injected) return;
                 window.__tv_native_optimizer_injected = true;
-                
-                var originalRAF = window.requestAnimationFrame;
-                var _inactive = \${!isCurrentGroup};
-                var inactiveCallbacks = [];
-                
-                Object.defineProperty(window, '__is_tv_inactive', {
-                    get: function() { return _inactive; },
-                    set: function(val) {
-                        var old = _inactive;
-                        _inactive = val;
-                        if (old === true && val === false) {
-                            // 从后台冰封瞬间被激活：立即取出暂存的最优重绘，0ms 瞬间还原 120Hz/144Hz 画布渲染
-                            var cbs = inactiveCallbacks.slice();
-                            inactiveCallbacks = [];
-                            cbs.forEach(function(cb) {
-                                try {
-                                    originalRAF.call(window, cb);
-                                } catch(re) {}
-                            });
-                        }
-                    }
-                });
+                window.__is_tv_inactive = \${!isCurrentGroup};
                 
                 // 1. 动态注入 WebSocket 心跳保活对齐逻辑 (基于 10s 墙上时间纪元对齐，强制后台 12 窗口合并爆发，CPU 获 99% 深度深睡)
                 try {
@@ -1447,60 +1426,6 @@ object PersistentWebViewPool {
                     \`;
                     (document.head || document.documentElement).appendChild(style);
                 } catch(e) {}
- 
-                /**
-                 * 核心优化：1Hz 交互感知智能节流 (1Hz Render Throttling with Touch Boost)
-                 * 平板 16 视窗看盘时，静态观看只需 1 秒刷新一次 (1Hz)；
-                 * 用户触控（拖拽、缩放、绘制趋势线）时，瞬间解除节流跑满 60Hz/120Hz！
-                 * 后台窗口 (isInactive = true) 彻底进入 0Hz 静止，完全不产生绘制
-                 */
-                var lastInteractionTime = Date.now();
-                var isInteracting = false;
-                var INTERACTION_TIMEOUT = 1200; // 交互结束后 1.2 秒恢复 1Hz 省电模式
-
-                function markInteraction() {
-                    lastInteractionTime = Date.now();
-                    isInteracting = true;
-                }
-
-                ['touchstart', 'touchmove', 'touchend', 'mousedown', 'mousemove', 'wheel', 'pointerdown'].forEach(function(evt) {
-                    window.addEventListener(evt, markInteraction, { passive: true, capture: true });
-                });
-
-                var lastRenderTime = 0;
-                var MIN_RENDER_INTERVAL_MS = 1000; // 静止时 1000ms (1Hz) 渲染一次
-
-                window.requestAnimationFrame = function(callback) {
-                    var now = performance.now();
-                    var isInactive = window.__is_tv_inactive === true;
-
-                    // 【后台 0Hz 绝对冰封】：不执行任何 requestAnimationFrame 回调，将重绘频率和 GPU 占用拉低到绝对零度
-                    if (isInactive) {
-                        inactiveCallbacks = [callback]; // 仅暂存最新的一帧重绘闭包，以防内存溢出且便于激活时瞬显
-                        return;
-                    }
-
-                    var timeSinceInteraction = Date.now() - lastInteractionTime;
-                    
-                    // 如果处于用户交互期 (缩放/画图/拖拽)，完全使用原生 60Hz/120Hz 无延迟回调
-                    if (timeSinceInteraction < INTERACTION_TIMEOUT) {
-                        isInteracting = true;
-                        return originalRAF.call(window, callback);
-                    }
-
-                    isInteracting = false;
-
-                    // 静止状态下：节流为 1Hz，避免 GPU 空转
-                    if (now - lastRenderTime >= MIN_RENDER_INTERVAL_MS) {
-                        lastRenderTime = now;
-                        return originalRAF.call(window, callback);
-                    } else {
-                        // 在下一个整秒窗口触发
-                        return setTimeout(function() {
-                            originalRAF.call(window, callback);
-                        }, Math.max(0, MIN_RENDER_INTERVAL_MS - (now - lastRenderTime)));
-                    }
-                };
             })();
         """.trimIndent()
         webView.evaluateJavascript(optimizerScript, null)
@@ -1654,9 +1579,7 @@ data class MultiViewUiState(
     val globalZoomPercent: Int = 100,
     val isGlobalUrlCollapsed: Boolean = true,
     val fixedPixelWidth: Int = 1280, // 固定像素桌面视口基准 (默认 1280px 标准 PC)
-    val isMagnetActive: Boolean = false, // 磁力吸附切换状态
-    val isZoomLocked: Boolean = false, // 网页整版缩放锁定状态
-    val autoHideDelaySeconds: Float = 2.0f // 切换标签页后自动触发隐藏画线等待延迟 (秒)
+    val isMagnetActive: Boolean = false // 磁力吸附切换状态
 ) {
     // 当前标签页集合对象
     val currentGroup: TabGroup?
@@ -1734,7 +1657,7 @@ class TradingViewModel : ViewModel() {
      * 关键优化：在切换离开当前标签集合前，先自动同步记忆当前 3 个窗口中用户修改过的实时网址；
      * 确保后续切换回来时，展示的是用户在原标签页输入的网址，绝不回滚到默认网址！
      */
-    fun switchGroup(groupId: String) {
+    fun switchGroup(groupId: String, context: Context? = null) {
         val currentActiveId = _uiState.value.activeGroupId
         if (groupId == currentActiveId) return
 
@@ -1764,6 +1687,9 @@ class TradingViewModel : ViewModel() {
         val targetGroup = updatedGroups.find { it.id == groupId } ?: return
         val targetWindowCount = targetGroup.windowCount
 
+        // 方案 A: 从 SharedPreferences 中读取该标签页每个窗口之前是否被用户隐藏
+        val prefs = context?.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
         _uiState.update { state ->
             val updatedWindows = state.windows.mapIndexed { index, win ->
                 val windowId = index + 1
@@ -1773,11 +1699,15 @@ class TradingViewModel : ViewModel() {
                 val savedUrl = PersistentWebViewPool.getSavedWindowUrlForGroup(null, groupId, windowId)
                 val targetUrl = if (!savedUrl.isNullOrBlank()) savedUrl else targetItem.url
 
+                val isHiddenKey = "group_\${groupId}_window_\${windowId}_hidden"
+                val isHidden = prefs?.getBoolean(isHiddenKey, false) ?: false
+
                 // 核心性能突破：【绝不重新加载网页】，全 16 实例在后台持续保活连接，实现 0ms 闪切！
                 win.copy(
                     title = PersistentWebViewPool.getSavedWindowTitleForGroup(null, groupId, windowId) ?: targetItem.title,
                     symbol = targetItem.symbol,
-                    currentUrl = targetUrl
+                    currentUrl = targetUrl,
+                    isHidden = isHidden
                 )
             }
             state.copy(
@@ -1787,22 +1717,18 @@ class TradingViewModel : ViewModel() {
             )
         }
 
-        // 激活 4 视窗的显示状态
-        PersistentWebViewPool.setWindowActive(4, targetWindowCount >= 4)
+        // 激活 4 视窗的显示状态：不仅受 4 窗口配置限制，也受 isHidden 限制
+        (1..4).forEach { winId ->
+            val isHiddenKey = "group_\${groupId}_window_\${winId}_hidden"
+            val isHidden = prefs?.getBoolean(isHiddenKey, false) ?: false
+            val active = if (winId > targetWindowCount) false else !isHidden
+            PersistentWebViewPool.setWindowActive(winId, active)
+        }
 
         // 重新请求并触发当前活跃的所有窗口进行 resize 适配物理尺寸，消除拉合卡顿
         (1..targetWindowCount).forEach { winId ->
             PersistentWebViewPool.triggerImmediateResize(winId)
         }
-
-        // 每次切换标签页后，默认延迟一段时间后，自动对所有活动窗口执行一次隐藏画线，以免被大量画线遮挡视野
-        autoHideRunnable?.let { handler.removeCallbacks(it) }
-        val seconds = _uiState.value.autoHideDelaySeconds
-        val runnable = Runnable {
-            triggerHideDrawings(delayMs = 0L)
-        }
-        autoHideRunnable = runnable
-        handler.postDelayed(runnable, (seconds * 1000).toLong())
 
         // 持久化活跃分组与最新分组数据
         persistAllGroupsToPrefs(updatedGroups, activeGroupId = groupId)
@@ -1932,6 +1858,10 @@ class TradingViewModel : ViewModel() {
                 val targetTitle = savedTitle ?: groupItem?.title ?: win.title
                 val targetSymbol = groupItem?.symbol ?: win.symbol
 
+                // 方案 A: 读取该标签页下该视窗之前被用户保存的隐藏状态
+                val isHiddenKey = "group_\${validActiveGroupId}_window_\${win.id}_hidden"
+                val isHidden = prefs.getBoolean(isHiddenKey, false)
+
                 // 确保已挂载的底层常驻 WebView 加载目标真实网址
                 val webView = PersistentWebViewPool.getWebView(win.id)
                 if (webView != null) {
@@ -1941,10 +1871,16 @@ class TradingViewModel : ViewModel() {
                     }
                 }
 
+                // 激活/反激活常驻 WebView 的心跳/网络连接
+                val targetWindowCount = targetGroup?.windowCount ?: 3
+                val active = if (win.id > targetWindowCount) false else !isHidden
+                PersistentWebViewPool.setWindowActive(win.id, active)
+
                 win.copy(
                     currentUrl = targetUrl,
                     title = targetTitle,
-                    symbol = targetSymbol
+                    symbol = targetSymbol,
+                    isHidden = isHidden
                 )
             }
 
@@ -1952,19 +1888,12 @@ class TradingViewModel : ViewModel() {
             val savedPixelWidth = prefs.getInt(KEY_FIXED_PIXEL_WIDTH, 1280)
             PersistentWebViewPool.setFixedPixelWidth(savedPixelWidth)
 
-            // 读取并恢复整版缩放锁定及自动隐藏画线延迟
-            val savedAutoHideDelay = prefs.getFloat("auto_hide_delay_seconds", 2.0f)
-            val savedZoomLocked = prefs.getBoolean("is_zoom_locked", false)
-            PersistentWebViewPool.setZoomLock(savedZoomLocked)
-
             _uiState.update { state ->
                 state.copy(
                     groups = loadedGroups,
                     windows = currentWindows,
                     activeGroupId = validActiveGroupId,
-                    fixedPixelWidth = savedPixelWidth,
-                    autoHideDelaySeconds = savedAutoHideDelay,
-                    isZoomLocked = savedZoomLocked
+                    fixedPixelWidth = savedPixelWidth
                 )
             }
         } catch (e: Exception) {
@@ -2302,13 +2231,19 @@ class TradingViewModel : ViewModel() {
      * 隐藏窗口：剩余可见窗口自动等比拉伸
      * 关键性能优化：保留常驻 WebView 实例不挂起，立即触发 Chromium 与 TradingView 极速重排，杜绝 4-5 秒延迟
      */
-    fun hideWindow(windowId: Int) {
+    fun hideWindow(windowId: Int, context: Context? = null) {
         _uiState.update { state ->
             val visibleCount = state.visibleWindows.size
             if (visibleCount <= 1) return@update state // 至少保留一个窗口可见
 
             PersistentWebViewPool.setWindowActive(windowId, false)
             val newMaximizedId = if (state.maximizedWindowId == windowId) null else state.maximizedWindowId
+
+            // 持久化当前标签组中该窗口的隐藏状态为 true
+            context?.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                ?.edit()
+                ?.putBoolean("group_\${state.activeGroupId}_window_\${windowId}_hidden", true)
+                ?.apply()
 
             state.copy(
                 maximizedWindowId = newMaximizedId,
@@ -2325,9 +2260,15 @@ class TradingViewModel : ViewModel() {
     /**
      * 恢复隐藏的窗口：瞬间亮屏与极速对齐重排
      */
-    fun restoreWindow(windowId: Int) {
+    fun restoreWindow(windowId: Int, context: Context? = null) {
         PersistentWebViewPool.setWindowActive(windowId, true)
         _uiState.update { state ->
+            // 持久化当前标签组中该窗口的隐藏状态为 false
+            context?.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                ?.edit()
+                ?.putBoolean("group_\${state.activeGroupId}_window_\${windowId}_hidden", false)
+                ?.apply()
+
             state.copy(
                 windows = state.windows.map { win ->
                     if (win.id == windowId) win.copy(isHidden = false) else win
@@ -2341,8 +2282,18 @@ class TradingViewModel : ViewModel() {
     /**
      * 一键恢复全部窗口
      */
-    fun restoreAll() {
+    fun restoreAll(context: Context? = null) {
         val count = _uiState.value.currentWindowCount
+        val activeGroupId = _uiState.value.activeGroupId
+
+        context?.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)?.let { prefs ->
+            val editor = prefs.edit()
+            (1..count).forEach { winId ->
+                editor.putBoolean("group_\${activeGroupId}_window_\${winId}_hidden", false)
+            }
+            editor.apply()
+        }
+
         (1..count).forEach { PersistentWebViewPool.setWindowActive(it, true) }
         _uiState.update { state ->
             state.copy(
@@ -2659,47 +2610,7 @@ class TradingViewModel : ViewModel() {
         }
     }
 
-    /**
-     * 网页整版缩放锁定切换
-     */
-    fun toggleZoomLock(context: Context? = null) {
-        val nextState = !_uiState.value.isZoomLocked
-        PersistentWebViewPool.setZoomLock(nextState)
-        _uiState.update { it.copy(isZoomLocked = nextState) }
-        
-        val ctx = context ?: PersistentWebViewPool.appContext
-        if (ctx != null) {
-            try {
-                ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                    .edit()
-                    .putBoolean("is_zoom_locked", nextState)
-                    .apply()
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-            val text = if (nextState) "网页整版缩放已锁定（屏幕已锁定，点击上方锁按钮或红色外框还原解锁）" else "网页整版缩放已解锁"
-            android.widget.Toast.makeText(ctx, text, android.widget.Toast.LENGTH_SHORT).show()
-        }
-    }
 
-    /**
-     * 设置切换标签页后自动触发隐藏画线延迟 (秒) 并持久化
-     */
-    fun setAutoHideDelaySeconds(seconds: Float, context: Context? = null) {
-        val clamped = seconds.coerceIn(0.5f, 10.0f)
-        _uiState.update { it.copy(autoHideDelaySeconds = clamped) }
-        val ctx = context ?: PersistentWebViewPool.appContext
-        if (ctx != null) {
-            try {
-                ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                    .edit()
-                    .putFloat("auto_hide_delay_seconds", clamped)
-                    .apply()
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-        }
-    }
 
     /**
      * 调整标签页的前后顺序并持久化
@@ -2874,7 +2785,7 @@ fun TradingMultiViewScreen(
                                     RoundedCornerShape(6.dp)
                                 )
                                 .combinedClickable(
-                                    onClick = { viewModel.switchGroup(group.id) },
+                                    onClick = { viewModel.switchGroup(group.id, context) },
                                     onLongClick = {
                                         targetGroupForConfig = group
                                         showGroupConfigDialog = true
@@ -2954,7 +2865,7 @@ fun TradingMultiViewScreen(
                                     .size(24.dp)
                                     .clip(RoundedCornerShape(4.dp))
                                     .clickable {
-                                        if (isHidden) viewModel.restoreWindow(win.id)
+                                        if (isHidden) viewModel.restoreWindow(win.id, context)
                                         viewModel.toggleMaximize(win.id)
                                     },
                                 contentAlignment = Alignment.Center
@@ -2974,9 +2885,9 @@ fun TradingMultiViewScreen(
                                     .clip(RoundedCornerShape(4.dp))
                                     .clickable {
                                         if (isHidden) {
-                                            viewModel.restoreWindow(win.id)
+                                            viewModel.restoreWindow(win.id, context)
                                         } else {
-                                            viewModel.hideWindow(win.id)
+                                            viewModel.hideWindow(win.id, context)
                                         }
                                     },
                                 contentAlignment = Alignment.Center
@@ -3140,31 +3051,7 @@ fun TradingMultiViewScreen(
                         )
                     }
 
-                    // 5. 网页缩放锁定：锁定后禁止一切触摸或Pinch缩放
-                    val isLocked = uiState.isZoomLocked
-                    Box(
-                        modifier = Modifier
-                            .size(30.dp)
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(
-                                if (isLocked) Color(0xFFEF4444).copy(alpha = 0.2f)
-                                else Color(0xFF1E293B)
-                            )
-                            .border(
-                                width = 1.dp,
-                                color = if (isLocked) Color(0xFFEF4444) else Color(0xFF334155),
-                                shape = RoundedCornerShape(6.dp)
-                            )
-                            .clickable { viewModel.toggleZoomLock(context) },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = if (isLocked) Icons.Default.Lock else Icons.Default.LockOpen,
-                            contentDescription = "网页整版缩放锁定",
-                            tint = if (isLocked) Color(0xFFEF4444) else Color(0xFF38BDF8),
-                            modifier = Modifier.size(15.dp)
-                        )
-                    }
+
                 }
 
                 Spacer(modifier = Modifier.width(6.dp))
@@ -3392,10 +3279,6 @@ fun TradingMultiViewScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
-                .border(
-                    width = if (uiState.isZoomLocked) 2.dp else 0.dp,
-                    color = if (uiState.isZoomLocked) Color(0xFFEF4444) else Color.Transparent
-                )
         ) {
             Row(
                 modifier = Modifier.fillMaxSize(),
@@ -3416,43 +3299,6 @@ fun TradingMultiViewScreen(
                                 groupId = uiState.activeGroupId,
                                 windowId = window.id,
                                 zoomPercent = window.zoomPercent
-                            )
-                        }
-                    }
-                }
-            }
-
-            // 当开启网页整版缩放锁定时，覆盖一层手势拦截板，防止意外缩放/触控，并给用户以全局点击解锁的触控体验
-            if (uiState.isZoomLocked) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(Color.Black.copy(alpha = 0.25f))
-                        .clickable { viewModel.toggleZoomLock(context) },
-                    contentAlignment = Alignment.TopCenter
-                ) {
-                    Card(
-                        colors = CardDefaults.cardColors(containerColor = Color(0xFFEF4444)),
-                        shape = RoundedCornerShape(bottomStart = 8.dp, bottomEnd = 8.dp),
-                        elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
-                        modifier = Modifier.padding(horizontal = 16.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Lock,
-                                contentDescription = null,
-                                tint = Color.White,
-                                modifier = Modifier.size(14.dp)
-                            )
-                            Text(
-                                text = "网页整版缩放锁定中 (屏幕已锁定，点击任意位置还原并解锁)",
-                                color = Color.White,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold
                             )
                         }
                     }
@@ -3618,56 +3464,6 @@ fun TradingMultiViewScreen(
                         fontSize = 15.sp,
                         fontWeight = FontWeight.Bold
                     )
-
-                    // 1. 自动触发等待秒数配置
-                    Column(
-                        verticalArrangement = Arrangement.spacedBy(4.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(Color(0xFF1E293B).copy(alpha = 0.5f), RoundedCornerShape(6.dp))
-                            .padding(10.dp)
-                    ) {
-                        Text(
-                            text = "切换标签页时自动触发一次隐藏画图",
-                            color = Color(0xFF94A3B8),
-                            fontSize = 11.sp
-                        )
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text(text = "等待时间:", color = Color.White, fontSize = 12.sp)
-                            var delayInput by remember { mutableStateOf(uiState.autoHideDelaySeconds.toString()) }
-                            BasicTextField(
-                                value = delayInput,
-                                onValueChange = { delayInput = it },
-                                modifier = Modifier
-                                    .width(50.dp)
-                                    .height(24.dp)
-                                    .background(Color(0xFF0F172A), RoundedCornerShape(4.dp))
-                                    .border(1.dp, Color(0xFF475569), RoundedCornerShape(4.dp))
-                                    .padding(horizontal = 4.dp, vertical = 2.dp),
-                                textStyle = TextStyle(color = Color.White, fontSize = 12.sp, fontFamily = FontFamily.Monospace),
-                                singleLine = true,
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
-                            )
-                            Text(text = "秒", color = Color.White, fontSize = 12.sp)
-                            
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(4.dp))
-                                    .background(Color(0xFF0284C7))
-                                    .clickable {
-                                        val sec = delayInput.toFloatOrNull() ?: 2.0f
-                                        viewModel.setAutoHideDelaySeconds(sec, context)
-                                    }
-                                    .padding(horizontal = 8.dp, vertical = 4.dp)
-                            ) {
-                                Text(text = "保存", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                            }
-                        }
-                    }
 
                     // 2. 分组顺序调整
                     LazyColumn(
