@@ -1302,8 +1302,9 @@ object PersistentWebViewPool {
      */
     fun dispatchVirtualMouseHover(screenX: Float, screenY: Float): Boolean {
         val target = findWebViewAtScreenPoint(screenX, screenY) ?: return false
+        val wv = target.second
         val loc = IntArray(2)
-        target.second.getLocationOnScreen(loc)
+        wv.getLocationOnScreen(loc)
         val localX = screenX - loc[0]
         val localY = screenY - loc[1]
         val now = SystemClock.uptimeMillis()
@@ -1315,8 +1316,27 @@ object PersistentWebViewPool {
             y = localY,
             buttonState = 0
         )
-        val res = target.second.dispatchGenericMotionEvent(event)
+        val res = wv.dispatchGenericMotionEvent(event)
         event.recycle()
+
+        val wvW = wv.width.toFloat().coerceAtLeast(1f)
+        val wvH = wv.height.toFloat().coerceAtLeast(1f)
+        val js = """
+            (function() {
+                try {
+                    var rx = Math.max(0, Math.min(1, $localX / $wvW));
+                    var ry = Math.max(0, Math.min(1, $localY / $wvH));
+                    var cx = rx * window.innerWidth;
+                    var cy = ry * window.innerHeight;
+                    var el = document.elementFromPoint(cx, cy) || document.body;
+                    var pMove = new PointerEvent('pointermove', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, pointerType: 'mouse' });
+                    var mMove = new MouseEvent('mousemove', { bubbles: true, cancelable: true, clientX: cx, clientY: cy });
+                    el.dispatchEvent(pMove);
+                    el.dispatchEvent(mMove);
+                } catch(e) {}
+            })();
+        """.trimIndent()
+        wv.post { wv.evaluateJavascript(js, null) }
         return res
     }
 
@@ -1325,36 +1345,102 @@ object PersistentWebViewPool {
      */
     fun dispatchVirtualMouseClick(screenX: Float, screenY: Float, isRightClick: Boolean = false): Boolean {
         val target = findWebViewAtScreenPoint(screenX, screenY) ?: return false
+        val wv = target.second
         val loc = IntArray(2)
-        target.second.getLocationOnScreen(loc)
+        wv.getLocationOnScreen(loc)
         val localX = screenX - loc[0]
         val localY = screenY - loc[1]
-        val downTime = SystemClock.uptimeMillis()
-        val btn = if (isRightClick) MotionEvent.BUTTON_SECONDARY else MotionEvent.BUTTON_PRIMARY
+        val wvW = wv.width.toFloat().coerceAtLeast(1f)
+        val wvH = wv.height.toFloat().coerceAtLeast(1f)
 
-        val downEvent = createMouseEvent(
-            action = MotionEvent.ACTION_DOWN,
-            downTime = downTime,
-            eventTime = downTime,
-            x = localX,
-            y = localY,
-            buttonState = btn
-        )
-        target.second.dispatchTouchEvent(downEvent)
-        downEvent.recycle()
+        // 1. DOM / Canvas 级合成事件派发 (精准定位网页与 TradingView 图表)
+        val js = """
+            (function() {
+                try {
+                    var rx = Math.max(0, Math.min(1, $localX / $wvW));
+                    var ry = Math.max(0, Math.min(1, $localY / $wvH));
+                    var cx = rx * window.innerWidth;
+                    var cy = ry * window.innerHeight;
+                    var el = document.elementFromPoint(cx, cy) || document.body;
+                    var isR = $isRightClick;
+                    if (isR) {
+                        var pDown = new PointerEvent('pointerdown', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, button: 2, buttons: 2, pointerType: 'mouse' });
+                        var mDown = new MouseEvent('mousedown', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, button: 2, buttons: 2 });
+                        var cMenu = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, button: 2, buttons: 2 });
+                        var pUp = new PointerEvent('pointerup', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, button: 2, buttons: 0, pointerType: 'mouse' });
+                        var mUp = new MouseEvent('mouseup', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, button: 2, buttons: 0 });
+                        el.dispatchEvent(pDown);
+                        el.dispatchEvent(mDown);
+                        el.dispatchEvent(cMenu);
+                        el.dispatchEvent(pUp);
+                        el.dispatchEvent(mUp);
+                    } else {
+                        var pDown = new PointerEvent('pointerdown', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, button: 0, buttons: 1, pointerType: 'mouse', isPrimary: true });
+                        var mDown = new MouseEvent('mousedown', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, button: 0, buttons: 1 });
+                        var pUp = new PointerEvent('pointerup', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, button: 0, buttons: 0, pointerType: 'mouse', isPrimary: true });
+                        var mUp = new MouseEvent('mouseup', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, button: 0, buttons: 0 });
+                        var clk = new MouseEvent('click', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, button: 0, buttons: 0 });
+                        el.dispatchEvent(pDown);
+                        el.dispatchEvent(mDown);
+                        el.dispatchEvent(pUp);
+                        el.dispatchEvent(mUp);
+                        el.dispatchEvent(clk);
+                    }
+                } catch(e) {}
+            })();
+        """.trimIndent()
+        wv.post { wv.evaluateJavascript(js, null) }
 
-        val upTime = downTime + 40
-        val upEvent = createMouseEvent(
-            action = MotionEvent.ACTION_UP,
-            downTime = downTime,
-            eventTime = upTime,
-            x = localX,
-            y = localY,
-            buttonState = 0
-        )
-        val res = target.second.dispatchTouchEvent(upEvent)
-        upEvent.recycle()
-        return res
+        // 2. 原生系统级 MotionEvent 派发 (按下与抬起间隔 40ms 保证渲染线程可靠识别)
+        val now = SystemClock.uptimeMillis()
+        if (isRightClick) {
+            val downEvent = createMouseEvent(
+                action = MotionEvent.ACTION_DOWN,
+                downTime = now,
+                eventTime = now,
+                x = localX,
+                y = localY,
+                buttonState = MotionEvent.BUTTON_SECONDARY
+            )
+            wv.dispatchTouchEvent(downEvent)
+            downEvent.recycle()
+
+            wv.postDelayed({
+                val upNow = SystemClock.uptimeMillis()
+                val upEvent = createMouseEvent(
+                    action = MotionEvent.ACTION_UP,
+                    downTime = now,
+                    eventTime = upNow,
+                    x = localX,
+                    y = localY,
+                    buttonState = 0
+                )
+                wv.dispatchTouchEvent(upEvent)
+                upEvent.recycle()
+            }, 40L)
+        } else {
+            val downEvent = MotionEvent.obtain(
+                now, now,
+                MotionEvent.ACTION_DOWN,
+                localX, localY,
+                0
+            )
+            wv.dispatchTouchEvent(downEvent)
+            downEvent.recycle()
+
+            wv.postDelayed({
+                val upNow = SystemClock.uptimeMillis()
+                val upEvent = MotionEvent.obtain(
+                    now, upNow,
+                    MotionEvent.ACTION_UP,
+                    localX, localY,
+                    0
+                )
+                wv.dispatchTouchEvent(upEvent)
+                upEvent.recycle()
+            }, 40L)
+        }
+        return true
     }
 
     /**
@@ -1362,20 +1448,39 @@ object PersistentWebViewPool {
      */
     fun dispatchVirtualMouseDown(screenX: Float, screenY: Float): Boolean {
         val target = findWebViewAtScreenPoint(screenX, screenY) ?: return false
+        val wv = target.second
         val loc = IntArray(2)
-        target.second.getLocationOnScreen(loc)
+        wv.getLocationOnScreen(loc)
         val localX = screenX - loc[0]
         val localY = screenY - loc[1]
+        val wvW = wv.width.toFloat().coerceAtLeast(1f)
+        val wvH = wv.height.toFloat().coerceAtLeast(1f)
+
+        val js = """
+            (function() {
+                try {
+                    var rx = Math.max(0, Math.min(1, $localX / $wvW));
+                    var ry = Math.max(0, Math.min(1, $localY / $wvH));
+                    var cx = rx * window.innerWidth;
+                    var cy = ry * window.innerHeight;
+                    var el = document.elementFromPoint(cx, cy) || document.body;
+                    var pDown = new PointerEvent('pointerdown', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, button: 0, buttons: 1, pointerType: 'mouse', isPrimary: true });
+                    var mDown = new MouseEvent('mousedown', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, button: 0, buttons: 1 });
+                    el.dispatchEvent(pDown);
+                    el.dispatchEvent(mDown);
+                } catch(e) {}
+            })();
+        """.trimIndent()
+        wv.post { wv.evaluateJavascript(js, null) }
+
         val now = SystemClock.uptimeMillis()
-        val downEvent = createMouseEvent(
-            action = MotionEvent.ACTION_DOWN,
-            downTime = now,
-            eventTime = now,
-            x = localX,
-            y = localY,
-            buttonState = MotionEvent.BUTTON_PRIMARY
+        val downEvent = MotionEvent.obtain(
+            now, now,
+            MotionEvent.ACTION_DOWN,
+            localX, localY,
+            0
         )
-        val res = target.second.dispatchTouchEvent(downEvent)
+        val res = wv.dispatchTouchEvent(downEvent)
         downEvent.recycle()
         return res
     }
@@ -1385,20 +1490,39 @@ object PersistentWebViewPool {
      */
     fun dispatchVirtualMouseMove(screenX: Float, screenY: Float): Boolean {
         val target = findWebViewAtScreenPoint(screenX, screenY) ?: return false
+        val wv = target.second
         val loc = IntArray(2)
-        target.second.getLocationOnScreen(loc)
+        wv.getLocationOnScreen(loc)
         val localX = screenX - loc[0]
         val localY = screenY - loc[1]
+        val wvW = wv.width.toFloat().coerceAtLeast(1f)
+        val wvH = wv.height.toFloat().coerceAtLeast(1f)
+
+        val js = """
+            (function() {
+                try {
+                    var rx = Math.max(0, Math.min(1, $localX / $wvW));
+                    var ry = Math.max(0, Math.min(1, $localY / $wvH));
+                    var cx = rx * window.innerWidth;
+                    var cy = ry * window.innerHeight;
+                    var el = document.elementFromPoint(cx, cy) || document.body;
+                    var pMove = new PointerEvent('pointermove', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, button: 0, buttons: 1, pointerType: 'mouse', isPrimary: true });
+                    var mMove = new MouseEvent('mousemove', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, button: 0, buttons: 1 });
+                    el.dispatchEvent(pMove);
+                    el.dispatchEvent(mMove);
+                } catch(e) {}
+            })();
+        """.trimIndent()
+        wv.post { wv.evaluateJavascript(js, null) }
+
         val now = SystemClock.uptimeMillis()
-        val moveEvent = createMouseEvent(
-            action = MotionEvent.ACTION_MOVE,
-            downTime = now,
-            eventTime = now,
-            x = localX,
-            y = localY,
-            buttonState = MotionEvent.BUTTON_PRIMARY
+        val moveEvent = MotionEvent.obtain(
+            now, now,
+            MotionEvent.ACTION_MOVE,
+            localX, localY,
+            0
         )
-        val res = target.second.dispatchTouchEvent(moveEvent)
+        val res = wv.dispatchTouchEvent(moveEvent)
         moveEvent.recycle()
         return res
     }
@@ -1408,20 +1532,39 @@ object PersistentWebViewPool {
      */
     fun dispatchVirtualMouseUp(screenX: Float, screenY: Float): Boolean {
         val target = findWebViewAtScreenPoint(screenX, screenY) ?: return false
+        val wv = target.second
         val loc = IntArray(2)
-        target.second.getLocationOnScreen(loc)
+        wv.getLocationOnScreen(loc)
         val localX = screenX - loc[0]
         val localY = screenY - loc[1]
+        val wvW = wv.width.toFloat().coerceAtLeast(1f)
+        val wvH = wv.height.toFloat().coerceAtLeast(1f)
+
+        val js = """
+            (function() {
+                try {
+                    var rx = Math.max(0, Math.min(1, $localX / $wvW));
+                    var ry = Math.max(0, Math.min(1, $localY / $wvH));
+                    var cx = rx * window.innerWidth;
+                    var cy = ry * window.innerHeight;
+                    var el = document.elementFromPoint(cx, cy) || document.body;
+                    var pUp = new PointerEvent('pointerup', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, button: 0, buttons: 0, pointerType: 'mouse', isPrimary: true });
+                    var mUp = new MouseEvent('mouseup', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, button: 0, buttons: 0 });
+                    el.dispatchEvent(pUp);
+                    el.dispatchEvent(mUp);
+                } catch(e) {}
+            })();
+        """.trimIndent()
+        wv.post { wv.evaluateJavascript(js, null) }
+
         val now = SystemClock.uptimeMillis()
-        val upEvent = createMouseEvent(
-            action = MotionEvent.ACTION_UP,
-            downTime = now,
-            eventTime = now,
-            x = localX,
-            y = localY,
-            buttonState = 0
+        val upEvent = MotionEvent.obtain(
+            now, now,
+            MotionEvent.ACTION_UP,
+            localX, localY,
+            0
         )
-        val res = target.second.dispatchTouchEvent(upEvent)
+        val res = wv.dispatchTouchEvent(upEvent)
         upEvent.recycle()
         return res
     }
@@ -1432,28 +1575,56 @@ object PersistentWebViewPool {
      */
     fun dispatchVirtualMouseScroll(screenX: Float, screenY: Float, scrollDeltaY: Float): Boolean {
         val target = findWebViewAtScreenPoint(screenX, screenY) ?: return false
+        val wv = target.second
         val loc = IntArray(2)
-        target.second.getLocationOnScreen(loc)
+        wv.getLocationOnScreen(loc)
         val localX = screenX - loc[0]
         val localY = screenY - loc[1]
-        val now = android.os.SystemClock.uptimeMillis()
-        val props = arrayOf(android.view.MotionEvent.PointerProperties().apply {
+        val wvW = wv.width.toFloat().coerceAtLeast(1f)
+        val wvH = wv.height.toFloat().coerceAtLeast(1f)
+
+        // 1. JS WheelEvent 派发 (驱动 TradingView 图表缩放)
+        val js = """
+            (function() {
+                try {
+                    var rx = Math.max(0, Math.min(1, $localX / $wvW));
+                    var ry = Math.max(0, Math.min(1, $localY / $wvH));
+                    var cx = rx * window.innerWidth;
+                    var cy = ry * window.innerHeight;
+                    var el = document.elementFromPoint(cx, cy) || document.body;
+                    var wEvt = new WheelEvent('wheel', {
+                        bubbles: true,
+                        cancelable: true,
+                        clientX: cx,
+                        clientY: cy,
+                        deltaY: -($scrollDeltaY * 120),
+                        deltaMode: 0
+                    });
+                    el.dispatchEvent(wEvt);
+                } catch(e) {}
+            })();
+        """.trimIndent()
+        wv.post { wv.evaluateJavascript(js, null) }
+
+        // 2. 原生 GenericMotionEvent
+        val now = SystemClock.uptimeMillis()
+        val props = arrayOf(MotionEvent.PointerProperties().apply {
             id = 0
-            toolType = android.view.MotionEvent.TOOL_TYPE_MOUSE
+            toolType = MotionEvent.TOOL_TYPE_MOUSE
         })
-        val coords = arrayOf(android.view.MotionEvent.PointerCoords().apply {
+        val coords = arrayOf(MotionEvent.PointerCoords().apply {
             x = localX
             y = localY
-            setAxisValue(android.view.MotionEvent.AXIS_VSCROLL, scrollDeltaY)
+            setAxisValue(MotionEvent.AXIS_VSCROLL, scrollDeltaY)
         })
-        val event = android.view.MotionEvent.obtain(
+        val event = MotionEvent.obtain(
             now, now,
-            android.view.MotionEvent.ACTION_SCROLL,
+            MotionEvent.ACTION_SCROLL,
             1, props, coords,
             0, 0, 1.0f, 1.0f, 0, 0,
             android.view.InputDevice.SOURCE_MOUSE, 0
         )
-        val res = target.second.dispatchGenericMotionEvent(event)
+        val res = wv.dispatchGenericMotionEvent(event)
         event.recycle()
         return res
     }

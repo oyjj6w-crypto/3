@@ -24,6 +24,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
@@ -48,9 +49,17 @@ fun BoxScope.VirtualMouseOverlay(
 
     val configuration = LocalConfiguration.current
     val density = LocalDensity.current
+    val composeView = LocalView.current
 
     val screenWidthPx = with(density) { configuration.screenWidthDp.dp.toPx() }
     val screenHeightPx = with(density) { configuration.screenHeightDp.dp.toPx() }
+
+    // 辅助获取光标在整个物理屏幕上的绝对屏幕坐标 (与 WebView.getLocationOnScreen 100% 绝对对齐)
+    fun getAbsScreenPos(offset: Offset): Pair<Float, Float> {
+        val loc = IntArray(2)
+        composeView.getLocationOnScreen(loc)
+        return Pair(loc[0].toFloat() + offset.x, loc[1].toFloat() + offset.y)
+    }
 
     // 光标全局屏幕绝对物理坐标 (默认居中偏上)
     var cursorPosition by remember {
@@ -62,7 +71,7 @@ fun BoxScope.VirtualMouseOverlay(
         mutableStateOf(Offset(0f, 0f))
     }
 
-    // 触控板灵敏度倍率 (1.0x, 1.5x, 2.0x)
+    // 触控板灵敏度倍率 (1.0x, 1.5x, 2.0x, 2.5x)
     var sensitivity by remember { mutableStateOf(1.2f) }
 
     // 是否处于“按住鼠标左键”状态 (用于自由画线与按住平移)
@@ -75,12 +84,8 @@ fun BoxScope.VirtualMouseOverlay(
     // 1. 全局悬浮光标指示器 (Visual Cursor Indicator)
     // =========================================================================
     Box(
-        modifier = Modifier
-            .fillMaxSize()
+        modifier = Modifier.fillMaxSize()
     ) {
-        val cursorXDp = with(density) { cursorPosition.x.toDp() }
-        val cursorYDp = with(density) { cursorPosition.y.toDp() }
-
         Box(
             modifier = Modifier
                 .offset {
@@ -128,7 +133,7 @@ fun BoxScope.VirtualMouseOverlay(
     }
 
     // =========================================================================
-    // 2. 悬浮精准触控板面板 (Draggable Touchpad Panel)
+    // 2. 悬浮精准触控板面板 (Draggable Touchpad Panel - 正方形触控板面)
     // =========================================================================
     Box(
         modifier = Modifier
@@ -140,7 +145,7 @@ fun BoxScope.VirtualMouseOverlay(
                     panelOffset.y.roundToInt()
                 )
             }
-            .width(280.dp)
+            .width(260.dp)
             .shadow(elevation = 12.dp, shape = RoundedCornerShape(12.dp))
             .clip(RoundedCornerShape(12.dp))
             .background(Color(0xFF0B111E).copy(alpha = 0.95f))
@@ -155,11 +160,11 @@ fun BoxScope.VirtualMouseOverlay(
                 .padding(8.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            // 面板标题栏 (支持长按拖动整个面板，右侧关闭按钮)
+            // 面板标题栏 (支持拖动整个面板，灵敏度选择器远离关闭按钮并明显放大)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(28.dp)
+                    .height(32.dp)
                     .clip(RoundedCornerShape(6.dp))
                     .background(Color(0xFF1E293B))
                     .pointerInput(Unit) {
@@ -175,6 +180,7 @@ fun BoxScope.VirtualMouseOverlay(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
+                // 左侧：拖拽把手图标与标题
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
@@ -183,64 +189,79 @@ fun BoxScope.VirtualMouseOverlay(
                         imageVector = Icons.Default.Mouse,
                         contentDescription = null,
                         tint = Color(0xFF38BDF8),
-                        modifier = Modifier.size(13.dp)
+                        modifier = Modifier.size(14.dp)
                     )
                     Text(
-                        text = "精准触控板 (可按住此条拖拽)",
+                        text = "触控板",
                         color = Color(0xFFE2E8F0),
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold
                     )
                 }
 
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    // 灵敏度切换 (1.0x / 1.5x / 2.0x)
-                    Box(
-                        modifier = Modifier
-                            .height(18.dp)
-                            .clip(RoundedCornerShape(4.dp))
-                            .background(Color(0xFF0F172A))
-                            .clickable {
-                                sensitivity = when (sensitivity) {
-                                    1.0f -> 1.5f
-                                    1.5f -> 2.0f
-                                    else -> 1.0f
-                                }
+                // 中间偏右：明显放大的灵敏度调节胶囊 (远离关闭按钮，杜绝误触关闭)
+                Box(
+                    modifier = Modifier
+                        .height(24.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(Color(0xFF0F172A))
+                        .border(1.dp, Color(0xFF38BDF8).copy(alpha = 0.5f), RoundedCornerShape(6.dp))
+                        .clickable {
+                            sensitivity = when (sensitivity) {
+                                1.0f -> 1.5f
+                                1.5f -> 2.0f
+                                2.0f -> 2.5f
+                                else -> 1.0f
                             }
-                            .padding(horizontal = 4.dp),
-                        contentAlignment = Alignment.Center
+                        }
+                        .padding(horizontal = 8.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(3.dp)
                     ) {
+                        Icon(
+                            imageVector = Icons.Default.Speed,
+                            contentDescription = null,
+                            tint = Color(0xFF38BDF8),
+                            modifier = Modifier.size(12.dp)
+                        )
                         Text(
-                            text = "${sensitivity}x",
+                            text = "灵敏度: ${sensitivity}x",
                             color = Color(0xFF38BDF8),
                             fontSize = 10.sp,
                             fontFamily = FontFamily.Monospace,
                             fontWeight = FontWeight.Bold
                         )
                     }
+                }
 
-                    // 关闭面板按钮
+                // 最右侧：独立安全的关闭按钮 (具有独立背景和足够点击区域)
+                Box(
+                    modifier = Modifier
+                        .size(24.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(Color(0xFF334155).copy(alpha = 0.5f))
+                        .clickable { onClose() },
+                    contentAlignment = Alignment.Center
+                ) {
                     Icon(
                         imageVector = Icons.Default.Close,
                         contentDescription = "关闭触控板",
                         tint = Color(0xFF94A3B8),
-                        modifier = Modifier
-                            .size(15.dp)
-                            .clickable { onClose() }
+                        modifier = Modifier.size(14.dp)
                     )
                 }
             }
 
             // =====================================================================
-            // 触控板核心滑动感应区 (Touchpad Surface)
+            // 触控板核心滑动感应区 (宽度 244dp x 高度 244dp 绝对正方形 1:1)
             // =====================================================================
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(130.dp)
+                    .height(244.dp)
                     .clip(RoundedCornerShape(8.dp))
                     .background(Color(0xFF060911))
                     .border(1.dp, Color(0xFF1E293B), RoundedCornerShape(8.dp))
@@ -260,21 +281,23 @@ fun BoxScope.VirtualMouseOverlay(
                                         .coerceIn(0f, screenHeightPx)
                                     cursorPosition = Offset(nextX, nextY)
 
+                                    val (absX, absY) = getAbsScreenPos(cursorPosition)
                                     if (isHoldingDown) {
                                         // 按压拖拽：派发 ACTION_MOVE 移动图表或绘制连线
-                                        PersistentWebViewPool.dispatchVirtualMouseMove(nextX, nextY)
+                                        PersistentWebViewPool.dispatchVirtualMouseMove(absX, absY)
                                     } else {
                                         // 悬停滑动：派发 ACTION_HOVER_MOVE 驱动 TradingView 十字光标与 OHLC
-                                        PersistentWebViewPool.dispatchVirtualMouseHover(nextX, nextY)
+                                        PersistentWebViewPool.dispatchVirtualMouseHover(absX, absY)
                                     }
                                 }
                             },
                             onDragEnd = {
                                 if (!hasMovedOnTrackpad) {
                                     // 轻点触控板直接触发单击
+                                    val (absX, absY) = getAbsScreenPos(cursorPosition)
                                     PersistentWebViewPool.dispatchVirtualMouseClick(
-                                        cursorPosition.x,
-                                        cursorPosition.y,
+                                        absX,
+                                        absY,
                                         isRightClick = false
                                     )
                                 }
@@ -286,18 +309,19 @@ fun BoxScope.VirtualMouseOverlay(
                 // 触控板中央辅助视觉提示
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Default.TouchApp,
                         contentDescription = null,
                         tint = Color(0xFF334155),
-                        modifier = Modifier.size(24.dp)
+                        modifier = Modifier.size(28.dp)
                     )
                     Text(
                         text = "单指滑动移动光标 · 轻点左键点击",
-                        color = Color(0xFF475569),
-                        fontSize = 10.sp
+                        color = Color(0xFF64748B),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium
                     )
                 }
             }
@@ -312,9 +336,10 @@ fun BoxScope.VirtualMouseOverlay(
                 // 左键单击
                 Button(
                     onClick = {
+                        val (absX, absY) = getAbsScreenPos(cursorPosition)
                         PersistentWebViewPool.dispatchVirtualMouseClick(
-                            cursorPosition.x,
-                            cursorPosition.y,
+                            absX,
+                            absY,
                             isRightClick = false
                         )
                     },
@@ -338,9 +363,10 @@ fun BoxScope.VirtualMouseOverlay(
                 // 右键菜单 (呼出 TradingView 右键图表选项)
                 Button(
                     onClick = {
+                        val (absX, absY) = getAbsScreenPos(cursorPosition)
                         PersistentWebViewPool.dispatchVirtualMouseClick(
-                            cursorPosition.x,
-                            cursorPosition.y,
+                            absX,
+                            absY,
                             isRightClick = true
                         )
                     },
@@ -365,16 +391,11 @@ fun BoxScope.VirtualMouseOverlay(
                 Button(
                     onClick = {
                         isHoldingDown = !isHoldingDown
+                        val (absX, absY) = getAbsScreenPos(cursorPosition)
                         if (isHoldingDown) {
-                            PersistentWebViewPool.dispatchVirtualMouseDown(
-                                cursorPosition.x,
-                                cursorPosition.y
-                            )
+                            PersistentWebViewPool.dispatchVirtualMouseDown(absX, absY)
                         } else {
-                            PersistentWebViewPool.dispatchVirtualMouseUp(
-                                cursorPosition.x,
-                                cursorPosition.y
-                            )
+                            PersistentWebViewPool.dispatchVirtualMouseUp(absX, absY)
                         }
                     },
                     modifier = Modifier
@@ -406,12 +427,8 @@ fun BoxScope.VirtualMouseOverlay(
                         .background(Color(0xFF1E293B))
                         .border(1.dp, Color(0xFF475569), RoundedCornerShape(6.dp))
                         .clickable {
-                            // 滚轮上滚 (放大)
-                            PersistentWebViewPool.dispatchVirtualMouseScroll(
-                                cursorPosition.x,
-                                cursorPosition.y,
-                                1.0f
-                            )
+                            val (absX, absY) = getAbsScreenPos(cursorPosition)
+                            PersistentWebViewPool.dispatchVirtualMouseScroll(absX, absY, 1.0f)
                         },
                     contentAlignment = Alignment.Center
                 ) {
@@ -431,12 +448,8 @@ fun BoxScope.VirtualMouseOverlay(
                         .background(Color(0xFF1E293B))
                         .border(1.dp, Color(0xFF475569), RoundedCornerShape(6.dp))
                         .clickable {
-                            // 滚轮下滚 (缩小)
-                            PersistentWebViewPool.dispatchVirtualMouseScroll(
-                                cursorPosition.x,
-                                cursorPosition.y,
-                                -1.0f
-                            )
+                            val (absX, absY) = getAbsScreenPos(cursorPosition)
+                            PersistentWebViewPool.dispatchVirtualMouseScroll(absX, absY, -1.0f)
                         },
                     contentAlignment = Alignment.Center
                 ) {
@@ -459,7 +472,8 @@ fun BoxScope.VirtualMouseOverlay(
                             val centerX = screenWidthPx / 2f
                             val centerY = screenHeightPx / 2f
                             cursorPosition = Offset(centerX, centerY)
-                            PersistentWebViewPool.dispatchVirtualMouseHover(centerX, centerY)
+                            val (absX, absY) = getAbsScreenPos(cursorPosition)
+                            PersistentWebViewPool.dispatchVirtualMouseHover(absX, absY)
                         },
                     contentAlignment = Alignment.Center
                 ) {
