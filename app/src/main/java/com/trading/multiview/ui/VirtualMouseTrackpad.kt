@@ -78,8 +78,8 @@ fun BoxScope.VirtualMouseOverlay(
         mutableStateOf(Offset(0f, 0f))
     }
 
-    // 触控板灵敏度倍率 (1.0x, 1.5x, 2.0x, 2.5x)
-    var sensitivity by remember { mutableStateOf(1.2f) }
+    // 触控板灵敏度倍率 (只保留 0.5x 和 2.0x)
+    var sensitivity by remember { mutableStateOf(2.0f) }
 
     // 是否处于“按住鼠标左键”状态 (用于自由画线与按住平移)
     var isHoldingDown by remember { mutableStateOf(false) }
@@ -211,12 +211,7 @@ fun BoxScope.VirtualMouseOverlay(
                         .background(Color(0xFF0F172A))
                         .border(1.dp, Color(0xFF38BDF8).copy(alpha = 0.5f), RoundedCornerShape(6.dp))
                         .clickable {
-                            sensitivity = when (sensitivity) {
-                                1.0f -> 1.5f
-                                1.5f -> 2.0f
-                                2.0f -> 2.5f
-                                else -> 1.0f
-                            }
+                            sensitivity = if (sensitivity == 0.5f) 2.0f else 0.5f
                         }
                         .padding(horizontal = 8.dp),
                     contentAlignment = Alignment.Center
@@ -232,7 +227,7 @@ fun BoxScope.VirtualMouseOverlay(
                             modifier = Modifier.size(12.dp)
                         )
                         Text(
-                            text = "灵敏度: ${sensitivity}x",
+                            text = "灵敏度: ${if (sensitivity == 0.5f) "0.5" else "2.0"}x",
                             color = Color(0xFF38BDF8),
                             fontSize = 10.sp,
                             fontFamily = FontFamily.Monospace,
