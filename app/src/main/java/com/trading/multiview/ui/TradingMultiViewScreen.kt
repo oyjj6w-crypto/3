@@ -108,6 +108,9 @@ fun TradingMultiViewScreen(
     var hideDrawingsFloatingButtonOffsetY by remember {
         mutableStateOf(floatingPrefs.getFloat("floating_hidedrawings_offset_y", 112f))
     }
+    var isFloatingLocked by remember {
+        mutableStateOf(floatingPrefs.getBoolean("floating_locked", false))
+    }
 
     // 初始化时加载本地存储的自定义分组
     LaunchedEffect(Unit) {
@@ -202,6 +205,27 @@ fun TradingMultiViewScreen(
                             contentDescription = "保存为新分组",
                             tint = Color(0xFF34D399),
                             modifier = Modifier.size(16.dp)
+                        )
+                    }
+
+                    // 锁死/解锁右边4个浮动按钮 (相同大小 30.dp)
+                    Box(
+                        modifier = Modifier
+                            .size(30.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(if (isFloatingLocked) Color(0xFF1E1B4B) else Color(0xFF1E293B))
+                            .border(1.dp, if (isFloatingLocked) Color(0xFF6366F1) else Color(0xFF475569), RoundedCornerShape(6.dp))
+                            .clickable {
+                                isFloatingLocked = !isFloatingLocked
+                                floatingPrefs.edit().putBoolean("floating_locked", isFloatingLocked).apply()
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = if (isFloatingLocked) Icons.Default.Lock else Icons.Default.LockOpen,
+                            contentDescription = if (isFloatingLocked) "解锁右侧浮动按钮" else "锁定右侧浮动按钮",
+                            tint = if (isFloatingLocked) Color(0xFF818CF8) else Color(0xFF94A3B8),
+                            modifier = Modifier.size(14.dp)
                         )
                     }
                 }
@@ -632,16 +656,18 @@ fun TradingMultiViewScreen(
                 .clip(rightEdgeSemiCircleShape)
                 .background(Color(0xFF0284C7)) // 蓝色
                 .border(1.dp, Color(0xFF38BDF8), rightEdgeSemiCircleShape)
-                .pointerInput(Unit) {
-                    detectDragGestures(
-                        onDrag = { change, dragAmount ->
-                            change.consume()
-                            latestKlineFloatingButtonOffsetY += dragAmount.y
-                        },
-                        onDragEnd = {
-                            floatingPrefs.edit().putFloat("floating_latest_kline_offset_y", latestKlineFloatingButtonOffsetY).apply()
-                        }
-                    )
+                .pointerInput(isFloatingLocked) {
+                    if (!isFloatingLocked) {
+                        detectDragGestures(
+                            onDrag = { change, dragAmount ->
+                                change.consume()
+                                latestKlineFloatingButtonOffsetY += dragAmount.y
+                            },
+                            onDragEnd = {
+                                floatingPrefs.edit().putFloat("floating_latest_kline_offset_y", latestKlineFloatingButtonOffsetY).apply()
+                            }
+                        )
+                    }
                 }
                 .combinedClickable(
                     onClick = {
@@ -673,16 +699,18 @@ fun TradingMultiViewScreen(
                 .clip(rightEdgeSemiCircleShape)
                 .background(Color(0xFF10B981)) // 绿色
                 .border(1.dp, Color(0xFF34D399), rightEdgeSemiCircleShape)
-                .pointerInput(Unit) {
-                    detectDragGestures(
-                        onDrag = { change, dragAmount ->
-                            change.consume()
-                            mouseFloatingButtonOffsetY += dragAmount.y
-                        },
-                        onDragEnd = {
-                            floatingPrefs.edit().putFloat("floating_mouse_offset_y", mouseFloatingButtonOffsetY).apply()
-                        }
-                    )
+                .pointerInput(isFloatingLocked) {
+                    if (!isFloatingLocked) {
+                        detectDragGestures(
+                            onDrag = { change, dragAmount ->
+                                change.consume()
+                                mouseFloatingButtonOffsetY += dragAmount.y
+                            },
+                            onDragEnd = {
+                                floatingPrefs.edit().putFloat("floating_mouse_offset_y", mouseFloatingButtonOffsetY).apply()
+                            }
+                        )
+                    }
                 }
                 .clickable {
                     viewModel.toggleTrackpad()
@@ -709,16 +737,18 @@ fun TradingMultiViewScreen(
                 .clip(rightEdgeSemiCircleShape)
                 .background(Color.White) // 白色
                 .border(1.dp, Color(0xFFCBD5E1), rightEdgeSemiCircleShape)
-                .pointerInput(Unit) {
-                    detectDragGestures(
-                        onDrag = { change, dragAmount ->
-                            change.consume()
-                            timeframeFloatingButtonOffsetY += dragAmount.y
-                        },
-                        onDragEnd = {
-                            floatingPrefs.edit().putFloat("floating_timeframe_offset_y", timeframeFloatingButtonOffsetY).apply()
-                        }
-                    )
+                .pointerInput(isFloatingLocked) {
+                    if (!isFloatingLocked) {
+                        detectDragGestures(
+                            onDrag = { change, dragAmount ->
+                                change.consume()
+                                timeframeFloatingButtonOffsetY += dragAmount.y
+                            },
+                            onDragEnd = {
+                                floatingPrefs.edit().putFloat("floating_timeframe_offset_y", timeframeFloatingButtonOffsetY).apply()
+                            }
+                        )
+                    }
                 }
                 .clickable {
                     showTimeframeDialog = true
@@ -744,16 +774,18 @@ fun TradingMultiViewScreen(
                 .clip(rightEdgeSemiCircleShape)
                 .background(Color(0xFFD97706)) // 深黄色 (Amber 600)
                 .border(1.dp, Color(0xFFFBBF24), rightEdgeSemiCircleShape) // 亮黄边框
-                .pointerInput(Unit) {
-                    detectDragGestures(
-                        onDrag = { change, dragAmount ->
-                            change.consume()
-                            hideDrawingsFloatingButtonOffsetY += dragAmount.y
-                        },
-                        onDragEnd = {
-                            floatingPrefs.edit().putFloat("floating_hidedrawings_offset_y", hideDrawingsFloatingButtonOffsetY).apply()
-                        }
-                    )
+                .pointerInput(isFloatingLocked) {
+                    if (!isFloatingLocked) {
+                        detectDragGestures(
+                            onDrag = { change, dragAmount ->
+                                change.consume()
+                                hideDrawingsFloatingButtonOffsetY += dragAmount.y
+                            },
+                            onDragEnd = {
+                                floatingPrefs.edit().putFloat("floating_hidedrawings_offset_y", hideDrawingsFloatingButtonOffsetY).apply()
+                            }
+                        )
+                    }
                 }
                 .combinedClickable(
                     onClick = {
