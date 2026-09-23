@@ -73,9 +73,10 @@ fun BoxScope.VirtualMouseOverlay(
         mutableStateOf(Offset(screenWidthPx / 2f, screenHeightPx / 2f))
     }
 
-    // 触控板面板在屏幕上的相对偏移 (默认贴在右下角安全区域)
-    var panelOffset by remember {
-        mutableStateOf(Offset(0f, 0f))
+    val shiftLeftPx = with(density) { -50.dp.toPx() }
+    // 触控板面板在屏幕上的相对偏移 (默认往左边移动50dp)
+    var panelOffset by remember(shiftLeftPx) {
+        mutableStateOf(Offset(shiftLeftPx, 0f))
     }
 
     // 触控板灵敏度倍率 (只保留 0.5x 和 2.0x)
@@ -164,13 +165,14 @@ fun BoxScope.VirtualMouseOverlay(
                 .padding(8.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            // 面板标题栏 (支持拖动整个面板，灵敏度选择器远离关闭按钮并明显放大)
-            Row(
+            // 顶部 100dp 高度的专属拖拽区域 (专门用于拖动触控板)
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(32.dp)
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(Color(0xFF1E293B))
+                    .height(100.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Color(0xFF1E293B).copy(alpha = 0.5f))
+                    .border(1.dp, Color(0xFF334155), RoundedCornerShape(8.dp))
                     .pointerInput(Unit) {
                         detectDragGestures { change, dragAmount ->
                             change.consume()
@@ -179,7 +181,40 @@ fun BoxScope.VirtualMouseOverlay(
                                 y = panelOffset.y + dragAmount.y
                             )
                         }
-                    }
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.DragHandle,
+                        contentDescription = "拖拽触控板",
+                        tint = Color(0xFF38BDF8),
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Text(
+                        text = "拖 拽 触 控 板 (高 100dp)",
+                        color = Color(0xFF38BDF8),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "按住此区域可任意拖动面板位置",
+                        color = Color(0xFF64748B),
+                        fontSize = 9.sp
+                    )
+                }
+            }
+
+            // 面板标题栏 (包含：标题、关闭按钮x、灵敏度选择、Del键)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(32.dp)
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(Color(0xFF1E293B))
                     .padding(horizontal = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
@@ -203,70 +238,95 @@ fun BoxScope.VirtualMouseOverlay(
                     )
                 }
 
-                // 中间偏右：明显放大的灵敏度调节胶囊 (远离关闭按钮，杜绝误触关闭)
-                Box(
-                    modifier = Modifier
-                        .height(24.dp)
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(Color(0xFF0F172A))
-                        .border(1.dp, Color(0xFF38BDF8).copy(alpha = 0.5f), RoundedCornerShape(6.dp))
-                        .clickable {
-                            sensitivity = if (sensitivity == 0.5f) 2.0f else 0.5f
-                        }
-                        .padding(horizontal = 8.dp),
-                    contentAlignment = Alignment.Center
+                // 右侧控制键群：[关闭x] [灵敏度] [Del]
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(3.dp)
+                    // 关闭按钮x (灵敏度左边添加关闭按钮x)
+                    Box(
+                        modifier = Modifier
+                            .height(24.dp)
+                            .width(30.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(Color(0xFF2E1015))
+                            .border(1.dp, Color(0xFFEF4444).copy(alpha = 0.7f), RoundedCornerShape(4.dp))
+                            .clickable { onClose() },
+                        contentAlignment = Alignment.Center
                     ) {
                         Icon(
-                            imageVector = Icons.Default.Speed,
-                            contentDescription = null,
-                            tint = Color(0xFF38BDF8),
-                            modifier = Modifier.size(12.dp)
-                        )
-                        Text(
-                            text = "灵敏度: ${if (sensitivity == 0.5f) "0.5" else "2.0"}x",
-                            color = Color(0xFF38BDF8),
-                            fontSize = 10.sp,
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                }
-
-                // 最右侧：Del 删除快捷键 (替换原来的 X 关闭按钮，彻底删除关闭按键)
-                Box(
-                    modifier = Modifier
-                        .height(24.dp)
-                        .clip(RoundedCornerShape(4.dp))
-                        .background(Color(0xFF2E1015))
-                        .border(1.dp, Color(0xFFEF4444).copy(alpha = 0.7f), RoundedCornerShape(4.dp))
-                        .clickable {
-                            val (absX, absY) = getAbsScreenPos(cursorPosition)
-                            PersistentWebViewPool.dispatchVirtualDeleteKey(absX, absY)
-                        }
-                        .padding(horizontal = 6.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(3.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Delete,
-                            contentDescription = "Del 删除所选",
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "关闭触控板",
                             tint = Color(0xFFF87171),
                             modifier = Modifier.size(13.dp)
                         )
-                        Text(
-                            text = "Del",
-                            color = Color(0xFFF87171),
-                            fontSize = 11.sp,
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.Bold
-                        )
+                    }
+
+                    // 灵敏度调节胶囊 (只保留 0.5x 和 2.0x)
+                    Box(
+                        modifier = Modifier
+                            .height(24.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(Color(0xFF0F172A))
+                            .border(1.dp, Color(0xFF38BDF8).copy(alpha = 0.5f), RoundedCornerShape(4.dp))
+                            .clickable {
+                                sensitivity = if (sensitivity == 0.5f) 2.0f else 0.5f
+                            }
+                            .padding(horizontal = 6.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(3.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Speed,
+                                contentDescription = null,
+                                tint = Color(0xFF38BDF8),
+                                modifier = Modifier.size(11.dp)
+                            )
+                            Text(
+                                text = "灵敏度: ${if (sensitivity == 0.5f) "0.5" else "2.0"}x",
+                                color = Color(0xFF38BDF8),
+                                fontSize = 10.sp,
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+
+                    // Del 删除快捷键
+                    Box(
+                        modifier = Modifier
+                            .height(24.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(Color(0xFF1E293B))
+                            .border(1.dp, Color(0xFF94A3B8).copy(alpha = 0.5f), RoundedCornerShape(4.dp))
+                            .clickable {
+                                val (absX, absY) = getAbsScreenPos(cursorPosition)
+                                PersistentWebViewPool.dispatchVirtualDeleteKey(absX, absY)
+                            }
+                            .padding(horizontal = 6.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Delete,
+                                contentDescription = "Del 删除所选",
+                                tint = Color(0xFFCBD5E1),
+                                modifier = Modifier.size(11.dp)
+                            )
+                            Text(
+                                text = "Del",
+                                color = Color(0xFFCBD5E1),
+                                fontSize = 10.sp,
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     }
                 }
             }

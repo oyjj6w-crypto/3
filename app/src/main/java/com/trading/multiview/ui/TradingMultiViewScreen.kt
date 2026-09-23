@@ -105,6 +105,9 @@ fun TradingMultiViewScreen(
     var timeframeFloatingButtonOffsetY by remember {
         mutableStateOf(floatingPrefs.getFloat("floating_timeframe_offset_y", 56f))
     }
+    var hideDrawingsFloatingButtonOffsetY by remember {
+        mutableStateOf(floatingPrefs.getFloat("floating_hidedrawings_offset_y", 112f))
+    }
 
     // 初始化时加载本地存储的自定义分组
     LaunchedEffect(Unit) {
@@ -386,40 +389,11 @@ fun TradingMultiViewScreen(
 
                 Spacer(modifier = Modifier.width(6.dp))
 
-                // 油猴快捷 3 视窗动作组 (隐藏画线 · 磁力吸附 · 翻转K线，长度改为现有的2倍: 60.dp x 30.dp)
+                // 油猴快捷 2 视窗动作组 (磁力吸附 · 翻转K线，长度改为现有的2倍: 60.dp x 30.dp)
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    // 1. 隐藏/恢复画线 (Ctrl+Alt+H)：单击直接执行(0ms延迟)，长按弹出选择窗口，长度 60dp
-                    Box(
-                        modifier = Modifier
-                            .width(60.dp)
-                            .height(30.dp)
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(
-                                if (showHideDrawingsDialog) Color(0xFF0284C7)
-                                else Color(0xFF1E293B)
-                            )
-                            .border(
-                                width = 1.dp,
-                                color = if (showHideDrawingsDialog) Color(0xFF38BDF8) else Color(0xFF334155),
-                                shape = RoundedCornerShape(6.dp)
-                            )
-                            .combinedClickable(
-                                onClick = { viewModel.triggerHideDrawings(delayMs = 0L, context = context) },
-                                onLongClick = { showHideDrawingsDialog = true }
-                            ),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.VisibilityOff,
-                            contentDescription = "隐藏/恢复画线",
-                            tint = if (showHideDrawingsDialog) Color.White else Color(0xFF38BDF8),
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
-
                     // 2. 磁力吸附切换 (Magnet / Ctrl)：单击直接执行(0ms延迟)，长按弹出选择窗口，长度 60dp
                     val activeMagnetWin = uiState.windows.find { it.isMagnetActive }
                     val isAnyMagnetActive = activeMagnetWin != null
@@ -757,6 +731,47 @@ fun TradingMultiViewScreen(
                 fontSize = 13.sp,
                 fontWeight = FontWeight.Black,
                 modifier = Modifier.padding(start = 2.dp)
+            )
+        }
+
+        // 7.5. 屏幕最右侧深黄色半圆浮动按钮：隐藏/恢复画图 (只能上下移动，不能左右移动，用深黄色)
+        Box(
+            modifier = Modifier
+                .offset { IntOffset(0, hideDrawingsFloatingButtonOffsetY.toInt()) }
+                .align(Alignment.CenterEnd)
+                .size(width = 24.dp, height = 44.dp)
+                .shadow(elevation = 6.dp, shape = rightEdgeSemiCircleShape)
+                .clip(rightEdgeSemiCircleShape)
+                .background(Color(0xFFD97706)) // 深黄色 (Amber 600)
+                .border(1.dp, Color(0xFFFBBF24), rightEdgeSemiCircleShape) // 亮黄边框
+                .pointerInput(Unit) {
+                    detectDragGestures(
+                        onDrag = { change, dragAmount ->
+                            change.consume()
+                            hideDrawingsFloatingButtonOffsetY += dragAmount.y
+                        },
+                        onDragEnd = {
+                            floatingPrefs.edit().putFloat("floating_hidedrawings_offset_y", hideDrawingsFloatingButtonOffsetY).apply()
+                        }
+                    )
+                }
+                .combinedClickable(
+                    onClick = {
+                        viewModel.triggerHideDrawings(delayMs = 0L, context = context)
+                    },
+                    onLongClick = {
+                        showHideDrawingsDialog = true
+                    }
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = Icons.Default.VisibilityOff,
+                contentDescription = "隐藏/恢复画线",
+                tint = Color.White,
+                modifier = Modifier
+                    .padding(start = 2.dp)
+                    .size(15.dp)
             )
         }
 
