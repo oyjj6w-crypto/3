@@ -34,6 +34,9 @@ object PersistentWebViewPool {
     private val webViewMap = mutableMapOf<String, WebView>()
     private var isInitialized = false
 
+    // 跟踪上一次虚拟光标在移动悬停时所落在的 WebView Window ID
+    private var lastHoveredWindowId: Int? = null
+
     // 缓存每个视窗最近一次 resize 的防抖 Runnable 任务，杜绝动画中频繁执行 JS 导致 UI 卡顿
     private val resizeRunnableMap = java.util.concurrent.ConcurrentHashMap<String, Runnable>()
 
@@ -1304,10 +1307,93 @@ object PersistentWebViewPool {
     }
 
     /**
+     * 清理所有或指定视窗外的十字星标，使其移出屏幕并派发 hover exit
+     */
+    fun clearCrosshairs(exceptWindowId: Int? = null) {
+        val now = SystemClock.uptimeMillis()
+        if (exceptWindowId == null) {
+            lastHoveredWindowId = null
+        }
+        val js = """
+            (function() {
+                try {
+                    var cx = -1000;
+                    var cy = -1000;
+                    var el = document.body;
+                    
+                    var pMove = new PointerEvent('pointermove', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, pointerType: 'mouse' });
+                    var mMove = new MouseEvent('mousemove', { bubbles: true, cancelable: true, clientX: cx, clientY: cy });
+                    el.dispatchEvent(pMove);
+                    el.dispatchEvent(mMove);
+                    
+                    var pOut = new PointerEvent('pointerout', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, pointerType: 'mouse' });
+                    var pLeave = new PointerEvent('pointerleave', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, pointerType: 'mouse' });
+                    var mOut = new MouseEvent('mouseout', { bubbles: true, cancelable: true, clientX: cx, clientY: cy });
+                    var mLeave = new MouseEvent('mouseleave', { bubbles: true, cancelable: true, clientX: cx, clientY: cy });
+                    
+                    el.dispatchEvent(pOut);
+                    el.dispatchEvent(pLeave);
+                    el.dispatchEvent(mOut);
+                    el.dispatchEvent(mLeave);
+
+                    var iframes = document.querySelectorAll('iframe');
+                    for (var i = 0; i < iframes.length; i++) {
+                        try {
+                            var iframeDoc = iframes[i].contentDocument || iframes[i].contentWindow.document;
+                            var iframeEl = iframeDoc.body;
+                            iframeEl.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, pointerType: 'mouse' }));
+                            iframeEl.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, cancelable: true, clientX: cx, clientY: cy }));
+                            iframeEl.dispatchEvent(new PointerEvent('pointerout', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, pointerType: 'mouse' }));
+                            iframeEl.dispatchEvent(new PointerEvent('pointerleave', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, pointerType: 'mouse' }));
+                            iframeEl.dispatchEvent(new MouseEvent('mouseout', { bubbles: true, cancelable: true, clientX: cx, clientY: cy }));
+                            iframeEl.dispatchEvent(new MouseEvent('mouseleave', { bubbles: true, cancelable: true, clientX: cx, clientY: cy }));
+                        } catch(e) {}
+                    }
+                } catch(e) {}
+            })();
+        """.trimIndent()
+
+        for (windowId in 1..4) {
+            if (windowId == exceptWindowId) continue
+            val wv = getWebView(windowId) ?: continue
+            if (!wv.isShown) continue
+            wv.post {
+                try {
+                    val exitEvent = createMouseEvent(
+                        action = MotionEvent.ACTION_HOVER_EXIT,
+                        downTime = now,
+                        eventTime = now,
+                        x = -1000f,
+                        y = -1000f,
+                        buttonState = 0
+                    )
+                    wv.dispatchGenericMotionEvent(exitEvent)
+                    exitEvent.recycle()
+                } catch (e: Exception) {}
+                wv.evaluateJavascript(js, null)
+            }
+        }
+    }
+
+    /**
      * 模拟真实鼠标移动悬停 (ACTION_HOVER_MOVE)，触发 TradingView 的原生十字光标 (Crosshair) 与 OHLC 数值浮层
      */
     fun dispatchVirtualMouseHover(screenX: Float, screenY: Float): Boolean {
-        val target = findWebViewAtScreenPoint(screenX, screenY) ?: return false
+        val target = findWebViewAtScreenPoint(screenX, screenY)
+        if (target == null) {
+            if (lastHoveredWindowId != null) {
+                clearCrosshairs()
+                lastHoveredWindowId = null
+            }
+            return false
+        }
+
+        val currentWindowId = target.first
+        if (currentWindowId != lastHoveredWindowId) {
+            clearCrosshairs(exceptWindowId = currentWindowId)
+            lastHoveredWindowId = currentWindowId
+        }
+
         val wv = target.second
         val loc = IntArray(2)
         wv.getLocationOnScreen(loc)
@@ -1495,7 +1581,21 @@ object PersistentWebViewPool {
      * 模拟真实鼠标拖动移动
      */
     fun dispatchVirtualMouseMove(screenX: Float, screenY: Float): Boolean {
-        val target = findWebViewAtScreenPoint(screenX, screenY) ?: return false
+        val target = findWebViewAtScreenPoint(screenX, screenY)
+        if (target == null) {
+            if (lastHoveredWindowId != null) {
+                clearCrosshairs()
+                lastHoveredWindowId = null
+            }
+            return false
+        }
+
+        val currentWindowId = target.first
+        if (currentWindowId != lastHoveredWindowId) {
+            clearCrosshairs(exceptWindowId = currentWindowId)
+            lastHoveredWindowId = currentWindowId
+        }
+
         val wv = target.second
         val loc = IntArray(2)
         wv.getLocationOnScreen(loc)

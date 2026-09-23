@@ -52,6 +52,13 @@ fun BoxScope.VirtualMouseOverlay(
     isEnabled: Boolean,
     onClose: () -> Unit
 ) {
+    // 监听并且在触控板开关状态关闭/组件销毁时，完美清理所有视窗的十字星标
+    DisposableEffect(isEnabled) {
+        onDispose {
+            PersistentWebViewPool.clearCrosshairs()
+        }
+    }
+
     if (!isEnabled) return
 
     val configuration = LocalConfiguration.current
@@ -208,7 +215,7 @@ fun BoxScope.VirtualMouseOverlay(
                 }
             }
 
-            // 面板标题栏 (包含：标题、关闭按钮x、灵敏度选择、Del键)
+            // 面板标题栏 (左侧：2倍宽的关闭按钮X；右侧：灵敏度选择、Del键)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -219,40 +226,20 @@ fun BoxScope.VirtualMouseOverlay(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                // 左侧：拖拽把手图标与标题
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                // 最左侧：2倍宽度的关闭按钮x (60dp)
+                Box(
+                    modifier = Modifier
+                        .height(24.dp)
+                        .width(60.dp) // 原来30dp的2倍
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(Color(0xFF2E1015))
+                        .border(1.dp, Color(0xFFEF4444).copy(alpha = 0.7f), RoundedCornerShape(4.dp))
+                        .clickable { onClose() },
+                    contentAlignment = Alignment.Center
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Mouse,
-                        contentDescription = null,
-                        tint = Color(0xFF38BDF8),
-                        modifier = Modifier.size(14.dp)
-                    )
-                    Text(
-                        text = "触控板",
-                        color = Color(0xFFE2E8F0),
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-
-                // 右侧控制键群：[关闭x] [灵敏度] [Del]
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(5.dp)
-                ) {
-                    // 关闭按钮x (灵敏度左边添加关闭按钮x)
-                    Box(
-                        modifier = Modifier
-                            .height(24.dp)
-                            .width(30.dp)
-                            .clip(RoundedCornerShape(4.dp))
-                            .background(Color(0xFF2E1015))
-                            .border(1.dp, Color(0xFFEF4444).copy(alpha = 0.7f), RoundedCornerShape(4.dp))
-                            .clickable { onClose() },
-                        contentAlignment = Alignment.Center
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(3.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Default.Close,
@@ -260,8 +247,20 @@ fun BoxScope.VirtualMouseOverlay(
                             tint = Color(0xFFF87171),
                             modifier = Modifier.size(13.dp)
                         )
+                        Text(
+                            text = "关闭",
+                            color = Color(0xFFF87171),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
                     }
+                }
 
+                // 右侧控制键群：[灵敏度] [Del]
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                ) {
                     // 灵敏度调节胶囊 (只保留 0.5x 和 2.0x)
                     Box(
                         modifier = Modifier
