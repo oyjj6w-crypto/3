@@ -263,104 +263,8 @@ fun TradingMultiViewScreen(
                             }
                         }
                     }
-                }
 
-                Spacer(modifier = Modifier.width(6.dp))
-
-                // ================= 油猴快捷 3 视窗动作组 (隐藏画线 · 磁力吸附 · 翻转K线 · 全局缩放 · 缩放锁定) =================
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    // 1. 隐藏/恢复画线 (Ctrl+Alt+H)：单击直接执行(0ms延迟)，长按弹出选择窗口
-                    Box(
-                        modifier = Modifier
-                            .size(30.dp)
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(
-                                if (showHideDrawingsDialog) Color(0xFF0284C7)
-                                else Color(0xFF1E293B)
-                            )
-                            .border(
-                                width = 1.dp,
-                                color = if (showHideDrawingsDialog) Color(0xFF38BDF8) else Color(0xFF334155),
-                                shape = RoundedCornerShape(6.dp)
-                            )
-                            .combinedClickable(
-                                onClick = { viewModel.triggerHideDrawings(delayMs = 0L, context = context) },
-                                onLongClick = { showHideDrawingsDialog = true }
-                            ),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.VisibilityOff,
-                            contentDescription = "隐藏/恢复画线",
-                            tint = if (showHideDrawingsDialog) Color.White else Color(0xFF38BDF8),
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
-
-                    // 2. 磁力吸附切换 (Magnet / Ctrl)：单击直接执行(0ms延迟)，长按弹出选择窗口
-                    val activeMagnetWin = uiState.windows.find { it.isMagnetActive }
-                    val isAnyMagnetActive = activeMagnetWin != null
-                    Box(
-                        modifier = Modifier
-                            .size(30.dp)
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(
-                                if (showMagnetDialog) Color(0xFFE11D48)
-                                else if (isAnyMagnetActive) Color(0xFFE11D48).copy(alpha = 0.35f)
-                                else Color(0xFF1E293B)
-                            )
-                            .border(
-                                width = 1.dp,
-                                color = if (showMagnetDialog) Color.White else if (isAnyMagnetActive) Color(0xFFFB7185) else Color(0xFF334155),
-                                shape = RoundedCornerShape(6.dp)
-                            )
-                            .combinedClickable(
-                                onClick = { viewModel.triggerToggleMagnet(delayMs = 0L, context = context) },
-                                onLongClick = { showMagnetDialog = true }
-                            ),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.CenterFocusStrong,
-                            contentDescription = "磁力吸附切换",
-                            tint = if (showMagnetDialog) Color.White else if (isAnyMagnetActive) Color(0xFFFB7185) else Color(0xFFCBD5E1),
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
-
-                    // 3. 4图翻转 K线 (Alt+I)：默认0ms延迟，单击直接对全部3/4个窗口执行翻转，长按弹出选择窗口
-                    Box(
-                        modifier = Modifier
-                            .size(30.dp)
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(
-                                if (showInvertDialog) Color(0xFF059669)
-                                else Color(0xFF1E293B)
-                            )
-                            .border(
-                                width = 1.dp,
-                                color = if (showInvertDialog) Color(0xFF34D399) else Color(0xFF334155),
-                                shape = RoundedCornerShape(6.dp)
-                            )
-                            .combinedClickable(
-                                onClick = { viewModel.triggerInvert4Charts(delayMs = 0L, context = context) },
-                                onLongClick = { showInvertDialog = true }
-                            ),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = "4",
-                            color = if (showInvertDialog) Color.White else Color(0xFF34D399),
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            fontFamily = FontFamily.Monospace
-                        )
-                    }
-
-                    // 4. 全局缩放按钮：单击循环切换固定分辨率基准，长按弹出全局缩放与分辨率选择对话框
+                    // 全局缩放按钮：紧跟在第四个最大化和隐藏窗口按钮后面
                     Box(
                         modifier = Modifier
                             .size(30.dp)
@@ -391,32 +295,11 @@ fun TradingMultiViewScreen(
 
                 Spacer(modifier = Modifier.width(6.dp))
 
-                // 右侧：全局控制区 (全局刷新 + 网址配置 + 屏幕旋转，全部统一 30dp 高度)
+                // 全局控制区 (全局刷新 + 网址配置 + 屏幕旋转，与油猴动作组互换位置移到前面)
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    // 版本与更新时间 (放在刷新按钮之前)
-                    Column(
-                        horizontalAlignment = Alignment.End,
-                        verticalArrangement = Arrangement.Center,
-                        modifier = Modifier.padding(end = 4.dp)
-                    ) {
-                        Text(
-                            text = "v2.7.0",
-                            color = Color(0xFF64748B),
-                            fontSize = 9.sp,
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = "2026-09-22 10:00",
-                            color = Color(0xFF475569),
-                            fontSize = 8.sp,
-                            fontFamily = FontFamily.Monospace
-                        )
-                    }
-
                     // 全局一键刷新按钮：标准 30dp x 30dp 方形，圆角 6dp
                     Box(
                         modifier = Modifier
@@ -481,6 +364,105 @@ fun TradingMultiViewScreen(
                             contentDescription = "旋转屏幕",
                             tint = Color(0xFF38BDF8),
                             modifier = Modifier.size(15.dp)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.width(6.dp))
+
+                // 油猴快捷 3 视窗动作组 (隐藏画线 · 磁力吸附 · 翻转K线，长度改为现有的2倍: 60.dp x 30.dp)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    // 1. 隐藏/恢复画线 (Ctrl+Alt+H)：单击直接执行(0ms延迟)，长按弹出选择窗口，长度 60dp
+                    Box(
+                        modifier = Modifier
+                            .width(60.dp)
+                            .height(30.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(
+                                if (showHideDrawingsDialog) Color(0xFF0284C7)
+                                else Color(0xFF1E293B)
+                            )
+                            .border(
+                                width = 1.dp,
+                                color = if (showHideDrawingsDialog) Color(0xFF38BDF8) else Color(0xFF334155),
+                                shape = RoundedCornerShape(6.dp)
+                            )
+                            .combinedClickable(
+                                onClick = { viewModel.triggerHideDrawings(delayMs = 0L, context = context) },
+                                onLongClick = { showHideDrawingsDialog = true }
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.VisibilityOff,
+                            contentDescription = "隐藏/恢复画线",
+                            tint = if (showHideDrawingsDialog) Color.White else Color(0xFF38BDF8),
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+
+                    // 2. 磁力吸附切换 (Magnet / Ctrl)：单击直接执行(0ms延迟)，长按弹出选择窗口，长度 60dp
+                    val activeMagnetWin = uiState.windows.find { it.isMagnetActive }
+                    val isAnyMagnetActive = activeMagnetWin != null
+                    Box(
+                        modifier = Modifier
+                            .width(60.dp)
+                            .height(30.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(
+                                if (showMagnetDialog) Color(0xFFE11D48)
+                                else if (isAnyMagnetActive) Color(0xFFE11D48).copy(alpha = 0.35f)
+                                else Color(0xFF1E293B)
+                            )
+                            .border(
+                                width = 1.dp,
+                                color = if (showMagnetDialog) Color.White else if (isAnyMagnetActive) Color(0xFFFB7185) else Color(0xFF334155),
+                                shape = RoundedCornerShape(6.dp)
+                            )
+                            .combinedClickable(
+                                onClick = { viewModel.triggerToggleMagnet(delayMs = 0L, context = context) },
+                                onLongClick = { showMagnetDialog = true }
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.CenterFocusStrong,
+                            contentDescription = "磁力吸附切换",
+                            tint = if (showMagnetDialog) Color.White else if (isAnyMagnetActive) Color(0xFFFB7185) else Color(0xFFCBD5E1),
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+
+                    // 3. 4图翻转 K线 (Alt+I)：默认0ms延迟，单击直接对全部3/4个窗口执行翻转，长按弹出选择窗口，长度 60dp
+                    Box(
+                        modifier = Modifier
+                            .width(60.dp)
+                            .height(30.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(
+                                if (showInvertDialog) Color(0xFF059669)
+                                else Color(0xFF1E293B)
+                            )
+                            .border(
+                                width = 1.dp,
+                                color = if (showInvertDialog) Color(0xFF34D399) else Color(0xFF334155),
+                                shape = RoundedCornerShape(6.dp)
+                            )
+                            .combinedClickable(
+                                onClick = { viewModel.triggerInvert4Charts(delayMs = 0L, context = context) },
+                                onLongClick = { showInvertDialog = true }
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "4",
+                            color = if (showInvertDialog) Color.White else Color(0xFF34D399),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace
                         )
                     }
                 }

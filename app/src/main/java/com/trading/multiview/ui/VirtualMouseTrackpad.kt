@@ -236,21 +236,38 @@ fun BoxScope.VirtualMouseOverlay(
                     }
                 }
 
-                // 最右侧：独立安全的关闭按钮 (具有独立背景和足够点击区域)
+                // 最右侧：Del 删除快捷键 (替换原来的 X 关闭按钮，彻底删除关闭按键)
                 Box(
                     modifier = Modifier
-                        .size(24.dp)
+                        .height(24.dp)
                         .clip(RoundedCornerShape(4.dp))
-                        .background(Color(0xFF334155).copy(alpha = 0.5f))
-                        .clickable { onClose() },
+                        .background(Color(0xFF2E1015))
+                        .border(1.dp, Color(0xFFEF4444).copy(alpha = 0.7f), RoundedCornerShape(4.dp))
+                        .clickable {
+                            val (absX, absY) = getAbsScreenPos(cursorPosition)
+                            PersistentWebViewPool.dispatchVirtualDeleteKey(absX, absY)
+                        }
+                        .padding(horizontal = 6.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Close,
-                        contentDescription = "关闭触控板",
-                        tint = Color(0xFF94A3B8),
-                        modifier = Modifier.size(14.dp)
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(3.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Delete,
+                            contentDescription = "Del 删除所选",
+                            tint = Color(0xFFF87171),
+                            modifier = Modifier.size(13.dp)
+                        )
+                        Text(
+                            text = "Del",
+                            color = Color(0xFFF87171),
+                            fontSize = 11.sp,
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
                 }
             }
 
@@ -374,8 +391,8 @@ fun BoxScope.VirtualMouseOverlay(
                         )
                     },
                     modifier = Modifier
-                        .weight(1.2f)
-                        .height(34.dp),
+                        .weight(1.0f)
+                        .height(36.dp),
                     shape = RoundedCornerShape(6.dp),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = Color(0xFF0284C7)
@@ -401,8 +418,8 @@ fun BoxScope.VirtualMouseOverlay(
                         )
                     },
                     modifier = Modifier
-                        .weight(1.1f)
-                        .height(34.dp),
+                        .weight(1.0f)
+                        .height(36.dp),
                     shape = RoundedCornerShape(6.dp),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = Color(0xFF334155)
@@ -429,8 +446,8 @@ fun BoxScope.VirtualMouseOverlay(
                         }
                     },
                     modifier = Modifier
-                        .weight(1.4f)
-                        .height(34.dp),
+                        .weight(1.3f)
+                        .height(36.dp),
                     shape = RoundedCornerShape(6.dp),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = if (isHoldingDown) Color(0xFF059669) else Color(0xFF1E293B)
@@ -449,13 +466,14 @@ fun BoxScope.VirtualMouseOverlay(
                     )
                 }
 
-                // 滚轮放大 (+)
+                // 滚轮放大 (+) - 明显放大
                 Box(
                     modifier = Modifier
-                        .size(34.dp)
+                        .weight(1.3f)
+                        .height(36.dp)
                         .clip(RoundedCornerShape(6.dp))
                         .background(Color(0xFF1E293B))
-                        .border(1.dp, Color(0xFF475569), RoundedCornerShape(6.dp))
+                        .border(1.dp, Color(0xFF38BDF8).copy(alpha = 0.7f), RoundedCornerShape(6.dp))
                         .clickable {
                             val (absX, absY) = getAbsScreenPos(cursorPosition)
                             PersistentWebViewPool.dispatchVirtualMouseScroll(absX, absY, 1.0f)
@@ -466,17 +484,18 @@ fun BoxScope.VirtualMouseOverlay(
                         imageVector = Icons.Default.ZoomIn,
                         contentDescription = "滚轮放大",
                         tint = Color(0xFF38BDF8),
-                        modifier = Modifier.size(16.dp)
+                        modifier = Modifier.size(22.dp)
                     )
                 }
 
-                // 滚轮缩小 (-)
+                // 滚轮缩小 (-) - 明显放大
                 Box(
                     modifier = Modifier
-                        .size(34.dp)
+                        .weight(1.3f)
+                        .height(36.dp)
                         .clip(RoundedCornerShape(6.dp))
                         .background(Color(0xFF1E293B))
-                        .border(1.dp, Color(0xFF475569), RoundedCornerShape(6.dp))
+                        .border(1.dp, Color(0xFF94A3B8).copy(alpha = 0.7f), RoundedCornerShape(6.dp))
                         .clickable {
                             val (absX, absY) = getAbsScreenPos(cursorPosition)
                             PersistentWebViewPool.dispatchVirtualMouseScroll(absX, absY, -1.0f)
@@ -487,41 +506,8 @@ fun BoxScope.VirtualMouseOverlay(
                         imageVector = Icons.Default.ZoomOut,
                         contentDescription = "滚轮缩小",
                         tint = Color(0xFF94A3B8),
-                        modifier = Modifier.size(16.dp)
+                        modifier = Modifier.size(22.dp)
                     )
-                }
-
-                // 删除快捷键 (Del / Backspace - 删除当前选中的画线或指标)
-                Box(
-                    modifier = Modifier
-                        .size(34.dp)
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(Color(0xFF2E1015))
-                        .border(1.dp, Color(0xFFEF4444).copy(alpha = 0.6f), RoundedCornerShape(6.dp))
-                        .clickable {
-                            val (absX, absY) = getAbsScreenPos(cursorPosition)
-                            PersistentWebViewPool.dispatchVirtualDeleteKey(absX, absY)
-                        },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Delete,
-                            contentDescription = "Del 删除所选",
-                            tint = Color(0xFFF87171),
-                            modifier = Modifier.size(13.dp)
-                        )
-                        Text(
-                            text = "Del",
-                            color = Color(0xFFF87171),
-                            fontSize = 8.sp,
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
                 }
             }
         }
