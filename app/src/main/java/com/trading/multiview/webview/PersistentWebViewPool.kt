@@ -1320,34 +1320,11 @@ object PersistentWebViewPool {
                     var cx = -1000;
                     var cy = -1000;
                     var el = document.body;
-                    
-                    var pMove = new PointerEvent('pointermove', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, pointerType: 'mouse' });
-                    var mMove = new MouseEvent('mousemove', { bubbles: true, cancelable: true, clientX: cx, clientY: cy });
-                    el.dispatchEvent(pMove);
-                    el.dispatchEvent(mMove);
-                    
-                    var pOut = new PointerEvent('pointerout', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, pointerType: 'mouse' });
-                    var pLeave = new PointerEvent('pointerleave', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, pointerType: 'mouse' });
-                    var mOut = new MouseEvent('mouseout', { bubbles: true, cancelable: true, clientX: cx, clientY: cy });
-                    var mLeave = new MouseEvent('mouseleave', { bubbles: true, cancelable: true, clientX: cx, clientY: cy });
-                    
-                    el.dispatchEvent(pOut);
-                    el.dispatchEvent(pLeave);
-                    el.dispatchEvent(mOut);
-                    el.dispatchEvent(mLeave);
-
-                    var iframes = document.querySelectorAll('iframe');
-                    for (var i = 0; i < iframes.length; i++) {
-                        try {
-                            var iframeDoc = iframes[i].contentDocument || iframes[i].contentWindow.document;
-                            var iframeEl = iframeDoc.body;
-                            iframeEl.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, pointerType: 'mouse' }));
-                            iframeEl.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, cancelable: true, clientX: cx, clientY: cy }));
-                            iframeEl.dispatchEvent(new PointerEvent('pointerout', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, pointerType: 'mouse' }));
-                            iframeEl.dispatchEvent(new PointerEvent('pointerleave', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, pointerType: 'mouse' }));
-                            iframeEl.dispatchEvent(new MouseEvent('mouseout', { bubbles: true, cancelable: true, clientX: cx, clientY: cy }));
-                            iframeEl.dispatchEvent(new MouseEvent('mouseleave', { bubbles: true, cancelable: true, clientX: cx, clientY: cy }));
-                        } catch(e) {}
+                    if (el) {
+                        el.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: cx, clientY: cy, pointerType: 'mouse' }));
+                        el.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: cx, clientY: cy }));
+                        el.dispatchEvent(new PointerEvent('pointerout', { bubbles: true, clientX: cx, clientY: cy, pointerType: 'mouse' }));
+                        el.dispatchEvent(new PointerEvent('pointerleave', { bubbles: true, clientX: cx, clientY: cy, pointerType: 'mouse' }));
                     }
                 } catch(e) {}
             })();
@@ -1359,17 +1336,44 @@ object PersistentWebViewPool {
             if (!wv.isShown) continue
             wv.post {
                 try {
+                    // 1. 发送位于边界角落 (1f, 1f) 的 hover move 事件。
+                    // 因为 1f, 1f 在 WebView 视口内，Android 系统会下发至 Chromium。
+                    // 从而使 Chromium 判定光标移开了 iframe 区域，向 TradingView 派发 leave 离场事件！
+                    val moveEvent = createMouseEvent(
+                        action = MotionEvent.ACTION_HOVER_MOVE,
+                        downTime = now,
+                        eventTime = now,
+                        x = 1f,
+                        y = 1f,
+                        buttonState = 0
+                    )
+                    wv.dispatchGenericMotionEvent(moveEvent)
+                    moveEvent.recycle()
+
+                    // 2. 发送 ACTION_HOVER_EXIT 事件，通知 WebView 光标彻底离开屏幕
                     val exitEvent = createMouseEvent(
                         action = MotionEvent.ACTION_HOVER_EXIT,
                         downTime = now,
                         eventTime = now,
-                        x = -1000f,
-                        y = -1000f,
+                        x = 1f,
+                        y = 1f,
                         buttonState = 0
                     )
                     wv.dispatchGenericMotionEvent(exitEvent)
                     exitEvent.recycle()
-                } catch (e: Exception) {}
+
+                    // 3. 同时发送一个 ACTION_CANCEL 触摸事件，以确保任何残存的触摸、滑动或拖拽手势重置
+                    val cancelEvent = MotionEvent.obtain(
+                        now, now,
+                        MotionEvent.ACTION_CANCEL,
+                        1f, 1f,
+                        0
+                    )
+                    wv.dispatchTouchEvent(cancelEvent)
+                    cancelEvent.recycle()
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
                 wv.evaluateJavascript(js, null)
             }
         }
