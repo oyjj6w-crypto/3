@@ -29,9 +29,6 @@ class MainActivity : ComponentActivity() {
         // 强制传感器横屏锁定 (Sensor Landscape，支持 180° 正反横屏倒转，禁止误切竖屏，保证 3 窗口最宽可视区)
         requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
 
-        // 保持屏幕常亮（看盘专用）
-        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-
         // 隐藏系统导航栏和状态栏，最大化横屏可视面积
         WindowCompat.setDecorFitsSystemWindows(window, false)
         val controller = WindowInsetsControllerCompat(window, window.decorView)

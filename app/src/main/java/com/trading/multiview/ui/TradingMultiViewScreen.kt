@@ -451,33 +451,73 @@ fun TradingMultiViewScreen(
                     }
 
                     // 3. 4图翻转 K线 (Alt+I)：默认0ms延迟，单击直接对全部3/4个窗口执行翻转，长按弹出选择窗口，长度 60dp
+                    val invertCooldownMs by viewModel.invertCooldownRemainingMs.collectAsState()
+                    val isInvertCooldownActive = invertCooldownMs > 0
+                    val cooldownSecondsTotal = (invertCooldownMs + 999) / 1000
+                    val cooldownMin = cooldownSecondsTotal / 60
+                    val cooldownSec = cooldownSecondsTotal % 60
+                    val cooldownText = if (cooldownMin > 0) {
+                        String.format(java.util.Locale.US, "%d:%02d", cooldownMin, cooldownSec)
+                    } else {
+                        "${cooldownSec}s"
+                    }
+
                     Box(
                         modifier = Modifier
                             .width(60.dp)
                             .height(30.dp)
                             .clip(RoundedCornerShape(6.dp))
                             .background(
-                                if (showInvertDialog) Color(0xFF059669)
-                                else Color(0xFF1E293B)
+                                when {
+                                    isInvertCooldownActive -> Color(0xFF1E293B).copy(alpha = 0.5f)
+                                    showInvertDialog -> Color(0xFF059669)
+                                    else -> Color(0xFF1E293B)
+                                }
                             )
                             .border(
                                 width = 1.dp,
-                                color = if (showInvertDialog) Color(0xFF34D399) else Color(0xFF334155),
+                                color = when {
+                                    isInvertCooldownActive -> Color(0xFF374151).copy(alpha = 0.5f)
+                                    showInvertDialog -> Color(0xFF34D399)
+                                    else -> Color(0xFF334155)
+                                },
                                 shape = RoundedCornerShape(6.dp)
                             )
                             .combinedClickable(
-                                onClick = { viewModel.triggerInvert4Charts(delayMs = 0L, context = context) },
-                                onLongClick = { showInvertDialog = true }
+                                onClick = {
+                                    if (isInvertCooldownActive) {
+                                        android.widget.Toast.makeText(context, "K线翻转按钮冷却中！剩余时间: ${cooldownText}", android.widget.Toast.LENGTH_SHORT).show()
+                                    } else {
+                                        viewModel.triggerInvert4Charts(delayMs = 0L, context = context)
+                                    }
+                                },
+                                onLongClick = {
+                                    if (isInvertCooldownActive) {
+                                        android.widget.Toast.makeText(context, "K线翻转按钮冷却中！剩余时间: ${cooldownText}", android.widget.Toast.LENGTH_SHORT).show()
+                                    } else {
+                                        showInvertDialog = true
+                                    }
+                                }
                             ),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text(
-                            text = "4",
-                            color = if (showInvertDialog) Color.White else Color(0xFF34D399),
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            fontFamily = FontFamily.Monospace
-                        )
+                        if (isInvertCooldownActive) {
+                            Text(
+                                text = cooldownText,
+                                color = Color(0xFFEF4444),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = FontFamily.Monospace
+                            )
+                        } else {
+                            Text(
+                                text = "4",
+                                color = if (showInvertDialog) Color.White else Color(0xFF34D399),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = FontFamily.Monospace
+                            )
+                        }
                     }
                 }
             }
@@ -1055,6 +1095,92 @@ fun TradingMultiViewScreen(
             }
         )
     }
+
+    // 15分钟停留满5秒倒计时翻转不可取消弹窗
+    val showCountdown by viewModel.showInvertCountdownDialog.collectAsState()
+    val countdownSeconds by viewModel.invertCountdownSeconds.collectAsState()
+
+    if (showCountdown) {
+        Dialog(
+            onDismissRequest = {}, // 不允许点击外部或返回键取消
+            properties = DialogProperties(
+                dismissOnBackPress = false,
+                dismissOnClickOutside = false,
+                usePlatformDefaultWidth = false
+            )
+        ) {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1B4B)), // 靛蓝紫色偏警示底色
+                border = BorderStroke(2.dp, Color(0xFFEF4444)), // 亮红边框
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier
+                    .width(360.dp)
+                    .padding(16.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(20.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(56.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFFFEF2F2)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Warning,
+                            contentDescription = "警报",
+                            tint = Color(0xFFEF4444),
+                            modifier = Modifier.size(32.dp)
+                        )
+                    }
+
+                    Text(
+                        text = "🚨 前台停留超时提醒",
+                        color = Color.White,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+
+                    Text(
+                        text = "当前标签页已在前台累计停留满 15 分钟！系统即将执行自动强制 K 线翻转干预程序。",
+                        color = Color(0xFFE2E8F0),
+                        fontSize = 13.sp,
+                        textAlign = TextAlign.Center,
+                        lineHeight = 18.sp
+                    )
+
+                    // 倒计时特大红字圈
+                    Box(
+                        modifier = Modifier
+                            .size(72.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFFEF4444).copy(alpha = 0.2f))
+                            .border(2.dp, Color(0xFFEF4444), CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = countdownSeconds.toString(),
+                            color = Color(0xFFFCA5A5),
+                            fontSize = 32.sp,
+                            fontWeight = FontWeight.ExtraBold
+                        )
+                    }
+
+                    Text(
+                        text = "将在 $countdownSeconds 秒后自动强制翻转 K 线图\n此过程不可撤销且之后将禁用翻转按钮 10 分钟",
+                        color = Color(0xFFF87171),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        textAlign = TextAlign.Center,
+                        lineHeight = 16.sp
+                    )
+                }
+            }
+        }
+    }
 }
 
 /**
@@ -1434,6 +1560,61 @@ fun GroupConfigDialog(
                     color = Color(0xFF94A3B8)
                 )
 
+                // 15分钟前台停留自动翻转配置
+                val dialogCtx = LocalContext.current
+                var isReminderEnabled by remember(group.id) {
+                    mutableStateOf(
+                        dialogCtx.getSharedPreferences("trading_multiview_prefs", Context.MODE_PRIVATE)
+                            .getBoolean("invert_reminder_enabled_${group.id}", false)
+                    )
+                }
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(if (isReminderEnabled) Color(0xFF064E3B).copy(alpha = 0.6f) else Color(0xFF1E293B))
+                        .border(
+                            1.dp,
+                            if (isReminderEnabled) Color(0xFF10B981) else Color(0xFF334155),
+                            RoundedCornerShape(8.dp)
+                        )
+                        .clickable {
+                            isReminderEnabled = !isReminderEnabled
+                        }
+                        .padding(10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "⏰ 15分钟停留自动翻转K线",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (isReminderEnabled) Color(0xFF34D399) else Color.White
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = "前台累计停留 15 分钟将自动弹窗 5 秒倒计时并强制翻转 K 线 (Alt+I)，之后禁用该功能 10 分钟以防频繁触发。",
+                            fontSize = 9.sp,
+                            lineHeight = 13.sp,
+                            color = if (isReminderEnabled) Color(0xFFA7F3D0) else Color(0xFF94A3B8)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Box(
+                        modifier = Modifier
+                            .size(18.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(if (isReminderEnabled) Color(0xFF10B981) else Color(0xFF475569)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (isReminderEnabled) {
+                            Text("✓", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.End,
@@ -1444,7 +1625,13 @@ fun GroupConfigDialog(
                     }
                     Spacer(modifier = Modifier.width(8.dp))
                     Button(
-                        onClick = { onConfirm(groupName, selectedWindowCount) },
+                        onClick = {
+                            dialogCtx.getSharedPreferences("trading_multiview_prefs", Context.MODE_PRIVATE)
+                                .edit()
+                                .putBoolean("invert_reminder_enabled_${group.id}", isReminderEnabled)
+                                .apply()
+                            onConfirm(groupName, selectedWindowCount)
+                        },
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
                         shape = RoundedCornerShape(6.dp)
                     ) {

@@ -3,7 +3,9 @@ package com.trading.multiview.viewmodel
 import android.content.Context
 import android.webkit.WebView
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
 import com.trading.multiview.webview.PersistentWebViewPool
+import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -174,6 +176,25 @@ class TradingViewModel : ViewModel() {
     private val _uiState = MutableStateFlow(MultiViewUiState())
     val uiState: StateFlow<MultiViewUiState> = _uiState.asStateFlow()
 
+    // 存储每个分组的累计前台停留时间（毫秒）
+    private val _groupStayTimeMap = MutableStateFlow<Map<String, Long>>(emptyMap())
+    val groupStayTimeMap: StateFlow<Map<String, Long>> = _groupStayTimeMap.asStateFlow()
+
+    // 翻转 K 线冷却时间倒计时（毫秒），10分钟内禁用该按键
+    private val _invertCooldownRemainingMs = MutableStateFlow(0L)
+    val invertCooldownRemainingMs: StateFlow<Long> = _invertCooldownRemainingMs.asStateFlow()
+
+    // 倒计时弹窗显隐
+    private val _showInvertCountdownDialog = MutableStateFlow(false)
+    val showInvertCountdownDialog: StateFlow<Boolean> = _showInvertCountdownDialog.asStateFlow()
+
+    // 弹窗倒计时秒数 (5秒倒计时)
+    private val _invertCountdownSeconds = MutableStateFlow(5)
+    val invertCountdownSeconds: StateFlow<Int> = _invertCountdownSeconds.asStateFlow()
+
+    // 处于倒计时中的分组 ID
+    private var countingGroupId: String? = null
+
     private val handler = android.os.Handler(android.os.Looper.getMainLooper())
     private var autoHideRunnable: Runnable? = null
 
@@ -195,6 +216,69 @@ class TradingViewModel : ViewModel() {
         // 挂载网页标题变更监听（如 TradingView 跳价更正，仅更新标签栏文字，不触碰 URL）
         PersistentWebViewPool.onTitleChanged = { windowId, pageTitle ->
             updateWindowTitle(windowId, pageTitle)
+        }
+
+        // 开启 15分钟前台停留检测与自动翻转后台轮询
+        startBackgroundStayTimer()
+    }
+
+    private fun startBackgroundStayTimer() {
+        viewModelScope.launch {
+            while (isActive) {
+                delay(1000L)
+                val activeId = _uiState.value.activeGroupId
+                val ctx = PersistentWebViewPool.appContext
+
+                // 1. 处理 K线翻转 10分钟冷却计时
+                if (_invertCooldownRemainingMs.value > 0) {
+                    _invertCooldownRemainingMs.update { (it - 1000L).coerceAtLeast(0L) }
+                }
+
+                // 2. 如果正在展示倒计时弹窗，不增加前台时间，而在此处倒数
+                if (_showInvertCountdownDialog.value) {
+                    if (_invertCountdownSeconds.value > 1) {
+                        _invertCountdownSeconds.update { it - 1 }
+                    } else {
+                        _showInvertCountdownDialog.value = false
+                        countingGroupId?.let { gId ->
+                            // 倒计时结束，强行触发翻转 K线按钮 (Alt+I)
+                            triggerInvert4Charts(targets = null, delayMs = 0L, context = ctx)
+                            // 强行开启 10分钟 (600,000ms) 禁用翻转冷却
+                            _invertCooldownRemainingMs.value = 600_000L
+                            // 重置当前分组停留计数，开启下一个 15 分钟循环
+                            _groupStayTimeMap.update { currentMap ->
+                                val updated = currentMap.toMutableMap()
+                                updated[gId] = 0L
+                                updated
+                            }
+                        }
+                        countingGroupId = null
+                    }
+                    continue
+                }
+
+                // 3. 累计前台停留时间 (包含切换走再切换回来的累加情况)
+                if (ctx != null) {
+                    val prefs = ctx.getSharedPreferences("trading_multiview_prefs", Context.MODE_PRIVATE)
+                    val isReminderEnabled = prefs.getBoolean("invert_reminder_enabled_$activeId", false)
+                    if (isReminderEnabled) {
+                        _groupStayTimeMap.update { currentMap ->
+                            val updated = currentMap.toMutableMap()
+                            val prevTime = updated[activeId] ?: 0L
+                            val nextTime = prevTime + 1000L
+                            updated[activeId] = nextTime
+
+                            // 15分钟 = 15 * 60 * 1000 = 900,000 毫秒
+                            if (nextTime >= 900_000L) {
+                                _invertCountdownSeconds.value = 5
+                                _showInvertCountdownDialog.value = true
+                                countingGroupId = activeId
+                            }
+                            updated
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -1031,6 +1115,14 @@ class TradingViewModel : ViewModel() {
      * 全部视窗同步：翻转K线图 - 单图/默认
      */
     fun triggerInvertChart(context: Context? = null) {
+        if (_invertCooldownRemainingMs.value > 0) {
+            context?.let {
+                val remainingSeconds = (_invertCooldownRemainingMs.value + 999) / 1000
+                val text = "K线翻转按钮冷却中！剩余时间: ${remainingSeconds / 60}分${remainingSeconds % 60}秒"
+                android.widget.Toast.makeText(it, text, android.widget.Toast.LENGTH_SHORT).show()
+            }
+            return
+        }
         PersistentWebViewPool.dispatchTradingViewAction("invert", customDelayMs = 0L)
         context?.let {
             android.widget.Toast.makeText(it, "已同步向全部窗口触发: 翻转K线图 (Alt+I)", android.widget.Toast.LENGTH_SHORT).show()
@@ -1041,6 +1133,14 @@ class TradingViewModel : ViewModel() {
      * 4图布局翻转 K 线图 (Alt+I)：默认对当前标签页内 3/4 个窗口都生效，单击直接执行，延迟默认 0ms
      */
     fun triggerInvert4Charts(targets: Set<Int>? = null, delayMs: Long = 0L, context: Context? = null) {
+        if (_invertCooldownRemainingMs.value > 0) {
+            context?.let {
+                val remainingSeconds = (_invertCooldownRemainingMs.value + 999) / 1000
+                val text = "K线翻转按钮冷却中！剩余时间: ${remainingSeconds / 60}分${remainingSeconds % 60}秒"
+                android.widget.Toast.makeText(it, text, android.widget.Toast.LENGTH_SHORT).show()
+            }
+            return
+        }
         val count = _uiState.value.currentWindowCount
         val validTargets = (targets ?: (1..count).toSet()).filter { it in 1..count }.toSet().ifEmpty { (1..count).toSet() }
         PersistentWebViewPool.dispatchTradingViewAction("invert4", validTargets, customDelayMs = delayMs)
@@ -1055,6 +1155,14 @@ class TradingViewModel : ViewModel() {
      * 全部视窗同步：8图布局翻转 K 线图 (双排 8 图依次激活并翻转)
      */
     fun triggerInvert8Charts(context: Context? = null) {
+        if (_invertCooldownRemainingMs.value > 0) {
+            context?.let {
+                val remainingSeconds = (_invertCooldownRemainingMs.value + 999) / 1000
+                val text = "K线翻转按钮冷却中！剩余时间: ${remainingSeconds / 60}分${remainingSeconds % 60}秒"
+                android.widget.Toast.makeText(it, text, android.widget.Toast.LENGTH_SHORT).show()
+            }
+            return
+        }
         PersistentWebViewPool.dispatchTradingViewAction("invert8")
         context?.let {
             android.widget.Toast.makeText(it, "已同步触发 8 图布局依次翻转 K 线 (Alt+I)", android.widget.Toast.LENGTH_SHORT).show()
@@ -1091,6 +1199,14 @@ class TradingViewModel : ViewModel() {
     }
 
     fun triggerSingleInvert(windowId: Int, context: Context? = null) {
+        if (_invertCooldownRemainingMs.value > 0) {
+            context?.let {
+                val remainingSeconds = (_invertCooldownRemainingMs.value + 999) / 1000
+                val text = "K线翻转按钮冷却中！剩余时间: ${remainingSeconds / 60}分${remainingSeconds % 60}秒"
+                android.widget.Toast.makeText(it, text, android.widget.Toast.LENGTH_SHORT).show()
+            }
+            return
+        }
         PersistentWebViewPool.dispatchSingleTradingViewAction(windowId, "invert4")
         context?.let {
             android.widget.Toast.makeText(it, "已向窗口 $windowId 单独触发: 从上往下4个 K 线图的翻转 (Alt+I)", android.widget.Toast.LENGTH_SHORT).show()
