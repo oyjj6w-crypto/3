@@ -321,6 +321,10 @@ class TradingViewModel : ViewModel() {
         val targetGroupZoom = PersistentWebViewPool.getSavedZoomForGroup(context, groupId)
         PersistentWebViewPool.currentZoomPercent = targetGroupZoom
 
+        // 读取目标标签页独立保存的固定像素基准并应用
+        val targetPixelWidth = PersistentWebViewPool.getSavedFixedPixelWidthForGroup(context, groupId)
+        PersistentWebViewPool.setFixedPixelWidthForGroup(groupId, targetPixelWidth)
+
         // 方案 A: 从 SharedPreferences 中读取该标签页每个窗口之前是否被用户隐藏
         val prefs = context?.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
@@ -349,7 +353,8 @@ class TradingViewModel : ViewModel() {
                 groups = updatedGroups,
                 windows = updatedWindows,
                 activeGroupId = groupId,
-                globalZoomPercent = targetGroupZoom
+                globalZoomPercent = targetGroupZoom,
+                fixedPixelWidth = targetPixelWidth
             )
         }
 
@@ -534,9 +539,9 @@ class TradingViewModel : ViewModel() {
                 )
             }
 
-            // 4. 读取并恢复固定像素基准与当前活跃标签页的专属缩放比例
-            val savedPixelWidth = prefs.getInt(KEY_FIXED_PIXEL_WIDTH, 1280)
-            PersistentWebViewPool.setFixedPixelWidth(savedPixelWidth)
+            // 4. 读取并恢复当前活跃标签页的专属固定像素基准与缩放比例
+            val savedPixelWidth = prefs.getInt("group_${validActiveGroupId}_fixed_pixel_width", 1280)
+            PersistentWebViewPool.setFixedPixelWidthForGroup(validActiveGroupId, savedPixelWidth)
             val savedGroupZoom = PersistentWebViewPool.getSavedZoomForGroup(context, validActiveGroupId)
             PersistentWebViewPool.currentZoomPercent = savedGroupZoom
             (1..4).forEach { winId ->
@@ -619,18 +624,18 @@ class TradingViewModel : ViewModel() {
     }
 
     /**
-     * 动态热切换固定像素基准 (960px / 1280px / 1440px / 1920px) 并持久化
-     * 通过 evaluateJavascript 实时注入与热更新 DOM 视口，无需刷新页面，不中断 WebSocket 行情流！
+     * 动态热切换固定像素基准并对当前标签页独立持久化保存
      */
     fun setFixedPixelWidth(width: Int, context: Context? = null) {
-        PersistentWebViewPool.setFixedPixelWidth(width)
+        val activeGroupId = _uiState.value.activeGroupId
+        PersistentWebViewPool.setFixedPixelWidthForGroup(activeGroupId, width)
         _uiState.update { it.copy(fixedPixelWidth = width) }
         val ctx = context ?: PersistentWebViewPool.appContext
         if (ctx != null) {
             try {
                 ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                     .edit()
-                    .putInt(KEY_FIXED_PIXEL_WIDTH, width)
+                    .putInt("group_${activeGroupId}_fixed_pixel_width", width)
                     .apply()
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -639,9 +644,10 @@ class TradingViewModel : ViewModel() {
     }
 
     /**
-     * 顶部栏快捷胶囊循环切换分辨率基准并持久化
+     * 顶部栏快捷胶囊循环切换当前标签页的分辨率基准并独立持久化保存
      */
     fun cycleFixedPixelWidth(context: Context? = null) {
+        val activeGroupId = _uiState.value.activeGroupId
         val nextWidth = PersistentWebViewPool.cycleFixedPixelWidth()
         _uiState.update { it.copy(fixedPixelWidth = nextWidth) }
         val ctx = context ?: PersistentWebViewPool.appContext
@@ -649,7 +655,7 @@ class TradingViewModel : ViewModel() {
             try {
                 ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                     .edit()
-                    .putInt(KEY_FIXED_PIXEL_WIDTH, nextWidth)
+                    .putInt("group_${activeGroupId}_fixed_pixel_width", nextWidth)
                     .apply()
             } catch (e: Exception) {
                 e.printStackTrace()

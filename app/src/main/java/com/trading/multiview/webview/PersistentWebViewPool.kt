@@ -202,7 +202,28 @@ object PersistentWebViewPool {
     // 默认 1280px 标准桌面基准
     private var _fixedPixelWidth: Int = 1280
     val fixedPixelWidth: Int
-        get() = _fixedPixelWidth
+        get() = getSavedFixedPixelWidthForGroup(appContext, currentGroupId)
+
+    fun getSavedFixedPixelWidthForGroup(context: Context? = null, groupId: String): Int {
+        val ctx = context ?: appContext ?: return 1280
+        return try {
+            val prefs = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            prefs.getInt("group_${groupId}_fixed_pixel_width", 1280).coerceIn(960, 1920)
+        } catch (e: Exception) {
+            1280
+        }
+    }
+
+    fun saveFixedPixelWidthForGroup(groupId: String, width: Int, context: Context? = null) {
+        val ctx = context ?: appContext ?: return
+        try {
+            val editor = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+            editor.putInt("group_${groupId}_fixed_pixel_width", width.coerceIn(960, 1920))
+            editor.apply()
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
 
     // 默认保存当前用户设定的全局缩放比例 (默认 100%)
     var currentZoomPercent: Int = 100
@@ -234,8 +255,8 @@ object PersistentWebViewPool {
      */
     fun injectDesktopViewport(
         webView: WebView,
-        targetPixelWidth: Int = fixedPixelWidth,
-        zoomPercent: Int = currentZoomPercent,
+        targetPixelWidth: Int? = null,
+        zoomPercent: Int? = null,
         force: Boolean = false
     ) {
         val windowId = when (val tag = webView.tag) {
@@ -243,6 +264,11 @@ object PersistentWebViewPool {
             is Int -> "${currentGroupId}_$tag"
             else -> webViewMap.entries.find { it.value == webView }?.key
         }
+        val ownerGroupId = windowId?.substringBeforeLast("_") ?: currentGroupId
+
+        val actualPixelWidth = targetPixelWidth ?: getSavedFixedPixelWidthForGroup(webView.context, ownerGroupId)
+        val actualZoomPercent = zoomPercent ?: getSavedZoomForGroup(webView.context, ownerGroupId)
+
         val metrics = webView.context.resources.displayMetrics
         val density = metrics.density
         // 获取当前视窗在当前屏幕密度下的精确 CSS 像素宽度 (dp)
@@ -251,12 +277,12 @@ object PersistentWebViewPool {
         } else {
             (metrics.widthPixels / density) / 3f
         }
-        val desktopWidth = targetPixelWidth.toFloat()
-        val zoomFactor = (zoomPercent.coerceIn(50, 250)) / 100f
+        val desktopWidth = actualPixelWidth.toFloat()
+        val zoomFactor = (actualZoomPercent.coerceIn(50, 250)) / 100f
         val calculatedScale = ((widthDp / desktopWidth) * zoomFactor).coerceIn(0.10f, 3.0f)
         val scaleStr = String.format(java.util.Locale.US, "%.4f", calculatedScale)
 
-        val cacheKey = "${targetPixelWidth}_${scaleStr}"
+        val cacheKey = "${actualPixelWidth}_${scaleStr}"
         val lastScale = if (windowId != null) appliedScaleFloatMap[windowId] else null
         val scaleChanged = lastScale == null || Math.abs(calculatedScale - lastScale) >= 0.02f
         if (!force && !scaleChanged) {
@@ -276,7 +302,7 @@ object PersistentWebViewPool {
             // 极速路径：针对窗口尺寸改变 (如隐藏窗口、切换 3/4 屏)，热更新 meta 标签并瞬间触发 window 与 iframe resize，耗时 < 1ms！
             """
             (function() {
-                var c = 'width=' + $targetPixelWidth + ', initial-scale=' + '$scaleStr' + ', minimum-scale=0.1, maximum-scale=5.0, user-scalable=yes';
+                var c = 'width=' + $actualPixelWidth + ', initial-scale=' + '$scaleStr' + ', minimum-scale=0.1, maximum-scale=5.0, user-scalable=yes';
                 window.__targetViewportContent = c;
                 var m = document.querySelector('meta[name="viewport"]');
                 if (m) {
@@ -315,7 +341,7 @@ object PersistentWebViewPool {
             // 完整路径：页面刚加载时注入完整 MutationObserver 与 PC 平台模拟标头
             """
             (function() {
-                var targetWidth = $targetPixelWidth;
+                var targetWidth = $actualPixelWidth;
                 var targetScale = '$scaleStr';
                 var targetContent = 'width=' + targetWidth + ', initial-scale=' + targetScale + ', minimum-scale=0.1, maximum-scale=5.0, user-scalable=yes';
                 window.__targetViewportContent = targetContent;
@@ -401,15 +427,28 @@ object PersistentWebViewPool {
     }
 
     /**
-     * 动态热切换固定像素桌面视口基准 (960px / 1280px / 1440px / 1920px)
-     * 通过 evaluateJavascript 实时更新 DOM 视口，无需刷新页面，不中断 WebSocket 行情流
+     * 每个分组独立设置与保存的动态热切换固定像素桌面视口基准 (960px / 1280px / 1440px / 1920px)
+     */
+    fun setFixedPixelWidthForGroup(groupId: String, newWidth: Int) {
+        saveFixedPixelWidthForGroup(groupId, newWidth, appContext)
+        appliedScaleMap.keys.filter { it.startsWith("${groupId}_") }.forEach { key ->
+            appliedScaleMap.remove(key)
+            appliedScaleFloatMap.remove(key)
+        }
+        // 仅对该分组下的 WebView 进行实时注入与更新
+        (1..4).forEach { winId ->
+            val webView = getWebViewForGroup(groupId, winId)
+            if (webView != null) {
+                injectDesktopViewport(webView, targetPixelWidth = newWidth, force = true)
+            }
+        }
+    }
+
+    /**
+     * 动态热切换当前分组固定像素桌面视口基准 (兼容旧接口)
      */
     fun setFixedPixelWidth(newWidth: Int) {
-        _fixedPixelWidth = newWidth
-        appliedScaleMap.clear()
-        webViewMap.forEach { (_, webView) ->
-            injectDesktopViewport(webView, targetPixelWidth = newWidth, force = true)
-        }
+        setFixedPixelWidthForGroup(currentGroupId, newWidth)
     }
 
     /**
@@ -428,14 +467,15 @@ object PersistentWebViewPool {
     }
 
     /**
-     * 循环切换下一个预设固定像素基准
+     * 循环切换下一个预设固定像素基准 (针对当前分组独立生效)
      */
     fun cycleFixedPixelWidth(): Int {
         val widths = PRESET_FIXED_PIXEL_WIDTHS.map { it.width }
-        val currentIndex = widths.indexOf(fixedPixelWidth)
+        val currentWidth = getSavedFixedPixelWidthForGroup(appContext, currentGroupId)
+        val currentIndex = widths.indexOf(currentWidth)
         val nextIndex = if (currentIndex in widths.indices) (currentIndex + 1) % widths.size else 1
         val nextWidth = widths[nextIndex]
-        setFixedPixelWidth(nextWidth)
+        setFixedPixelWidthForGroup(currentGroupId, nextWidth)
         return nextWidth
     }
 
