@@ -417,9 +417,7 @@ class TradingViewModel : ViewModel() {
             val targetGroup = loadedGroups.find { it.id == validActiveGroupId }
             val currentWindows = _uiState.value.windows.map { win ->
                 val savedUrl = prefs.getString("${KEY_WINDOW_URL_PREFIX}${validActiveGroupId}_${win.id}", null)?.takeIf { it.isNotBlank() }
-                    ?: (if (validActiveGroupId == "preset_1") prefs.getString("${KEY_WINDOW_URL_PREFIX}${win.id}", null)?.takeIf { it.isNotBlank() } else null)
                 val savedTitle = prefs.getString("${KEY_WINDOW_TITLE_PREFIX}${validActiveGroupId}_${win.id}", null)?.takeIf { it.isNotBlank() }
-                    ?: (if (validActiveGroupId == "preset_1") prefs.getString("${KEY_WINDOW_TITLE_PREFIX}${win.id}", null) else null)
                 val groupItem = targetGroup?.items?.getOrNull(win.id - 1)
 
                 val targetUrl = savedUrl ?: groupItem?.url?.takeIf { it.isNotBlank() } ?: win.currentUrl
@@ -675,6 +673,25 @@ class TradingViewModel : ViewModel() {
      */
     fun goForward(windowId: Int): Boolean {
         return PersistentWebViewPool.goForward(windowId)
+    }
+
+    /**
+     * 一站式更新分组配置 (同时更新分组名称与独立视窗数量)
+     */
+    fun updateGroupConfig(groupId: String, newName: String, count: Int, context: Context? = null) {
+        val trimmed = newName.trim().ifEmpty { "未命名" }
+        val safeCount = count.coerceIn(3, 4)
+        _uiState.update { state ->
+            val updated = state.groups.map { g ->
+                if (g.id == groupId) g.copy(name = trimmed, windowCount = safeCount) else g
+            }
+            if (groupId == state.activeGroupId) {
+                PersistentWebViewPool.setWindowActive(4, safeCount >= 4)
+            }
+            persistAllGroupsToPrefs(updated, activeGroupId = state.activeGroupId, context = context)
+            state.copy(groups = updated)
+        }
+        PersistentWebViewPool.triggerImmediateResize()
     }
 
     /**

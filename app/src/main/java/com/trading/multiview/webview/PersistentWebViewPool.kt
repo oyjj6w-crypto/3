@@ -47,7 +47,6 @@ object PersistentWebViewPool {
         return try {
             val prefs = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             prefs.getString("${KEY_WINDOW_URL_PREFIX}${groupId}_$windowId", null)?.takeIf { it.isNotBlank() }
-                ?: (if (groupId == "preset_1") prefs.getString("${KEY_WINDOW_URL_PREFIX}$windowId", null)?.takeIf { it.isNotBlank() } else null)
         } catch (e: Exception) {
             null
         }
@@ -58,7 +57,6 @@ object PersistentWebViewPool {
         return try {
             val prefs = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             prefs.getString("${KEY_WINDOW_TITLE_PREFIX}${groupId}_$windowId", null)?.takeIf { it.isNotBlank() }
-                ?: (if (groupId == "preset_1") prefs.getString("${KEY_WINDOW_TITLE_PREFIX}$windowId", null)?.takeIf { it.isNotBlank() } else null)
         } catch (e: Exception) {
             null
         }
@@ -116,26 +114,34 @@ object PersistentWebViewPool {
         return when (groupId) {
             "preset_1" -> {
                 when (windowId) {
-                    1 -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:BTCUSDT&interval=15&theme=dark"
-                    2 -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:ETHUSDT&interval=15&theme=dark"
-                    3 -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:SOLUSDT&interval=15&theme=dark"
-                    else -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:BNBUSDT&interval=15&theme=dark"
+                    1 -> "https://www.tradingview.com"
+                    2 -> "https://www.tradingview.com"
+                    3 -> "https://www.tradingview.com"
+                    else -> "https://www.tradingview.com"
                 }
             }
             "preset_2" -> {
                 when (windowId) {
-                    1 -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:BTCUSDT&interval=60&theme=dark"
-                    2 -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:ETHUSDT&interval=60&theme=dark"
-                    3 -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:SOLUSDT&interval=60&theme=dark"
-                    else -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:BNBUSDT&interval=60&theme=dark"
+                    1 -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:BTCUSDT&interval=15&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1"
+                    2 -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:ETHUSDT&interval=60&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1"
+                    3 -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:SOLUSDT&interval=240&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1"
+                    else -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:DOGEUSDT&interval=15&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1"
                 }
             }
             "preset_3" -> {
                 when (windowId) {
-                    1 -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:BTCUSDT&interval=240&theme=dark"
-                    2 -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:ETHUSDT&interval=240&theme=dark"
-                    3 -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:SOLUSDT&interval=240&theme=dark"
-                    else -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:BNBUSDT&interval=240&theme=dark"
+                    1 -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:BNBUSDT&interval=15&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1"
+                    2 -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:AVAXUSDT&interval=60&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1"
+                    3 -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:NEARUSDT&interval=240&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1"
+                    else -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:PEPEUSDT&interval=15&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1"
+                }
+            }
+            "preset_4" -> {
+                when (windowId) {
+                    1 -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:SUIUSDT&interval=15&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1"
+                    2 -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:APTUSDT&interval=60&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1"
+                    3 -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:LINKUSDT&interval=240&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1"
+                    else -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:RENDERUSDT&interval=15&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1"
                 }
             }
             else -> {

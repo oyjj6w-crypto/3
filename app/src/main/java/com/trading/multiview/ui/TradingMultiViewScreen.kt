@@ -85,6 +85,7 @@ fun TradingMultiViewScreen(
     val uiState by viewModel.uiState.collectAsState()
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
+    val floatingPrefs = remember(context) { context.getSharedPreferences(PersistentWebViewPool.PREFS_NAME, Context.MODE_PRIVATE) }
     var showSaveDialog by remember { mutableStateOf(false) }
     var showGroupConfigDialog by remember { mutableStateOf(false) }
     var targetGroupForConfig by remember { mutableStateOf<TabGroup?>(null) }
@@ -95,9 +96,15 @@ fun TradingMultiViewScreen(
     var showGlobalZoomDialog by remember { mutableStateOf(false) }
     var showReorderDialog by remember { mutableStateOf(false) }
     var showLatestKlineDialog by remember { mutableStateOf(false) }
-    var latestKlineFloatingButtonOffsetY by remember { mutableStateOf(0f) }
-    var mouseFloatingButtonOffsetY by remember { mutableStateOf(-56f) }
-    var timeframeFloatingButtonOffsetY by remember { mutableStateOf(56f) }
+    var latestKlineFloatingButtonOffsetY by remember {
+        mutableStateOf(floatingPrefs.getFloat("floating_latest_kline_offset_y", 0f))
+    }
+    var mouseFloatingButtonOffsetY by remember {
+        mutableStateOf(floatingPrefs.getFloat("floating_mouse_offset_y", -56f))
+    }
+    var timeframeFloatingButtonOffsetY by remember {
+        mutableStateOf(floatingPrefs.getFloat("floating_timeframe_offset_y", 56f))
+    }
 
     // 初始化时加载本地存储的自定义分组
     LaunchedEffect(Unit) {
@@ -135,6 +142,13 @@ fun TradingMultiViewScreen(
                 ) {
                     uiState.groups.forEach { group ->
                         val isActive = uiState.activeGroupId == group.id
+                        val charCount = group.name.length
+                        val tabFontSize = when {
+                            charCount <= 2 -> 12.sp
+                            charCount <= 4 -> 11.sp
+                            charCount <= 6 -> 10.sp
+                            else -> 9.sp
+                        }
                         Box(
                             modifier = Modifier
                                 .height(30.dp)
@@ -153,15 +167,17 @@ fun TradingMultiViewScreen(
                                         showGroupConfigDialog = true
                                     }
                                 )
-                                .padding(horizontal = 8.dp),
+                                .padding(horizontal = if (charCount > 4) 6.dp else 8.dp),
                             contentAlignment = Alignment.Center
                         ) {
-                                Text(
-                                    text = group.name,
-                                    color = if (isActive) Color.White else Color(0xFFE2E8F0),
-                                    fontSize = 12.sp,
-                                    fontWeight = if (isActive) FontWeight.Bold else FontWeight.Medium
-                                )
+                            Text(
+                                text = group.name,
+                                color = if (isActive) Color.White else Color(0xFFE2E8F0),
+                                fontSize = tabFontSize,
+                                fontWeight = if (isActive) FontWeight.Bold else FontWeight.Medium,
+                                maxLines = 1,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                            )
                         }
                     }
 
@@ -264,10 +280,10 @@ fun TradingMultiViewScreen(
                         }
                     }
 
-                    // 全局缩放按钮：紧跟在第四个最大化和隐藏窗口按钮后面
+                    // 全局缩放按钮：紧跟在第四个最大化和隐藏窗口按钮后面 (长度改大1.5倍：45dp x 30dp)
                     Box(
                         modifier = Modifier
-                            .size(30.dp)
+                            .size(width = 45.dp, height = 30.dp)
                             .clip(RoundedCornerShape(6.dp))
                             .background(
                                 if (showGlobalZoomDialog) Color(0xFF0284C7)
@@ -295,15 +311,15 @@ fun TradingMultiViewScreen(
 
                 Spacer(modifier = Modifier.width(6.dp))
 
-                // 全局控制区 (全局刷新 + 网址配置 + 屏幕旋转，与油猴动作组互换位置移到前面)
+                // 全局控制区 (全局刷新 + 网址配置 + 屏幕旋转，长度改大1.5倍：45dp x 30dp)
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    // 全局一键刷新按钮：标准 30dp x 30dp 方形，圆角 6dp
+                    // 全局一键刷新按钮：45dp x 30dp 方形，圆角 6dp
                     Box(
                         modifier = Modifier
-                            .size(30.dp)
+                            .size(width = 45.dp, height = 30.dp)
                             .clip(RoundedCornerShape(6.dp))
                             .background(Color(0xFF1E293B))
                             .border(1.dp, Color(0xFF334155), RoundedCornerShape(6.dp))
@@ -318,11 +334,11 @@ fun TradingMultiViewScreen(
                         )
                     }
 
-                    // 网址配置 (地址栏展开) 按钮：移到刷新和旋转中间
+                    // 网址配置 (地址栏展开) 按钮：45dp x 30dp
                     val isUrlBarExpanded = !uiState.isGlobalUrlCollapsed
                     Box(
                         modifier = Modifier
-                            .size(30.dp)
+                            .size(width = 45.dp, height = 30.dp)
                             .clip(RoundedCornerShape(6.dp))
                             .background(if (isUrlBarExpanded) Color(0xFF075985) else Color(0xFF1E293B))
                             .border(
@@ -341,10 +357,10 @@ fun TradingMultiViewScreen(
                         )
                     }
 
-                    // 屏幕旋转按钮：标准 30dp x 30dp 方形，圆角 6dp
+                    // 屏幕旋转按钮：45dp x 30dp 方形，圆角 6dp
                     Box(
                         modifier = Modifier
-                            .size(30.dp)
+                            .size(width = 45.dp, height = 30.dp)
                             .clip(RoundedCornerShape(6.dp))
                             .background(Color(0xFF1E293B))
                             .border(1.dp, Color(0xFF334155), RoundedCornerShape(6.dp))
@@ -643,10 +659,15 @@ fun TradingMultiViewScreen(
                 .background(Color(0xFF0284C7)) // 蓝色
                 .border(1.dp, Color(0xFF38BDF8), rightEdgeSemiCircleShape)
                 .pointerInput(Unit) {
-                    detectDragGestures { change, dragAmount ->
-                        change.consume()
-                        latestKlineFloatingButtonOffsetY += dragAmount.y
-                    }
+                    detectDragGestures(
+                        onDrag = { change, dragAmount ->
+                            change.consume()
+                            latestKlineFloatingButtonOffsetY += dragAmount.y
+                        },
+                        onDragEnd = {
+                            floatingPrefs.edit().putFloat("floating_latest_kline_offset_y", latestKlineFloatingButtonOffsetY).apply()
+                        }
+                    )
                 }
                 .combinedClickable(
                     onClick = {
@@ -679,10 +700,15 @@ fun TradingMultiViewScreen(
                 .background(Color(0xFF10B981)) // 绿色
                 .border(1.dp, Color(0xFF34D399), rightEdgeSemiCircleShape)
                 .pointerInput(Unit) {
-                    detectDragGestures { change, dragAmount ->
-                        change.consume()
-                        mouseFloatingButtonOffsetY += dragAmount.y
-                    }
+                    detectDragGestures(
+                        onDrag = { change, dragAmount ->
+                            change.consume()
+                            mouseFloatingButtonOffsetY += dragAmount.y
+                        },
+                        onDragEnd = {
+                            floatingPrefs.edit().putFloat("floating_mouse_offset_y", mouseFloatingButtonOffsetY).apply()
+                        }
+                    )
                 }
                 .clickable {
                     viewModel.toggleTrackpad()
@@ -710,10 +736,15 @@ fun TradingMultiViewScreen(
                 .background(Color.White) // 白色
                 .border(1.dp, Color(0xFFCBD5E1), rightEdgeSemiCircleShape)
                 .pointerInput(Unit) {
-                    detectDragGestures { change, dragAmount ->
-                        change.consume()
-                        timeframeFloatingButtonOffsetY += dragAmount.y
-                    }
+                    detectDragGestures(
+                        onDrag = { change, dragAmount ->
+                            change.consume()
+                            timeframeFloatingButtonOffsetY += dragAmount.y
+                        },
+                        onDragEnd = {
+                            floatingPrefs.edit().putFloat("floating_timeframe_offset_y", timeframeFloatingButtonOffsetY).apply()
+                        }
+                    )
                 }
                 .clickable {
                     showTimeframeDialog = true
@@ -756,7 +787,7 @@ fun TradingMultiViewScreen(
                 targetGroupForConfig = null
             },
             onConfirm = { newName, newCount ->
-                viewModel.updateGroupWindowCount(targetGroupForConfig!!.id, newCount, context)
+                viewModel.updateGroupConfig(targetGroupForConfig!!.id, newName, newCount, context)
                 showGroupConfigDialog = false
                 targetGroupForConfig = null
             }
@@ -1284,7 +1315,7 @@ fun GroupConfigDialog(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    // 3 窗口选项：点击直接切换生效
+                    // 3 窗口选项
                     val is3 = selectedWindowCount == 3
                     Column(
                         modifier = Modifier
@@ -1298,7 +1329,6 @@ fun GroupConfigDialog(
                             )
                             .clickable {
                                 selectedWindowCount = 3
-                                onConfirm(groupName, 3)
                             }
                             .padding(12.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
@@ -1311,13 +1341,13 @@ fun GroupConfigDialog(
                             color = if (is3) Color.White else Color(0xFFCBD5E1)
                         )
                         Text(
-                            text = "横向 3 联屏 (点击直接切换)",
+                            text = "横向 3 联屏",
                             fontSize = 10.sp,
                             color = if (is3) Color(0xFFBAE6FD) else Color(0xFF64748B)
                         )
                     }
 
-                    // 4 窗口选项：点击直接切换生效
+                    // 4 窗口选项
                     val is4 = selectedWindowCount == 4
                     Column(
                         modifier = Modifier
@@ -1331,7 +1361,6 @@ fun GroupConfigDialog(
                             )
                             .clickable {
                                 selectedWindowCount = 4
-                                onConfirm(groupName, 4)
                             }
                             .padding(12.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
@@ -1344,7 +1373,7 @@ fun GroupConfigDialog(
                             color = if (is4) Color.White else Color(0xFFCBD5E1)
                         )
                         Text(
-                            text = "横向 4 联屏 (点击直接切换)",
+                            text = "横向 4 联屏",
                             fontSize = 10.sp,
                             color = if (is4) Color(0xFFBAE6FD) else Color(0xFF64748B)
                         )
@@ -1352,7 +1381,7 @@ fun GroupConfigDialog(
                 }
 
                 Text(
-                    text = "提示：点击上方「3 屏」或「4 屏」卡片直接即时切换生效，无需点击确认；若修改了标签名称可点击右下角保存。",
+                    text = "提示：可修改标签页显示名称，选择 3 屏或 4 屏布局后点击「保存并应用」生效。",
                     fontSize = 11.sp,
                     lineHeight = 16.sp,
                     color = Color(0xFF94A3B8)
@@ -1364,17 +1393,15 @@ fun GroupConfigDialog(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     TextButton(onClick = onDismiss) {
-                        Text("关闭", fontSize = 12.sp, color = Color(0xFF94A3B8))
+                        Text("取消", fontSize = 12.sp, color = Color(0xFF94A3B8))
                     }
-                    if (groupName.trim() != group.name.trim() && groupName.isNotBlank()) {
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Button(
-                            onClick = { onConfirm(groupName, selectedWindowCount) },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
-                            shape = RoundedCornerShape(6.dp)
-                        ) {
-                            Text("保存新名称", fontSize = 12.sp, color = Color.White)
-                        }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(
+                        onClick = { onConfirm(groupName, selectedWindowCount) },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
+                        shape = RoundedCornerShape(6.dp)
+                    ) {
+                        Text("保存并应用", fontSize = 12.sp, color = Color.White)
                     }
                 }
             }
