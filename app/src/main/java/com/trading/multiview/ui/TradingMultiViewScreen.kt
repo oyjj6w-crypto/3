@@ -108,8 +108,23 @@ fun TradingMultiViewScreen(
     var hideDrawingsFloatingButtonOffsetY by remember {
         mutableStateOf(floatingPrefs.getFloat("floating_hidedrawings_offset_y", 112f))
     }
+    var invertFloatingButtonOffsetY by remember {
+        mutableStateOf(floatingPrefs.getFloat("floating_invert_offset_y", -112f))
+    }
     var isFloatingLocked by remember {
         mutableStateOf(floatingPrefs.getBoolean("floating_locked", false))
+    }
+    var showRestartAppDialog by remember { mutableStateOf(false) }
+
+    val invertCooldownMs by viewModel.invertCooldownRemainingMs.collectAsState()
+    val isInvertCooldownActive = invertCooldownMs > 0
+    val cooldownSecondsTotal = (invertCooldownMs + 999) / 1000
+    val cooldownMin = cooldownSecondsTotal / 60
+    val cooldownSec = cooldownSecondsTotal % 60
+    val cooldownText = if (cooldownMin > 0) {
+        String.format(java.util.Locale.US, "%d:%02d", cooldownMin, cooldownSec)
+    } else {
+        "${cooldownSec}s"
     }
 
     // 初始化时加载本地存储的自定义分组
@@ -208,7 +223,7 @@ fun TradingMultiViewScreen(
                         )
                     }
 
-                    // 锁死/解锁右边4个浮动按钮 (相同大小 30.dp)
+                    // 锁死/解锁右边浮动按钮 (相同大小 30.dp)
                     Box(
                         modifier = Modifier
                             .size(30.dp)
@@ -226,6 +241,32 @@ fun TradingMultiViewScreen(
                             contentDescription = if (isFloatingLocked) "解锁右侧浮动按钮" else "锁定右侧浮动按钮",
                             tint = if (isFloatingLocked) Color(0xFF818CF8) else Color(0xFF94A3B8),
                             modifier = Modifier.size(14.dp)
+                        )
+                    }
+
+                    // 保存当前所有标签页内所有窗口当前网址按钮 (单击保存，长按弹出重启app弹窗)
+                    Box(
+                        modifier = Modifier
+                            .size(30.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(Color(0xFF1E293B))
+                            .border(1.dp, Color(0xFF475569), RoundedCornerShape(6.dp))
+                            .combinedClickable(
+                                onClick = {
+                                    val count = viewModel.saveAllTabsCurrentUrls(context)
+                                    android.widget.Toast.makeText(context, "已成功保存全部标签页所有窗口当前网址", android.widget.Toast.LENGTH_SHORT).show()
+                                },
+                                onLongClick = {
+                                    showRestartAppDialog = true
+                                }
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Save,
+                            contentDescription = "保存所有标签页网址 (长按重启应用)",
+                            tint = Color(0xFF38BDF8),
+                            modifier = Modifier.size(15.dp)
                         )
                     }
                 }
@@ -451,16 +492,6 @@ fun TradingMultiViewScreen(
                     }
 
                     // 3. 4图翻转 K线 (Alt+I)：默认0ms延迟，单击直接对全部3/4个窗口执行翻转，长按弹出选择窗口，长度 60dp
-                    val invertCooldownMs by viewModel.invertCooldownRemainingMs.collectAsState()
-                    val isInvertCooldownActive = invertCooldownMs > 0
-                    val cooldownSecondsTotal = (invertCooldownMs + 999) / 1000
-                    val cooldownMin = cooldownSecondsTotal / 60
-                    val cooldownSec = cooldownSecondsTotal % 60
-                    val cooldownText = if (cooldownMin > 0) {
-                        String.format(java.util.Locale.US, "%d:%02d", cooldownMin, cooldownSec)
-                    } else {
-                        "${cooldownSec}s"
-                    }
 
                     Box(
                         modifier = Modifier
@@ -847,6 +878,62 @@ fun TradingMultiViewScreen(
             )
         }
 
+        // 7.8. 屏幕最右侧紫色半圆浮动按钮：K线翻转 (只能上下移动，不能左右移动，紫色，“翻”字)
+        Box(
+            modifier = Modifier
+                .offset { IntOffset(0, invertFloatingButtonOffsetY.toInt()) }
+                .align(Alignment.CenterEnd)
+                .size(width = 24.dp, height = 44.dp)
+                .shadow(elevation = 6.dp, shape = rightEdgeSemiCircleShape)
+                .clip(rightEdgeSemiCircleShape)
+                .background(
+                    if (isInvertCooldownActive) Color(0xFF475569) else Color(0xFF8B5CF6) // 紫色，冷却中置灰
+                )
+                .border(
+                    1.dp,
+                    if (isInvertCooldownActive) Color(0xFF64748B) else Color(0xFFA78BFA),
+                    rightEdgeSemiCircleShape
+                )
+                .pointerInput(isFloatingLocked) {
+                    if (!isFloatingLocked) {
+                        detectDragGestures(
+                            onDrag = { change, dragAmount ->
+                                change.consume()
+                                invertFloatingButtonOffsetY += dragAmount.y
+                            },
+                            onDragEnd = {
+                                floatingPrefs.edit().putFloat("floating_invert_offset_y", invertFloatingButtonOffsetY).apply()
+                            }
+                        )
+                    }
+                }
+                .combinedClickable(
+                    onClick = {
+                        if (isInvertCooldownActive) {
+                            android.widget.Toast.makeText(context, "K线翻转按钮冷却中！剩余时间: ${cooldownText}", android.widget.Toast.LENGTH_SHORT).show()
+                        } else {
+                            viewModel.triggerInvert4Charts(delayMs = 0L, context = context)
+                        }
+                    },
+                    onLongClick = {
+                        if (isInvertCooldownActive) {
+                            android.widget.Toast.makeText(context, "K线翻转按钮冷却中！剩余时间: ${cooldownText}", android.widget.Toast.LENGTH_SHORT).show()
+                        } else {
+                            showInvertDialog = true
+                        }
+                    }
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = "翻",
+                color = if (isInvertCooldownActive) Color(0xFFCBD5E1) else Color.White,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(start = 2.dp)
+            )
+        }
+
         // 8. 原生虚拟鼠标与触控板浮层
         VirtualMouseOverlay(
             isEnabled = uiState.isTrackpadEnabled,
@@ -1093,6 +1180,55 @@ fun TradingMultiViewScreen(
                 viewModel.triggerLatestKline(targets, delayMs = 0L, context = context)
                 showLatestKlineDialog = false
             }
+        )
+    }
+
+    if (showRestartAppDialog) {
+        AlertDialog(
+            onDismissRequest = { showRestartAppDialog = false },
+            title = {
+                Text(
+                    text = "重启应用",
+                    color = Color.White,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Text(
+                    text = "是否确认重启应用？\n（系统将自动保存所有标签页内所有窗口的最新实时网址与设置，并重新加载）",
+                    color = Color(0xFFCBD5E1),
+                    fontSize = 13.sp
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.saveAllTabsCurrentUrls(context)
+                        showRestartAppDialog = false
+                        val pm = context.packageManager
+                        val intent = pm.getLaunchIntentForPackage(context.packageName)?.apply {
+                            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_CLEAR_TASK)
+                        }
+                        if (intent != null) {
+                            context.startActivity(intent)
+                            Runtime.getRuntime().exit(0)
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626))
+                ) {
+                    Text("立即重启", color = Color.White, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                OutlinedButton(
+                    onClick = { showRestartAppDialog = false },
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF94A3B8))
+                ) {
+                    Text("取消")
+                }
+            },
+            containerColor = Color(0xFF1E293B)
         )
     }
 

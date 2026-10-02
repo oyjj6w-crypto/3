@@ -36,11 +36,11 @@ class MainActivity : ComponentActivity() {
         controller.systemBarsBehavior =
             WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
 
-        // 初始化常驻单例 WebView 池（与 Activity 实例解耦，绝不反复销毁）
-        PersistentWebViewPool.init(applicationContext)
-
         // 恢复持久化配置（上次输入的网址、历史分组及分辨率）
         viewModel.loadSavedGroupsFromPrefs(applicationContext)
+
+        // 初始化常驻单例 WebView 池（与 Activity 实例解耦，绝不反复销毁）
+        PersistentWebViewPool.init(applicationContext)
 
         setContent {
             TradingMultiViewTheme {

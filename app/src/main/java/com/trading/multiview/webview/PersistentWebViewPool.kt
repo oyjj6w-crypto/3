@@ -40,10 +40,10 @@ object PersistentWebViewPool {
     // 缓存每个视窗最近一次 resize 的防抖 Runnable 任务，杜绝动画中频繁执行 JS 导致 UI 卡顿
     private val resizeRunnableMap = java.util.concurrent.ConcurrentHashMap<String, Runnable>()
 
-    // URL 变化监听回调 (windowId, newUrl, pageTitle)
-    var onUrlChanged: ((Int, String, String) -> Unit)? = null
-    // 网页标题更新回调 (windowId, newTitle) - 独立解耦，避免价格频繁跳动触发 URL 变更重绘
-    var onTitleChanged: ((Int, String) -> Unit)? = null
+    // URL 变化监听回调 (ownerGroupId, windowId, newUrl, pageTitle)
+    var onUrlChanged: ((String, Int, String, String) -> Unit)? = null
+    // 网页标题更新回调 (ownerGroupId, windowId, newTitle) - 独立解耦，避免价格频繁跳动触发 URL 变更重绘
+    var onTitleChanged: ((String, Int, String) -> Unit)? = null
 
     fun getSavedWindowUrlForGroup(context: Context? = null, groupId: String, windowId: Int): String? {
         val ctx = context ?: appContext ?: return null
@@ -117,10 +117,10 @@ object PersistentWebViewPool {
         return when (groupId) {
             "preset_1" -> {
                 when (windowId) {
-                    1 -> "https://www.tradingview.com"
-                    2 -> "https://www.tradingview.com"
-                    3 -> "https://www.tradingview.com"
-                    else -> "https://www.tradingview.com"
+                    1 -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:BTCUSDT&interval=15&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1"
+                    2 -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:ETHUSDT&interval=60&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1"
+                    3 -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:SOLUSDT&interval=240&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1"
+                    else -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:DOGEUSDT&interval=15&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1"
                 }
             }
             "preset_2" -> {
@@ -492,7 +492,11 @@ object PersistentWebViewPool {
         this.appContext = appCtx
         if (isInitialized) return
         
-        // 1. 优先加载当前活跃的分组 (默认 "preset_1")，确保用户瞬间进入可用的完美工作流
+        // 1. 优先读取上次用户退出时保存的活跃分组，杜绝启动阶段把标签页2网址误灌给标签页1！
+        val prefs = appCtx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val savedActiveGroupId = prefs.getString("active_group_id", null) ?: "preset_1"
+        currentGroupId = savedActiveGroupId
+
         val primaryGroupId = currentGroupId
         listOf(1, 2, 3, 4).forEach { windowId ->
             val key = "${primaryGroupId}_$windowId"
@@ -682,9 +686,7 @@ object PersistentWebViewPool {
                     if (url != null && url != lastReportedUrl) {
                         lastReportedUrl = url
                         saveWindowUrlForGroup(ownerGroupId, windowId, url, view?.title ?: "", context)
-                        if (ownerGroupId == currentGroupId) {
-                            onUrlChanged?.invoke(windowId, url, view?.title ?: "")
-                        }
+                        onUrlChanged?.invoke(ownerGroupId, windowId, url, view?.title ?: "")
                     }
                 }
 
@@ -697,9 +699,7 @@ object PersistentWebViewPool {
                     if (url != null && url != lastReportedUrl) {
                         lastReportedUrl = url
                         saveWindowUrlForGroup(ownerGroupId, windowId, url, view?.title ?: "", context)
-                        if (ownerGroupId == currentGroupId) {
-                            onUrlChanged?.invoke(windowId, url, view?.title ?: "")
-                        }
+                        onUrlChanged?.invoke(ownerGroupId, windowId, url, view?.title ?: "")
                     }
                 }
 
@@ -708,9 +708,7 @@ object PersistentWebViewPool {
                     if (url != null && url != lastReportedUrl) {
                         lastReportedUrl = url
                         saveWindowUrlForGroup(ownerGroupId, windowId, url, view?.title ?: "", context)
-                        if (ownerGroupId == currentGroupId) {
-                            onUrlChanged?.invoke(windowId, url, view?.title ?: "")
-                        }
+                        onUrlChanged?.invoke(ownerGroupId, windowId, url, view?.title ?: "")
                     }
                 }
 
@@ -729,9 +727,7 @@ object PersistentWebViewPool {
                     // 仅通知 onTitleChanged 更新标签栏文字，坚决不触发 onUrlChanged，杜绝 Compose 全局重组与 WebView 重载闪烁！
                     if (!title.isNullOrBlank()) {
                         saveWindowUrlForGroup(ownerGroupId, windowId, url ?: "", title, context)
-                        if (ownerGroupId == currentGroupId) {
-                            onTitleChanged?.invoke(windowId, title)
-                        }
+                        onTitleChanged?.invoke(ownerGroupId, windowId, title)
                     }
                 }
 
@@ -846,15 +842,23 @@ object PersistentWebViewPool {
      * @return true 表示确实加载了新页面；false 表示页面相同已跳过
      */
     fun loadCustomUrl(windowId: Int, url: String, forceReload: Boolean = false): Boolean {
+        return loadCustomUrlForGroup(currentGroupId, windowId, url, forceReload)
+    }
+
+    /**
+     * 针对指定分组独立加载 URL 并持久化至该分组
+     */
+    fun loadCustomUrlForGroup(groupId: String, windowId: Int, url: String, forceReload: Boolean = false): Boolean {
         val formatted = formatUrl(url)
-        val webView = getWebView(windowId) ?: return false
-        // 关键持久化：记录用户输入的网址
-        saveWindowUrl(windowId, formatted)
+        val webView = getWebViewForGroup(groupId, windowId) ?: return false
+        // 关键持久化：记录用户输入的网址到目标分组中
+        saveWindowUrlForGroup(groupId, windowId, formatted)
         val current = webView.url ?: ""
         if (!forceReload && isSameUrl(current, formatted)) {
             return false
         }
-        appliedScaleMap.remove("${currentGroupId}_$windowId")
+        appliedScaleMap.remove("${groupId}_$windowId")
+        appliedScaleFloatMap.remove("${groupId}_$windowId")
         webView.loadUrl(formatted)
         return true
     }
@@ -1433,7 +1437,8 @@ object PersistentWebViewPool {
         }
 
         val currentWindowId = target.first
-        if (currentWindowId != lastHoveredWindowId) {
+        val isNewWindow = currentWindowId != lastHoveredWindowId
+        if (isNewWindow) {
             clearCrosshairs(exceptWindowId = currentWindowId)
             lastHoveredWindowId = currentWindowId
         }
@@ -1444,6 +1449,20 @@ object PersistentWebViewPool {
         val localX = screenX - loc[0]
         val localY = screenY - loc[1]
         val now = SystemClock.uptimeMillis()
+
+        if (isNewWindow) {
+            val enterEvent = createMouseEvent(
+                action = MotionEvent.ACTION_HOVER_ENTER,
+                downTime = now,
+                eventTime = now,
+                x = localX,
+                y = localY,
+                buttonState = 0
+            )
+            wv.dispatchGenericMotionEvent(enterEvent)
+            enterEvent.recycle()
+        }
+
         val event = createMouseEvent(
             action = MotionEvent.ACTION_HOVER_MOVE,
             downTime = now,
@@ -1464,11 +1483,52 @@ object PersistentWebViewPool {
                     var ry = Math.max(0, Math.min(1, $localY / $wvH));
                     var cx = rx * window.innerWidth;
                     var cy = ry * window.innerHeight;
-                    var el = document.elementFromPoint(cx, cy) || document.body;
                     var pMove = new PointerEvent('pointermove', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, pointerType: 'mouse' });
                     var mMove = new MouseEvent('mousemove', { bubbles: true, cancelable: true, clientX: cx, clientY: cy });
-                    el.dispatchEvent(pMove);
-                    el.dispatchEvent(mMove);
+
+                    // 1. 尝试直接向坐标命中元素派发
+                    var el = document.elementFromPoint(cx, cy) || document.body;
+                    if (el) {
+                        if ($isNewWindow) {
+                            el.dispatchEvent(new PointerEvent('pointerenter', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, pointerType: 'mouse' }));
+                            el.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, cancelable: true, clientX: cx, clientY: cy }));
+                        }
+                        el.dispatchEvent(pMove);
+                        el.dispatchEvent(mMove);
+                    }
+
+                    // 2. 核心穿透加固：直接向 TradingView 交互图形 Canvas 派发，确保任何情况下十字光标均不丢失
+                    var tvCanvases = document.querySelectorAll('canvas.interactive-graphics-layer, canvas');
+                    for (var i = 0; i < tvCanvases.length; i++) {
+                        var c = tvCanvases[i];
+                        if (c !== el) {
+                            if ($isNewWindow) {
+                                c.dispatchEvent(new PointerEvent('pointerenter', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, pointerType: 'mouse' }));
+                                c.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, cancelable: true, clientX: cx, clientY: cy }));
+                            }
+                            c.dispatchEvent(pMove);
+                            c.dispatchEvent(mMove);
+                        }
+                    }
+
+                    // 3. iframe 内部穿透派发
+                    var iframes = document.querySelectorAll('iframe');
+                    for (var j = 0; j < iframes.length; j++) {
+                        try {
+                            var idoc = iframes[j].contentDocument || iframes[j].contentWindow.document;
+                            if (idoc) {
+                                var iCanvas = idoc.querySelector('canvas.interactive-graphics-layer, canvas');
+                                if (iCanvas) {
+                                    if ($isNewWindow) {
+                                        iCanvas.dispatchEvent(new PointerEvent('pointerenter', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, pointerType: 'mouse' }));
+                                        iCanvas.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, cancelable: true, clientX: cx, clientY: cy }));
+                                    }
+                                    iCanvas.dispatchEvent(pMove);
+                                    iCanvas.dispatchEvent(mMove);
+                                }
+                            }
+                        } catch(e) {}
+                    }
                 } catch(e) {}
             })();
         """.trimIndent()

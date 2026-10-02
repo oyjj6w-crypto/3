@@ -35,13 +35,13 @@ val DEFAULT_TAB_GROUPS = listOf(
         id = "preset_1",
         name = "1",
         isPreset = false,
-        description = "分组 1 (TradingView 官方行情)",
+        description = "分组 1 (主流看盘 BTC/ETH/SOL/DOGE)",
         windowCount = 3,
         items = listOf(
-            TabGroupItem("TradingView 1", "BTCUSDT", "https://www.tradingview.com", "15m"),
-            TabGroupItem("TradingView 2", "ETHUSDT", "https://www.tradingview.com", "60m"),
-            TabGroupItem("TradingView 3", "SOLUSDT", "https://www.tradingview.com", "240m"),
-            TabGroupItem("TradingView 4", "DOGEUSDT", "https://www.tradingview.com", "15m")
+            TabGroupItem("BTC/USDT 15M", "BTCUSDT", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:BTCUSDT&interval=15&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1", "15m"),
+            TabGroupItem("ETH/USDT 1H", "ETHUSDT", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:ETHUSDT&interval=60&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1", "60m"),
+            TabGroupItem("SOL/USDT 4H", "SOLUSDT", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:SOLUSDT&interval=240&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1", "240m"),
+            TabGroupItem("DOGE/USDT 15M", "DOGEUSDT", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:DOGEUSDT&interval=15&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1", "15m")
         )
     ),
     TabGroup(
@@ -101,14 +101,14 @@ data class WindowState(
 
 fun createInitialWindows(): List<WindowState> {
     val defaults = listOf(
-        Triple(1, "TradingView 1" to "BTCUSDT", "https://www.tradingview.com"),
-        Triple(2, "TradingView 2" to "ETHUSDT", "https://www.tradingview.com"),
-        Triple(3, "TradingView 3" to "SOLUSDT", "https://www.tradingview.com"),
-        Triple(4, "TradingView 4" to "DOGEUSDT", "https://www.tradingview.com")
+        Triple(1, "BTC/USDT 15M" to "BTCUSDT", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:BTCUSDT&interval=15&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1"),
+        Triple(2, "ETH/USDT 1H" to "ETHUSDT", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:ETHUSDT&interval=60&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1"),
+        Triple(3, "SOL/USDT 4H" to "SOLUSDT", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:SOLUSDT&interval=240&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1"),
+        Triple(4, "DOGE/USDT 15M" to "DOGEUSDT", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:DOGEUSDT&interval=15&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1")
     )
     return defaults.map { (id, titleSymbol, defaultUrl) ->
-        val savedUrl = PersistentWebViewPool.getSavedWindowUrl(null, id)
-        val savedTitle = PersistentWebViewPool.getSavedWindowTitle(null, id)
+        val savedUrl = PersistentWebViewPool.getSavedWindowUrlForGroup(null, "preset_1", id)
+        val savedTitle = PersistentWebViewPool.getSavedWindowTitleForGroup(null, "preset_1", id)
         WindowState(
             id = id,
             title = if (!savedTitle.isNullOrBlank()) savedTitle else titleSymbol.first,
@@ -197,6 +197,8 @@ class TradingViewModel : ViewModel() {
 
     private val handler = android.os.Handler(android.os.Looper.getMainLooper())
     private var autoHideRunnable: Runnable? = null
+    // 恢复本地存储状态保护锁，防止启动时 WebView 回调反向冲洗本地 SharedPreferences
+    private var isRestoringSavedState = false
 
     companion object {
         private const val PREFS_NAME = "trading_multiview_prefs"
@@ -210,12 +212,14 @@ class TradingViewModel : ViewModel() {
 
     init {
         // 挂载 WebView 实时 URL 变更监听，保证视窗地址栏与 WebView 浏览状态精准同步
-        PersistentWebViewPool.onUrlChanged = { windowId, url, pageTitle ->
-            updateWindowUrl(windowId, url, if (pageTitle.isNotBlank()) pageTitle else null)
+        PersistentWebViewPool.onUrlChanged = { ownerGroupId, windowId, url, pageTitle ->
+            if (!isRestoringSavedState) {
+                updateWindowUrl(ownerGroupId, windowId, url, if (pageTitle.isNotBlank()) pageTitle else null)
+            }
         }
         // 挂载网页标题变更监听（如 TradingView 跳价更正，仅更新标签栏文字，不触碰 URL）
-        PersistentWebViewPool.onTitleChanged = { windowId, pageTitle ->
-            updateWindowTitle(windowId, pageTitle)
+        PersistentWebViewPool.onTitleChanged = { ownerGroupId, windowId, pageTitle ->
+            updateWindowTitle(ownerGroupId, windowId, pageTitle)
         }
 
         // 开启 15分钟前台停留检测与自动翻转后台轮询
@@ -481,6 +485,59 @@ class TradingViewModel : ViewModel() {
     }
 
     /**
+     * 一键保存当前所有标签页内所有窗口的当前真实网址与配置 (单击顶栏保存按钮触发)
+     */
+    fun saveAllTabsCurrentUrls(context: Context): Int {
+        val currentActiveId = _uiState.value.activeGroupId
+        val currentWindows = _uiState.value.windows
+        var savedCount = 0
+
+        // 1. 同步更新当前活动分组的网址数据与后台各分组的实时网址
+        val updatedGroups = _uiState.value.groups.map { group ->
+            if (group.id == currentActiveId) {
+                group.copy(
+                    items = group.items.mapIndexed { index, item ->
+                        val win = currentWindows.getOrNull(index)
+                        if (win != null && win.currentUrl.isNotBlank()) {
+                            savedCount++
+                            PersistentWebViewPool.saveWindowUrlForGroup(group.id, index + 1, win.currentUrl, win.title, context)
+                            item.copy(
+                                url = win.currentUrl,
+                                title = win.title,
+                                symbol = win.symbol
+                            )
+                        } else item
+                    }
+                )
+            } else {
+                // 对于非活跃分组，如果有后台常驻 WebView，优先获取其实时 URL 并持久化
+                group.copy(
+                    items = group.items.mapIndexed { index, item ->
+                        val winId = index + 1
+                        val wv = PersistentWebViewPool.getWebViewForGroup(group.id, winId)
+                        val liveUrl = wv?.url?.takeIf { it.isNotBlank() }
+                        val liveTitle = wv?.title?.takeIf { it.isNotBlank() }
+                        val finalUrl = liveUrl ?: item.url
+                        val finalTitle = liveTitle ?: item.title
+                        if (finalUrl.isNotBlank()) {
+                            savedCount++
+                            PersistentWebViewPool.saveWindowUrlForGroup(group.id, winId, finalUrl, finalTitle, context)
+                        }
+                        item.copy(
+                            url = finalUrl,
+                            title = finalTitle
+                        )
+                    }
+                )
+            }
+        }
+
+        _uiState.update { it.copy(groups = updatedGroups) }
+        persistAllGroupsToPrefs(updatedGroups, activeGroupId = currentActiveId, context = context)
+        return updatedGroups.size
+    }
+
+    /**
      * 从 SharedPreferences 恢复用户上次使用的所有配置：
      * 1. 3个视窗实际输入的最后网址 (最高优先级，保证退出重进不丢失用户输入)
      * 2. 用户最后停留的分组 (activeGroupId)
@@ -488,6 +545,7 @@ class TradingViewModel : ViewModel() {
      * 4. 固定像素视口基准 (960px / 1280px / 1440px / 1920px)
      */
     fun loadSavedGroupsFromPrefs(context: Context) {
+        isRestoringSavedState = true
         try {
             val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
@@ -502,7 +560,10 @@ class TradingViewModel : ViewModel() {
                 loadedGroups.firstOrNull()?.id ?: "preset_1"
             }
 
-            // 3. 读取并恢复 3 个视窗的真实网址与标题 (最高优先级：直接读取用户在窗口中输入的 saved_window_url_X)
+            // 核心修复：立即同步单例池的当前组 ID，杜绝把标签页2网址误灌给标签页1！
+            PersistentWebViewPool.currentGroupId = validActiveGroupId
+
+            // 3. 读取并恢复 3/4 个视窗的真实网址与标题 (最高优先级：直接读取用户在窗口中输入的 saved_window_url_X)
             val targetGroup = loadedGroups.find { it.id == validActiveGroupId }
             val currentWindows = _uiState.value.windows.map { win ->
                 val savedUrl = prefs.getString("${KEY_WINDOW_URL_PREFIX}${validActiveGroupId}_${win.id}", null)?.takeIf { it.isNotBlank() }
@@ -517,12 +578,12 @@ class TradingViewModel : ViewModel() {
                 val isHiddenKey = "group_${validActiveGroupId}_window_${win.id}_hidden"
                 val isHidden = prefs.getBoolean(isHiddenKey, false)
 
-                // 确保已挂载的底层常驻 WebView 加载目标真实网址
-                val webView = PersistentWebViewPool.getWebView(win.id)
+                // 确保已挂载的底层常驻 WebView 加载目标真实网址，严格隔离指定分组
+                val webView = PersistentWebViewPool.getWebViewForGroup(validActiveGroupId, win.id)
                 if (webView != null) {
                     val currentLoaded = webView.url ?: ""
                     if (!PersistentWebViewPool.isSameUrl(currentLoaded, targetUrl)) {
-                        PersistentWebViewPool.loadCustomUrl(win.id, targetUrl)
+                        PersistentWebViewPool.loadCustomUrlForGroup(validActiveGroupId, win.id, targetUrl)
                     }
                 }
 
@@ -559,6 +620,8 @@ class TradingViewModel : ViewModel() {
             }
         } catch (e: Exception) {
             e.printStackTrace()
+        } finally {
+            isRestoringSavedState = false
         }
     }
 
@@ -989,45 +1052,50 @@ class TradingViewModel : ViewModel() {
     }
 
     /**
-     * 更新指定视窗 URL，并同步更新至当前活动标签集合，确保随时记忆用户输入的网址
+     * 更新指定分组指定视窗 URL，并同步更新至目标标签集合，确保随时记忆用户输入的网址，绝不跨标签覆盖
      */
-    fun updateWindowUrl(windowId: Int, newUrl: String, title: String? = null) {
-        val currentWin = _uiState.value.windows.find { it.id == windowId }
-        if (currentWin != null && currentWin.currentUrl == newUrl && (title == null || currentWin.title == title)) {
+    fun updateWindowUrl(groupId: String, windowId: Int, newUrl: String, title: String? = null) {
+        val state = _uiState.value
+        val group = state.groups.find { it.id == groupId }
+        val item = group?.items?.getOrNull(windowId - 1)
+        if (item != null && item.url == newUrl && (title == null || item.title == title)) {
             return
         }
 
-        // 关键持久化：一旦窗口 URL 改变，立即持久化保存该窗口真实网址与标题
-        PersistentWebViewPool.saveWindowUrl(windowId, newUrl, title)
+        // 关键持久化：精确持久化到目标分组中，彻底杜绝串台覆盖
+        PersistentWebViewPool.saveWindowUrlForGroup(groupId, windowId, newUrl, title)
 
-        _uiState.update { state ->
-            val updatedWindows = state.windows.map { win ->
-                if (win.id == windowId) {
-                    win.copy(
-                        currentUrl = newUrl,
-                        title = title ?: win.title
-                    )
-                } else win
-            }
-
-            // 同步实时记忆到当前活动分组中
-            val activeId = state.activeGroupId
-            val updatedGroups = state.groups.map { group ->
-                if (group.id == activeId) {
-                    group.copy(
-                        items = group.items.mapIndexed { index, item ->
+        _uiState.update { current ->
+            val updatedGroups = current.groups.map { g ->
+                if (g.id == groupId) {
+                    g.copy(
+                        items = g.items.mapIndexed { index, itm ->
                             if (index == windowId - 1) {
-                                item.copy(
+                                itm.copy(
                                     url = newUrl,
-                                    title = title ?: item.title
+                                    title = title ?: itm.title
                                 )
-                            } else item
+                            } else itm
                         }
                     )
-                } else group
+                } else g
             }
 
-            state.copy(
+            // 只有当接收到事件的分组与当前屏幕活跃标签页一致时，才更新可见视窗 windows
+            val updatedWindows = if (current.activeGroupId == groupId) {
+                current.windows.map { win ->
+                    if (win.id == windowId) {
+                        win.copy(
+                            currentUrl = newUrl,
+                            title = title ?: win.title
+                        )
+                    } else win
+                }
+            } else {
+                current.windows
+            }
+
+            current.copy(
                 windows = updatedWindows,
                 groups = updatedGroups
             )
@@ -1038,19 +1106,47 @@ class TradingViewModel : ViewModel() {
     }
 
     /**
+     * 更新当前活动分组的视窗 URL（供 UI 手动输入网址或重载触发）
+     */
+    fun updateWindowUrl(windowId: Int, newUrl: String, title: String? = null) {
+        updateWindowUrl(_uiState.value.activeGroupId, windowId, newUrl, title)
+    }
+
+    /**
      * 仅更新窗口标题 (如 TradingView 行情跳价更正，不触碰 URL，不触发导航)
      */
-    fun updateWindowTitle(windowId: Int, title: String) {
+    fun updateWindowTitle(groupId: String, windowId: Int, title: String) {
         val currentWin = _uiState.value.windows.find { it.id == windowId }
-        if (currentWin == null || currentWin.title == title) return
-        PersistentWebViewPool.saveWindowUrl(windowId, currentWin.currentUrl, title)
-        _uiState.update { state ->
-            state.copy(
-                windows = state.windows.map { win ->
+        val group = _uiState.value.groups.find { it.id == groupId }
+        val item = group?.items?.getOrNull(windowId - 1)
+        if (item != null && item.title == title) return
+
+        val currentUrl = item?.url ?: currentWin?.currentUrl ?: ""
+        PersistentWebViewPool.saveWindowUrlForGroup(groupId, windowId, currentUrl, title)
+
+        _uiState.update { current ->
+            val updatedGroups = current.groups.map { g ->
+                if (g.id == groupId) {
+                    g.copy(
+                        items = g.items.mapIndexed { index, itm ->
+                            if (index == windowId - 1) itm.copy(title = title) else itm
+                        }
+                    )
+                } else g
+            }
+            val updatedWindows = if (current.activeGroupId == groupId) {
+                current.windows.map { win ->
                     if (win.id == windowId) win.copy(title = title) else win
                 }
-            )
+            } else {
+                current.windows
+            }
+            current.copy(windows = updatedWindows, groups = updatedGroups)
         }
+    }
+
+    fun updateWindowTitle(windowId: Int, title: String) {
+        updateWindowTitle(_uiState.value.activeGroupId, windowId, title)
     }
 
     /**
@@ -1281,7 +1377,7 @@ class TradingViewModel : ViewModel() {
                         // ignore
                     }
                     
-                    PersistentWebViewPool.saveWindowUrl(win.id, updatedUrl, win.title)
+                    PersistentWebViewPool.saveWindowUrlForGroup(activeId, win.id, updatedUrl, win.title)
 
                     win.copy(
                         timeframe = tf,
