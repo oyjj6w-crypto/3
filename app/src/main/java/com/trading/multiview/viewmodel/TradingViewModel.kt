@@ -1362,6 +1362,7 @@ class TradingViewModel : ViewModel() {
         }
 
         _uiState.update { state ->
+            val activeId = state.activeGroupId
             val updatedWindows = state.windows.map { win ->
                 if (win.id in selectedWindowIds) {
                     var updatedUrl = win.currentUrl
@@ -1388,7 +1389,6 @@ class TradingViewModel : ViewModel() {
                 }
             }
 
-            val activeId = state.activeGroupId
             val updatedGroups = state.groups.map { group ->
                 if (group.id == activeId) {
                     group.copy(
