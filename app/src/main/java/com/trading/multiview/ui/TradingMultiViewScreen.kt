@@ -402,7 +402,7 @@ fun TradingMultiViewScreen(
                         )
                     }
 
-                    // 网址配置 (地址栏展开) 按钮：45dp x 30dp
+                    // 网址快捷导航与只读栏展开按钮：45dp x 30dp
                     val isUrlBarExpanded = !uiState.isGlobalUrlCollapsed
                     Box(
                         modifier = Modifier
@@ -418,8 +418,8 @@ fun TradingMultiViewScreen(
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
-                            imageVector = if (isUrlBarExpanded) Icons.Default.ExpandLess else Icons.Default.Settings,
-                            contentDescription = "配置网址",
+                            imageVector = if (isUrlBarExpanded) Icons.Default.ExpandLess else Icons.Default.Language,
+                            contentDescription = "网址与快捷导航",
                             tint = if (isUrlBarExpanded) Color.White else Color(0xFF38BDF8),
                             modifier = Modifier.size(15.dp)
                         )
@@ -571,13 +571,87 @@ fun TradingMultiViewScreen(
                         .padding(horizontal = 8.dp, vertical = 6.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    // 1. 各窗口详细网址配置行 (当前标签页活跃视窗)
+                    // 顶部快捷导航条：锁定状态标识与一键直达按钮
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Lock,
+                                contentDescription = null,
+                                tint = Color(0xFF10B981),
+                                modifier = Modifier.size(13.dp)
+                            )
+                            Text(
+                                text = "地址栏已锁定（禁止输入，仅限快捷导航）",
+                                color = Color(0xFF94A3B8),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Text(
+                                text = "快捷导航:",
+                                color = Color(0xFF64748B),
+                                fontSize = 10.sp
+                            )
+                            // 一键全部 TradingView (单击直达)
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(3.dp))
+                                    .background(Color(0xFF0284C7))
+                                    .clickable {
+                                        uiState.activeWindowsForGroup.forEach { win ->
+                                            viewModel.navigateToUrl(win.id, "https://www.tradingview.com")
+                                        }
+                                    }
+                                    .padding(horizontal = 7.dp, vertical = 2.5.dp)
+                            ) {
+                                Text(
+                                    text = "全部 TradingView",
+                                    color = Color.White,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            // 一键全部 GitHub (单击直达)
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(3.dp))
+                                    .background(Color(0xFF334155))
+                                    .border(0.5.dp, Color(0xFF475569), RoundedCornerShape(3.dp))
+                                    .clickable {
+                                        uiState.activeWindowsForGroup.forEach { win ->
+                                            viewModel.navigateToUrl(win.id, "https://github.com")
+                                        }
+                                    }
+                                    .padding(horizontal = 7.dp, vertical = 2.5.dp)
+                            ) {
+                                Text(
+                                    text = "全部 GitHub",
+                                    color = Color.White,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+
+                    // 1. 各窗口详细网址与快捷操作 (当前标签页活跃视窗)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         uiState.activeWindowsForGroup.forEach { win ->
-                            var inputUrl by remember(win.currentUrl) { mutableStateOf(win.currentUrl) }
                             Column(
                                 modifier = Modifier
                                     .weight(1f)
@@ -602,11 +676,17 @@ fun TradingMultiViewScreen(
                                                 .clip(CircleShape)
                                                 .background(Color(0xFF10B981))
                                         )
+                                        Text(
+                                            text = "窗口 ${win.id}",
+                                            color = Color(0xFF94A3B8),
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
                                     }
 
                                     Row(
                                         verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        horizontalArrangement = Arrangement.spacedBy(5.dp)
                                     ) {
                                         // 窗口单独刷新
                                         Icon(
@@ -614,60 +694,79 @@ fun TradingMultiViewScreen(
                                             contentDescription = "刷新",
                                             tint = Color(0xFF94A3B8),
                                             modifier = Modifier
-                                                .size(13.dp)
+                                                .size(14.dp)
                                                 .clickable { viewModel.reload(win.id) }
                                         )
 
-                                        // 快捷前往
+                                        // TradingView 快捷按钮 (单击直接加载 TradingView 官网/图表)
                                         Box(
                                             modifier = Modifier
                                                 .clip(RoundedCornerShape(3.dp))
-                                                .background(Color(0xFF0284C7))
+                                                .background(Color(0xFF0284C7)) // 深天蓝
                                                 .clickable {
-                                                    if (inputUrl.isNotBlank()) {
-                                                        viewModel.navigateToUrl(win.id, inputUrl)
-                                                    }
-                                                    focusManager.clearFocus()
+                                                    viewModel.navigateToUrl(win.id, "https://www.tradingview.com")
                                                 }
-                                                .padding(horizontal = 5.dp, vertical = 1.dp)
+                                                .padding(horizontal = 6.dp, vertical = 2.dp)
                                         ) {
-                                            Text(text = "前往", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                                            Text(
+                                                text = "TradingView",
+                                                color = Color.White,
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+
+                                        // GitHub 快捷按钮 (单击直接加载 GitHub 官网)
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(3.dp))
+                                                .background(Color(0xFF334155)) // GitHub 极客深灰
+                                                .border(0.5.dp, Color(0xFF475569), RoundedCornerShape(3.dp))
+                                                .clickable {
+                                                    viewModel.navigateToUrl(win.id, "https://github.com")
+                                                }
+                                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                                        ) {
+                                            Text(
+                                                text = "GitHub",
+                                                color = Color.White,
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
                                         }
                                     }
                                 }
 
-                                // 极简 URL 输入栏
+                                // 只读锁定网址展示栏 (禁止手动打字输入，带 🔒 锁图标，纯展示当前视窗正在加载的 URL)
                                 Box(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .height(24.dp)
                                         .clip(RoundedCornerShape(3.dp))
-                                        .background(Color(0xFF161E2E))
-                                        .border(1.dp, Color(0xFF334155), RoundedCornerShape(3.dp))
-                                        .padding(horizontal = 4.dp),
+                                        .background(Color(0xFF131B2A))
+                                        .border(1.dp, Color(0xFF1E293B), RoundedCornerShape(3.dp))
+                                        .padding(horizontal = 6.dp),
                                     contentAlignment = Alignment.CenterStart
                                 ) {
-                                    BasicTextField(
-                                        value = inputUrl,
-                                        onValueChange = { inputUrl = it },
-                                        modifier = Modifier.fillMaxWidth(),
-                                        singleLine = true,
-                                        textStyle = TextStyle(
-                                            color = Color(0xFFF1F5F9),
-                                            fontSize = 10.sp,
-                                            fontFamily = FontFamily.Monospace
-                                        ),
-                                        cursorBrush = SolidColor(Color(0xFF38BDF8)),
-                                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go, keyboardType = KeyboardType.Uri),
-                                        keyboardActions = KeyboardActions(
-                                            onGo = {
-                                                if (inputUrl.isNotBlank()) {
-                                                    viewModel.navigateToUrl(win.id, inputUrl)
-                                                }
-                                                focusManager.clearFocus()
-                                            }
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Lock,
+                                            contentDescription = "只读锁定",
+                                            tint = Color(0xFF64748B),
+                                            modifier = Modifier.size(11.dp)
                                         )
-                                    )
+                                        Text(
+                                            text = win.currentUrl.ifBlank { "https://www.tradingview.com" },
+                                            color = Color(0xFF94A3B8),
+                                            fontSize = 10.sp,
+                                            fontFamily = FontFamily.Monospace,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
                                 }
                             }
                         }
