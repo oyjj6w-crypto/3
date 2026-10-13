@@ -571,79 +571,24 @@ fun TradingMultiViewScreen(
                         .padding(horizontal = 8.dp, vertical = 6.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    // 顶部快捷导航条：锁定状态标识与一键直达按钮
+                    // 状态提示：地址栏已锁定
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Lock,
-                                contentDescription = null,
-                                tint = Color(0xFF10B981),
-                                modifier = Modifier.size(13.dp)
-                            )
-                            Text(
-                                text = "地址栏已锁定（禁止输入，仅限快捷导航）",
-                                color = Color(0xFF94A3B8),
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Medium
-                            )
-                        }
-
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            Text(
-                                text = "快捷导航:",
-                                color = Color(0xFF64748B),
-                                fontSize = 10.sp
-                            )
-                            // 一键全部 TradingView (单击直达)
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(3.dp))
-                                    .background(Color(0xFF0284C7))
-                                    .clickable {
-                                        uiState.activeWindowsForGroup.forEach { win ->
-                                            viewModel.navigateToUrl(win.id, "https://www.tradingview.com")
-                                        }
-                                    }
-                                    .padding(horizontal = 7.dp, vertical = 2.5.dp)
-                            ) {
-                                Text(
-                                    text = "全部 TradingView",
-                                    color = Color.White,
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                            // 一键全部 GitHub (单击直达)
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(3.dp))
-                                    .background(Color(0xFF334155))
-                                    .border(0.5.dp, Color(0xFF475569), RoundedCornerShape(3.dp))
-                                    .clickable {
-                                        uiState.activeWindowsForGroup.forEach { win ->
-                                            viewModel.navigateToUrl(win.id, "https://github.com")
-                                        }
-                                    }
-                                    .padding(horizontal = 7.dp, vertical = 2.5.dp)
-                            ) {
-                                Text(
-                                    text = "全部 GitHub",
-                                    color = Color.White,
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                        }
+                        Icon(
+                            imageVector = Icons.Default.Lock,
+                            contentDescription = null,
+                            tint = Color(0xFF10B981),
+                            modifier = Modifier.size(13.dp)
+                        )
+                        Text(
+                            text = "地址栏已锁定（禁止输入，仅限使用各视窗快捷按钮）",
+                            color = Color(0xFF94A3B8),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium
+                        )
                     }
 
                     // 1. 各窗口详细网址与快捷操作 (当前标签页活跃视窗)
@@ -729,6 +674,25 @@ fun TradingMultiViewScreen(
                                         ) {
                                             Text(
                                                 text = "GitHub",
+                                                color = Color.White,
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+
+                                        // 飞书 快捷按钮 (单击直接加载 feishu.cn)
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(3.dp))
+                                                .background(Color(0xFF3370FF)) // 飞书经典蓝
+                                                .border(0.5.dp, Color(0xFF2B5AE6), RoundedCornerShape(3.dp))
+                                                .clickable {
+                                                    viewModel.navigateToUrl(win.id, "https://www.feishu.cn")
+                                                }
+                                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                                        ) {
+                                            Text(
+                                                text = "飞书",
                                                 color = Color.White,
                                                 fontSize = 10.sp,
                                                 fontWeight = FontWeight.Bold
