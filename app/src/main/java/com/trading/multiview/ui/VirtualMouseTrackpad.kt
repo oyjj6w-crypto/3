@@ -172,11 +172,11 @@ fun BoxScope.VirtualMouseOverlay(
                 .padding(8.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            // 顶部 100dp 高度的专属拖拽区域 (专门用于拖动触控板)
+            // 顶部 50dp 高度的专属拖拽区域 (专门用于拖动触控板，原 100dp 减半)
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(100.dp)
+                    .height(50.dp)
                     .clip(RoundedCornerShape(8.dp))
                     .background(Color(0xFF1E293B).copy(alpha = 0.5f))
                     .border(1.dp, Color(0xFF334155), RoundedCornerShape(8.dp))
@@ -191,26 +191,21 @@ fun BoxScope.VirtualMouseOverlay(
                     },
                 contentAlignment = Alignment.Center
             ) {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Default.DragHandle,
                         contentDescription = "拖拽触控板",
                         tint = Color(0xFF38BDF8),
-                        modifier = Modifier.size(24.dp)
+                        modifier = Modifier.size(20.dp)
                     )
                     Text(
-                        text = "拖 拽 触 控 板 (高 100dp)",
+                        text = "拖 拽 触 控 板 (50dp)",
                         color = Color(0xFF38BDF8),
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold
-                    )
-                    Text(
-                        text = "按住此区域可任意拖动面板位置",
-                        color = Color(0xFF64748B),
-                        fontSize = 9.sp
                     )
                 }
             }
@@ -331,13 +326,13 @@ fun BoxScope.VirtualMouseOverlay(
             }
 
             // =====================================================================
-            // 触控板核心滑动感应区 (正方形 244dp x 244dp)
+            // 触控板核心滑动感应区 (260dp x 122dp，原 244dp 减半)
             // 支持：1. 单指滑动移动光标；2. 轻点直接触发左键单击；3. 长按500ms触发右键菜单
             // =====================================================================
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(244.dp)
+                    .height(122.dp)
                     .clip(RoundedCornerShape(8.dp))
                     .background(Color(0xFF060911))
                     .border(1.dp, Color(0xFF1E293B), RoundedCornerShape(8.dp))
@@ -415,18 +410,18 @@ fun BoxScope.VirtualMouseOverlay(
                 // 触控板中央辅助视觉提示
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Default.TouchApp,
                         contentDescription = null,
                         tint = Color(0xFF334155),
-                        modifier = Modifier.size(28.dp)
+                        modifier = Modifier.size(20.dp)
                     )
                     Text(
-                        text = "单指滑动移动 · 轻点左键 · 长按右键",
+                        text = "单指滑动 · 轻点左键 · 长按右键",
                         color = Color(0xFF64748B),
-                        fontSize = 11.sp,
+                        fontSize = 10.sp,
                         fontWeight = FontWeight.Medium
                     )
                 }

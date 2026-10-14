@@ -375,6 +375,32 @@ fun TradingMultiViewScreen(
                             modifier = Modifier.size(16.dp)
                         )
                     }
+
+                    // 禁止网页自动放大按钮：紧跟在全局缩放按钮后面 (45dp x 30dp)
+                    // 用于彻底阻断 TradingView 搜索品种、选择周期、打开指标设置弹窗时的自动放大
+                    Box(
+                        modifier = Modifier
+                            .size(width = 45.dp, height = 30.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(
+                                if (uiState.isAutoZoomLocked) Color(0xFF065F46)
+                                else Color(0xFF1E293B)
+                            )
+                            .border(
+                                width = 1.dp,
+                                color = if (uiState.isAutoZoomLocked) Color(0xFF10B981) else Color(0xFF334155),
+                                shape = RoundedCornerShape(6.dp)
+                            )
+                            .clickable { viewModel.toggleAutoZoomLock(context) },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = if (uiState.isAutoZoomLocked) Icons.Default.Lock else Icons.Default.LockOpen,
+                            contentDescription = if (uiState.isAutoZoomLocked) "已开启禁止自动放大 (输入/弹窗保持原比例)" else "已关闭锁定 (允许自由放大)",
+                            tint = if (uiState.isAutoZoomLocked) Color(0xFF34D399) else Color(0xFF94A3B8),
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
                 }
 
                 Spacer(modifier = Modifier.width(6.dp))
@@ -701,7 +727,7 @@ fun TradingMultiViewScreen(
                                     }
                                 }
 
-                                // 只读锁定网址展示栏 (禁止手动打字输入，带 🔒 锁图标，纯展示当前视窗正在加载的 URL)
+                                // 只读锁定网址展示栏 (禁止手动打字输入，带后退/前进按钮与 🔒 锁图标，纯展示当前视窗正在加载的 URL)
                                 Box(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -709,13 +735,43 @@ fun TradingMultiViewScreen(
                                         .clip(RoundedCornerShape(3.dp))
                                         .background(Color(0xFF131B2A))
                                         .border(1.dp, Color(0xFF1E293B), RoundedCornerShape(3.dp))
-                                        .padding(horizontal = 6.dp),
+                                        .padding(horizontal = 4.dp),
                                     contentAlignment = Alignment.CenterStart
                                 ) {
                                     Row(
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.spacedBy(4.dp)
                                     ) {
+                                        // 后退按钮
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(2.dp))
+                                                .clickable { viewModel.goBack(win.id) }
+                                                .padding(horizontal = 2.dp, vertical = 2.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.ArrowBack,
+                                                contentDescription = "后退",
+                                                tint = Color(0xFF94A3B8),
+                                                modifier = Modifier.size(12.dp)
+                                            )
+                                        }
+
+                                        // 前进按钮
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(2.dp))
+                                                .clickable { viewModel.goForward(win.id) }
+                                                .padding(horizontal = 2.dp, vertical = 2.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.ArrowForward,
+                                                contentDescription = "前进",
+                                                tint = Color(0xFF94A3B8),
+                                                modifier = Modifier.size(12.dp)
+                                            )
+                                        }
+
                                         Icon(
                                             imageVector = Icons.Default.Lock,
                                             contentDescription = "只读锁定",

@@ -27,7 +27,8 @@ data class TabGroup(
     val description: String = "",
     val windowCount: Int = 3, // 每个标签页独立设置：3 或 4 个独立窗口
     val zoomPercent: Int = 100, // 每个标签页独立记忆保存的缩放比例 (50% ~ 250%)
-    val items: List<TabGroupItem>
+    val items: List<TabGroupItem>,
+    val maximizedWindowId: Int? = null // 每个标签页独立记忆各自的最大化窗口
 )
 
 val DEFAULT_TAB_GROUPS = listOf(
@@ -127,7 +128,8 @@ data class MultiViewUiState(
     val isGlobalUrlCollapsed: Boolean = true,
     val fixedPixelWidth: Int = 1280, // 固定像素桌面视口基准 (默认 1280px 标准 PC)
     val isMagnetActive: Boolean = false, // 磁力吸附切换状态
-    val isTrackpadEnabled: Boolean = false // 虚拟触控板/鼠标面板开关
+    val isTrackpadEnabled: Boolean = false, // 虚拟触控板/鼠标面板开关
+    val isAutoZoomLocked: Boolean = true // 是否禁止网页弹窗/聚焦时自动放大 (默认开启，锁定当前基准比例)
 ) {
     // 当前标签页集合对象
     val currentGroup: TabGroup?
@@ -222,6 +224,9 @@ class TradingViewModel : ViewModel() {
             updateWindowTitle(ownerGroupId, windowId, pageTitle)
         }
 
+        // 同步防自动放大状态
+        _uiState.update { it.copy(isAutoZoomLocked = PersistentWebViewPool.isAutoZoomLocked) }
+
         // 开启 15分钟前台停留检测与自动翻转后台轮询
         startBackgroundStayTimer()
     }
@@ -297,10 +302,11 @@ class TradingViewModel : ViewModel() {
 
         val currentWindows = _uiState.value.windows
 
-        // 1. 将当前标签集合中各视窗被用户修改后的实时 URL、标题和代码保存下来
+        // 1. 将当前标签集合中各视窗被用户修改后的实时 URL、标题和代码保存下来，以及当前标签页独立记忆的最大化窗口
         val updatedGroups = _uiState.value.groups.map { group ->
             if (group.id == currentActiveId) {
                 group.copy(
+                    maximizedWindowId = _uiState.value.maximizedWindowId,
                     items = group.items.mapIndexed { index, item ->
                         val win = currentWindows.getOrNull(index)
                         if (win != null && win.currentUrl.isNotBlank()) {
@@ -332,6 +338,8 @@ class TradingViewModel : ViewModel() {
         // 方案 A: 从 SharedPreferences 中读取该标签页每个窗口之前是否被用户隐藏
         val prefs = context?.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
+        val targetMaximizedId = targetGroup.maximizedWindowId
+
         _uiState.update { state ->
             val updatedWindows = state.windows.mapIndexed { index, win ->
                 val windowId = index + 1
@@ -350,12 +358,14 @@ class TradingViewModel : ViewModel() {
                     symbol = targetItem.symbol,
                     currentUrl = targetUrl,
                     isHidden = isHidden,
+                    isMaximized = (windowId == targetMaximizedId),
                     zoomPercent = targetGroupZoom
                 )
             }
             state.copy(
                 groups = updatedGroups,
                 windows = updatedWindows,
+                maximizedWindowId = targetMaximizedId,
                 activeGroupId = groupId,
                 globalZoomPercent = targetGroupZoom,
                 fixedPixelWidth = targetPixelWidth
@@ -609,10 +619,12 @@ class TradingViewModel : ViewModel() {
                 PersistentWebViewPool.setZoom(winId, savedGroupZoom)
             }
 
+            val activeMaximizedId = targetGroup?.maximizedWindowId
             _uiState.update { state ->
                 state.copy(
                     groups = loadedGroups,
-                    windows = currentWindows.map { it.copy(zoomPercent = savedGroupZoom) },
+                    windows = currentWindows.map { it.copy(zoomPercent = savedGroupZoom, isMaximized = (it.id == activeMaximizedId)) },
+                    maximizedWindowId = activeMaximizedId,
                     activeGroupId = validActiveGroupId,
                     globalZoomPercent = savedGroupZoom,
                     fixedPixelWidth = savedPixelWidth
@@ -655,6 +667,7 @@ class TradingViewModel : ViewModel() {
                 val desc = obj.optString("description", "")
                 val windowCount = obj.optInt("windowCount", 3).coerceIn(3, 4)
                 val zoomPercent = obj.optInt("zoomPercent", 100).coerceIn(50, 250)
+                val maximizedWindowId = if (obj.has("maximizedWindowId") && !obj.isNull("maximizedWindowId")) obj.getInt("maximizedWindowId") else null
                 val itemsArray = obj.getJSONArray("items")
                 val items = mutableListOf<TabGroupItem>()
                 for (j in 0 until itemsArray.length()) {
@@ -676,7 +689,8 @@ class TradingViewModel : ViewModel() {
                         description = desc,
                         windowCount = windowCount,
                         zoomPercent = zoomPercent,
-                        items = items
+                        items = items,
+                        maximizedWindowId = maximizedWindowId
                     )
                 )
             }
@@ -754,6 +768,9 @@ class TradingViewModel : ViewModel() {
                     put("description", group.description)
                     put("windowCount", group.windowCount)
                     put("zoomPercent", group.zoomPercent)
+                    if (group.maximizedWindowId != null) {
+                        put("maximizedWindowId", group.maximizedWindowId)
+                    }
                     val itemsArr = JSONArray()
                     group.items.forEach { item ->
                         val itemObj = JSONObject().apply {
@@ -937,6 +954,18 @@ class TradingViewModel : ViewModel() {
     }
 
     /**
+     * 切换禁止网页自动放大 / 视口锁定状态 (彻底阻断 TradingView 搜索品种/设置指标弹窗自动放大)
+     */
+    fun toggleAutoZoomLock(context: Context) {
+        val current = _uiState.value.isAutoZoomLocked
+        val next = !current
+        _uiState.update { it.copy(isAutoZoomLocked = next) }
+        PersistentWebViewPool.setAutoZoomLocked(next, context)
+        val msg = if (next) "已开启禁止自动放大 (输入/弹窗保持原比例)" else "已关闭锁定 (允许网页自由放大)"
+        android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
+    }
+
+    /**
      * 切换视窗桌面模式 (PC Chrome UA 与宽视口) / 移动模式
      */
     fun toggleDesktopMode(windowId: Int) {
@@ -960,7 +989,14 @@ class TradingViewModel : ViewModel() {
             val isCurrentlyMaximized = state.maximizedWindowId == windowId
             val newMaximizedId = if (isCurrentlyMaximized) null else windowId
 
+            val updatedGroups = state.groups.map { grp ->
+                if (grp.id == state.activeGroupId) {
+                    grp.copy(maximizedWindowId = newMaximizedId)
+                } else grp
+            }
+
             state.copy(
+                groups = updatedGroups,
                 maximizedWindowId = newMaximizedId,
                 windows = state.windows.map { win ->
                     if (win.id == windowId) {
@@ -986,6 +1022,12 @@ class TradingViewModel : ViewModel() {
             PersistentWebViewPool.setWindowActive(windowId, false)
             val newMaximizedId = if (state.maximizedWindowId == windowId) null else state.maximizedWindowId
 
+            val updatedGroups = state.groups.map { grp ->
+                if (grp.id == state.activeGroupId) {
+                    grp.copy(maximizedWindowId = newMaximizedId)
+                } else grp
+            }
+
             // 持久化当前标签组中该窗口的隐藏状态为 true
             context?.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 ?.edit()
@@ -993,6 +1035,7 @@ class TradingViewModel : ViewModel() {
                 ?.apply()
 
             state.copy(
+                groups = updatedGroups,
                 maximizedWindowId = newMaximizedId,
                 windows = state.windows.map { win ->
                     if (win.id == windowId) {
@@ -1043,7 +1086,13 @@ class TradingViewModel : ViewModel() {
 
         (1..count).forEach { PersistentWebViewPool.setWindowActive(it, true) }
         _uiState.update { state ->
+            val updatedGroups = state.groups.map { grp ->
+                if (grp.id == state.activeGroupId) {
+                    grp.copy(maximizedWindowId = null)
+                } else grp
+            }
             state.copy(
+                groups = updatedGroups,
                 maximizedWindowId = null,
                 windows = state.windows.map { it.copy(isHidden = false, isMaximized = false) }
             )

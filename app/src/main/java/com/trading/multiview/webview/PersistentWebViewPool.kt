@@ -11,6 +11,8 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.*
+import androidx.webkit.WebViewCompat
+import androidx.webkit.WebViewFeature
 
 /**
  * 持久化 WebView 池
@@ -228,6 +230,10 @@ object PersistentWebViewPool {
     // 默认保存当前用户设定的全局缩放比例 (默认 100%)
     var currentZoomPercent: Int = 100
 
+    // 是否禁止网页弹窗/聚焦时自动放大 (默认开启 true，严格保持桌面黄金基准视口，彻底阻断 TradingView 搜索品种/设置指标弹窗自动放大)
+    var isAutoZoomLocked: Boolean = true
+        private set
+
     // 缓存每个视窗最近一次生效的缩放系数，避免重复注入导致 WebView 重复计算布局与重新缩放
     private val appliedScaleMap = java.util.concurrent.ConcurrentHashMap<String, String>()
     private val appliedScaleFloatMap = java.util.concurrent.ConcurrentHashMap<String, Float>()
@@ -298,11 +304,17 @@ object PersistentWebViewPool {
             appliedScaleFloatMap[windowId] = calculatedScale
         }
 
+        val autoZoomMeta = if (isAutoZoomLocked) {
+            "width=$actualPixelWidth, initial-scale=$scaleStr, minimum-scale=$scaleStr, maximum-scale=$scaleStr, user-scalable=no"
+        } else {
+            "width=$actualPixelWidth, initial-scale=$scaleStr, minimum-scale=0.1, maximum-scale=5.0, user-scalable=yes"
+        }
+
         val script = if (!force) {
             // 极速路径：针对窗口尺寸改变 (如隐藏窗口、切换 3/4 屏)，热更新 meta 标签并瞬间触发 window 与 iframe resize，耗时 < 1ms！
             """
             (function() {
-                var c = 'width=' + $actualPixelWidth + ', initial-scale=' + '$scaleStr' + ', minimum-scale=0.1, maximum-scale=5.0, user-scalable=yes';
+                var c = '$autoZoomMeta';
                 window.__targetViewportContent = c;
                 var m = document.querySelector('meta[name="viewport"]');
                 if (m) {
@@ -312,6 +324,19 @@ object PersistentWebViewPool {
                     n.name = 'viewport';
                     n.content = c;
                     if (document.head) document.head.appendChild(n);
+                }
+
+                // 注入/移除输入框防自动放大样式
+                var pStyle = document.getElementById('__prevent_auto_zoom_style');
+                if ($isAutoZoomLocked) {
+                    if (!pStyle) {
+                        pStyle = document.createElement('style');
+                        pStyle.id = '__prevent_auto_zoom_style';
+                        pStyle.textContent = 'input, select, textarea { font-size: 16px !important; }';
+                        if (document.head) document.head.appendChild(pStyle);
+                    }
+                } else {
+                    if (pStyle) pStyle.remove();
                 }
 
                 // 核心提速关键：立即唤醒 TradingView 极速重排重绘，彻底消灭 4-5 秒的轮询延迟
@@ -343,7 +368,7 @@ object PersistentWebViewPool {
             (function() {
                 var targetWidth = $actualPixelWidth;
                 var targetScale = '$scaleStr';
-                var targetContent = 'width=' + targetWidth + ', initial-scale=' + targetScale + ', minimum-scale=0.1, maximum-scale=5.0, user-scalable=yes';
+                var targetContent = '$autoZoomMeta';
                 window.__targetViewportContent = targetContent;
                 
                 function applyDesktop() {
@@ -364,6 +389,19 @@ object PersistentWebViewPool {
                             meta.setAttribute('name', 'viewport');
                             meta.setAttribute('content', targetContent);
                             if (document.head) document.head.appendChild(meta);
+                        }
+
+                        // 注入/移除输入框防自动放大样式
+                        var pStyle = document.getElementById('__prevent_auto_zoom_style');
+                        if ($isAutoZoomLocked) {
+                            if (!pStyle) {
+                                pStyle = document.createElement('style');
+                                pStyle.id = '__prevent_auto_zoom_style';
+                                pStyle.textContent = 'input, select, textarea { font-size: 16px !important; }';
+                                if (document.head) document.head.appendChild(pStyle);
+                            }
+                        } else {
+                            if (pStyle) pStyle.remove();
                         }
 
                         // 强效防篡改锁：通过 MutationObserver 实时监听任何单页导航 (SPA) 脚本或延迟框架对 viewport 的篡改并自动修正
@@ -409,6 +447,14 @@ object PersistentWebViewPool {
                                     get: function() { return 'Win32'; },
                                     configurable: true
                                 });
+                                if (location.hostname && (location.hostname.includes('feishu.cn') || location.hostname.includes('larksuite.com'))) {
+                                    try {
+                                        Object.defineProperty(window.screen, 'width', { get: function() { return 1920; }, configurable: true });
+                                        Object.defineProperty(window.screen, 'availWidth', { get: function() { return 1920; }, configurable: true });
+                                        Object.defineProperty(window.screen, 'height', { get: function() { return 1080; }, configurable: true });
+                                        Object.defineProperty(window.screen, 'availHeight', { get: function() { return 1040; }, configurable: true });
+                                    } catch(e) {}
+                                }
                             } catch(e) {}
                         }
                     } catch(e) {}
@@ -452,9 +498,16 @@ object PersistentWebViewPool {
     }
 
     /**
-     * 锁定 / 解锁 网页整版缩放
+     * 锁定 / 解锁 网页整版缩放与防自动放大 (彻底阻断 TradingView 搜索品种/设置指标弹窗自动放大)
      */
-    fun setZoomLock(locked: Boolean) {
+    fun setAutoZoomLocked(locked: Boolean, context: Context? = null) {
+        isAutoZoomLocked = locked
+        val ctx = context ?: appContext
+        ctx?.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            ?.edit()
+            ?.putBoolean("auto_zoom_locked", locked)
+            ?.apply()
+
         val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
         mainHandler.post {
             webViewMap.forEach { (_, webView) ->
@@ -462,8 +515,16 @@ object PersistentWebViewPool {
                     setSupportZoom(!locked)
                     builtInZoomControls = !locked
                 }
+                injectDesktopViewport(webView, force = true)
             }
         }
+    }
+
+    /**
+     * 锁定 / 解锁 网页整版缩放
+     */
+    fun setZoomLock(locked: Boolean) {
+        setAutoZoomLocked(locked)
     }
 
     /**
@@ -480,12 +541,19 @@ object PersistentWebViewPool {
     }
 
     val DESKTOP_VIEWPORT_JS: String
-        get() = """
-            (function() {
-                var m = document.querySelector('meta[name="viewport"]');
-                if (m) m.setAttribute('content', 'width=1280, initial-scale=0.33, minimum-scale=0.1, maximum-scale=5.0, user-scalable=yes');
-            })();
-        """.trimIndent()
+        get() {
+            val content = if (isAutoZoomLocked) {
+                "width=1280, initial-scale=0.33, minimum-scale=0.33, maximum-scale=0.33, user-scalable=no"
+            } else {
+                "width=1280, initial-scale=0.33, minimum-scale=0.1, maximum-scale=5.0, user-scalable=yes"
+            }
+            return """
+                (function() {
+                    var m = document.querySelector('meta[name="viewport"]');
+                    if (m) m.setAttribute('content', '$content');
+                })();
+            """.trimIndent()
+        }
 
     fun init(context: Context) {
         val appCtx = context.applicationContext
@@ -496,6 +564,7 @@ object PersistentWebViewPool {
         val prefs = appCtx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val savedActiveGroupId = prefs.getString("active_group_id", null) ?: "preset_1"
         currentGroupId = savedActiveGroupId
+        isAutoZoomLocked = prefs.getBoolean("auto_zoom_locked", true)
 
         val primaryGroupId = currentGroupId
         listOf(1, 2, 3, 4).forEach { windowId ->
@@ -653,6 +722,11 @@ object PersistentWebViewPool {
                 }
             }
 
+            // 启用 Cookie 支持与跨子域第三方 Cookie (解决飞书单点登录与TradingView跨子域会话问题)
+            val cookieManager = CookieManager.getInstance()
+            cookieManager.setAcceptCookie(true)
+            cookieManager.setAcceptThirdPartyCookies(this, true)
+
             settings.apply {
                 javaScriptEnabled = true
                 domStorageEnabled = true // 必须开启：TradingView 用户配置与 WebSocket 必要存储
@@ -660,9 +734,13 @@ object PersistentWebViewPool {
                 loadsImagesAutomatically = true
                 useWideViewPort = true
                 loadWithOverviewMode = true
-                setSupportZoom(true)
-                builtInZoomControls = true
+                setSupportZoom(!isAutoZoomLocked)
+                builtInZoomControls = !isAutoZoomLocked
                 displayZoomControls = false
+
+                // 开启多窗口支持与脚本弹窗自动允许，供 webChromeClient.onCreateWindow 拦截重定向
+                setSupportMultipleWindows(true)
+                javaScriptCanOpenWindowsAutomatically = true
 
                 // 混合内容与安全策略配置
                 mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
@@ -672,6 +750,61 @@ object PersistentWebViewPool {
                 // ================= 默认强制开启桌面模式 (Desktop Mode) =================
                 // 默认使用真实 PC Chrome 桌面 User-Agent，规避移动端轻量排版降级或强跳 APP
                 userAgentString = PC_DESKTOP_USER_AGENT
+            }
+
+            // 注入 Document-Start 早期桌面特征 (提前于 DOM 解析与网页 JS 执行，彻底解决飞书“浏览器不兼容”)
+            if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+                val documentStartScript = """
+                    (function() {
+                        try {
+                            if (navigator.userAgentData) {
+                                Object.defineProperty(navigator, 'userAgentData', {
+                                    get: function() {
+                                        return {
+                                            mobile: false,
+                                            platform: 'Windows',
+                                            brands: [
+                                                { brand: 'Chromium', version: '128' },
+                                                { brand: 'Google Chrome', version: '128' },
+                                                { brand: 'Not;A=Brand', version: '24' }
+                                            ],
+                                            getHighEntropyValues: function(hints) {
+                                                return Promise.resolve({
+                                                    architecture: 'x86',
+                                                    bitness: '64',
+                                                    model: '',
+                                                    platform: 'Windows',
+                                                    platformVersion: '10.0.0',
+                                                    fullVersionList: [
+                                                        { brand: 'Chromium', version: '128.0.0.0' },
+                                                        { brand: 'Google Chrome', version: '128.0.0.0' },
+                                                        { brand: 'Not;A=Brand', version: '24.0.0.0' }
+                                                    ]
+                                                });
+                                            }
+                                        };
+                                    },
+                                    configurable: true
+                                });
+                            }
+                            Object.defineProperty(navigator, 'platform', {
+                                get: function() { return 'Win32'; },
+                                configurable: true
+                            });
+                            if (location.hostname && (location.hostname.includes('feishu.cn') || location.hostname.includes('larksuite.com'))) {
+                                Object.defineProperty(window.screen, 'width', { get: function() { return 1920; }, configurable: true });
+                                Object.defineProperty(window.screen, 'availWidth', { get: function() { return 1920; }, configurable: true });
+                                Object.defineProperty(window.screen, 'height', { get: function() { return 1080; }, configurable: true });
+                                Object.defineProperty(window.screen, 'availHeight', { get: function() { return 1040; }, configurable: true });
+                            }
+                        } catch(e) {}
+                    })();
+                """.trimIndent()
+                try {
+                    WebViewCompat.addDocumentStartJavaScript(this, documentStartScript, setOf("*"))
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
             }
 
             // 默认设置 initialScale 为 0，启用 Android WebView 默认 Overview 自适应缩放
@@ -716,12 +849,42 @@ object PersistentWebViewPool {
                     view: WebView?,
                     request: WebResourceRequest?
                 ): Boolean {
-                    // 保持在当前视窗内跳转，拦截外部应用唤起
-                    return false
+                    val targetUri = request?.url ?: return false
+                    val scheme = targetUri.scheme?.lowercase() ?: ""
+                    if (scheme == "http" || scheme == "https") {
+                        return false // 保持在当前视窗内跳转
+                    }
+                    // 拦截外部应用唤起协议 (如 feishu://) 防止在无客户端环境下报错
+                    return true
                 }
             }
 
             webChromeClient = object : WebChromeClient() {
+                override fun onCreateWindow(
+                    view: WebView?,
+                    isDialog: Boolean,
+                    isUserGesture: Boolean,
+                    resultMsg: android.os.Message?
+                ): Boolean {
+                    // 拦截新窗口弹出 (如点击飞书“网页版”或 target="_blank")，直接在当前视窗中加载
+                    if (resultMsg == null) return false
+                    val transport = resultMsg.obj as? WebView.WebViewTransport ?: return false
+                    val tempWebView = WebView(view?.context ?: context)
+                    tempWebView.webViewClient = object : WebViewClient() {
+                        override fun shouldOverrideUrlLoading(v: WebView?, req: WebResourceRequest?): Boolean {
+                            val targetUrl = req?.url?.toString()
+                            if (!targetUrl.isNullOrBlank()) {
+                                view?.loadUrl(targetUrl)
+                            }
+                            tempWebView.destroy()
+                            return true
+                        }
+                    }
+                    transport.webView = tempWebView
+                    resultMsg.sendToTarget()
+                    return true
+                }
+
                 override fun onReceivedTitle(view: WebView?, title: String?) {
                     super.onReceivedTitle(view, title)
                     // 仅通知 onTitleChanged 更新标签栏文字，坚决不触发 onUrlChanged，杜绝 Compose 全局重组与 WebView 重载闪烁！
