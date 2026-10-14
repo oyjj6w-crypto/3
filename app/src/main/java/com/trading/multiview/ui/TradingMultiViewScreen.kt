@@ -675,7 +675,7 @@ fun TradingMultiViewScreen(
                                                 .clickable { viewModel.reload(win.id) }
                                         )
 
-                                        // TradingView 快捷按钮 (单击直接加载 TradingView 官网/图表)
+                                        // TV 快捷按钮 (单击直接加载 TradingView 官网/图表)
                                         Box(
                                             modifier = Modifier
                                                 .clip(RoundedCornerShape(3.dp))
@@ -686,7 +686,7 @@ fun TradingMultiViewScreen(
                                                 .padding(horizontal = 6.dp, vertical = 2.dp)
                                         ) {
                                             Text(
-                                                text = "TradingView",
+                                                text = "TV",
                                                 color = Color.White,
                                                 fontSize = 10.sp,
                                                 fontWeight = FontWeight.Bold
@@ -725,25 +725,6 @@ fun TradingMultiViewScreen(
                                         ) {
                                             Text(
                                                 text = "GitHub",
-                                                color = Color.White,
-                                                fontSize = 10.sp,
-                                                fontWeight = FontWeight.Bold
-                                            )
-                                        }
-
-                                        // 飞书 快捷按钮 (单击直接加载 feishu.cn)
-                                        Box(
-                                            modifier = Modifier
-                                                .clip(RoundedCornerShape(3.dp))
-                                                .background(Color(0xFF3370FF)) // 飞书经典蓝
-                                                .border(0.5.dp, Color(0xFF2B5AE6), RoundedCornerShape(3.dp))
-                                                .clickable {
-                                                    viewModel.navigateToUrl(win.id, "https://www.feishu.cn")
-                                                }
-                                                .padding(horizontal = 6.dp, vertical = 2.dp)
-                                        ) {
-                                            Text(
-                                                text = "飞书",
                                                 color = Color.White,
                                                 fontSize = 10.sp,
                                                 fontWeight = FontWeight.Bold

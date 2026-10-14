@@ -17,6 +17,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
@@ -157,29 +158,31 @@ fun BoxScope.VirtualMouseOverlay(
                     panelOffset.y.roundToInt()
                 )
             }
-            .width(260.dp)
+            .width(308.dp)
             .shadow(elevation = 12.dp, shape = RoundedCornerShape(12.dp))
             .clip(RoundedCornerShape(12.dp))
+            .alpha(0.3f) // 触控面板整体 30% 透明度 (包括按键与背景全部 30% 半透明透视)
             .background(Color(0xFF0B111E).copy(alpha = 0.95f))
             .border(
                 border = BorderStroke(1.dp, Color(0xFF334155)),
                 shape = RoundedCornerShape(12.dp)
             )
     ) {
-        Column(
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(8.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
+                .height(IntrinsicSize.Min)
+                .padding(6.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            // 顶部 50dp 高度的专属拖拽区域 (专门用于拖动触控板，原 100dp 减半)
+            // 左侧 36dp 宽度的专属竖直拖拽手柄条 (专门用于拖拽移动触控板)
             Box(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .height(50.dp)
+                    .width(36.dp)
+                    .fillMaxHeight()
                     .clip(RoundedCornerShape(8.dp))
-                    .background(Color(0xFF1E293B).copy(alpha = 0.5f))
-                    .border(1.dp, Color(0xFF334155), RoundedCornerShape(8.dp))
+                    .background(Color(0xFF1E293B).copy(alpha = 0.8f))
+                    .border(1.dp, Color(0xFF38BDF8).copy(alpha = 0.6f), RoundedCornerShape(8.dp))
                     .pointerInput(Unit) {
                         detectDragGestures { change, dragAmount ->
                             change.consume()
@@ -191,24 +194,40 @@ fun BoxScope.VirtualMouseOverlay(
                     },
                 contentAlignment = Alignment.Center
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center,
+                    modifier = Modifier.padding(vertical = 4.dp)
                 ) {
                     Icon(
-                        imageVector = Icons.Default.DragHandle,
+                        imageVector = Icons.Default.DragIndicator,
                         contentDescription = "拖拽触控板",
                         tint = Color(0xFF38BDF8),
                         modifier = Modifier.size(20.dp)
                     )
+                    Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = "拖 拽 触 控 板 (50dp)",
+                        text = "拖",
+                        color = Color(0xFF38BDF8),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = "拽",
                         color = Color(0xFF38BDF8),
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold
                     )
                 }
             }
+
+            // 右侧主要操作区 (标题栏、滑动感应区、控制按钮行)
+            Column(
+                modifier = Modifier
+                    .weight(1f),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
 
             // 面板标题栏 (左侧：2倍宽的关闭按钮X；右侧：灵敏度选择、Del键)
             Row(
@@ -566,4 +585,5 @@ fun BoxScope.VirtualMouseOverlay(
             }
         }
     }
+}
 }
