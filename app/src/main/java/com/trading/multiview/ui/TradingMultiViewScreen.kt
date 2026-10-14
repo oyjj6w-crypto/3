@@ -617,12 +617,18 @@ fun TradingMultiViewScreen(
                         )
                     }
 
-                    // 1. 各窗口详细网址与快捷操作 (当前标签页活跃视窗)
+                    // 1. 各窗口详细网址与快捷操作 (若当前有窗口最大化，仅独占展示该最大化窗口；否则展示当前标签页所有活跃视窗)
+                    val displayedWindows = if (uiState.maximizedWindowId != null) {
+                        uiState.activeWindowsForGroup.filter { it.id == uiState.maximizedWindowId }
+                    } else {
+                        uiState.activeWindowsForGroup
+                    }
+
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        uiState.activeWindowsForGroup.forEach { win ->
+                        displayedWindows.forEach { win ->
                             Column(
                                 modifier = Modifier
                                     .weight(1f)
@@ -645,11 +651,11 @@ fun TradingMultiViewScreen(
                                             modifier = Modifier
                                                 .size(6.dp)
                                                 .clip(CircleShape)
-                                                .background(Color(0xFF10B981))
+                                                .background(if (uiState.maximizedWindowId != null) Color(0xFF38BDF8) else Color(0xFF10B981))
                                         )
                                         Text(
-                                            text = "窗口 ${win.id}",
-                                            color = Color(0xFF94A3B8),
+                                            text = if (uiState.maximizedWindowId != null) "窗口 ${win.id} (当前全屏独占)" else "窗口 ${win.id}",
+                                            color = if (uiState.maximizedWindowId != null) Color(0xFF38BDF8) else Color(0xFF94A3B8),
                                             fontSize = 11.sp,
                                             fontWeight = FontWeight.SemiBold
                                         )
@@ -681,6 +687,25 @@ fun TradingMultiViewScreen(
                                         ) {
                                             Text(
                                                 text = "TradingView",
+                                                color = Color.White,
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+
+                                        // AI Studio 快捷按钮 (单击直接加载 Google AI Studio 官网)
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(3.dp))
+                                                .background(Color(0xFF4F46E5)) // 靛蓝 / AI 质感蓝紫
+                                                .border(0.5.dp, Color(0xFF6366F1), RoundedCornerShape(3.dp))
+                                                .clickable {
+                                                    viewModel.navigateToUrl(win.id, "https://aistudio.google.com")
+                                                }
+                                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                                        ) {
+                                            Text(
+                                                text = "AI Studio",
                                                 color = Color.White,
                                                 fontSize = 10.sp,
                                                 fontWeight = FontWeight.Bold

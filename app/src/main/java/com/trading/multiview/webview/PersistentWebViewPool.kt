@@ -171,6 +171,7 @@ object PersistentWebViewPool {
     // 快捷书签推荐网站
     val PRESET_BOOKMARKS = listOf(
         BookmarkItem("TradingView", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:BTCUSDT&interval=15&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1", "📈"),
+        BookmarkItem("AI Studio", "https://aistudio.google.com", "✨"),
         BookmarkItem("Binance 现货", "https://www.binance.com/zh-CN/trade/BTC_USDT", "🟡"),
         BookmarkItem("OKX 欧易", "https://www.okx.com/zh-hans/trade-spot/btc-usdt", "⬛"),
         BookmarkItem("DexScreener", "https://dexscreener.com", "🦅"),
@@ -185,6 +186,136 @@ object PersistentWebViewPool {
     // 标准 PC 桌面端 Chrome User-Agent 标头（Windows 10 x64 + Chrome 128）
     // 强制各大交易所与行情站（Binance, TradingView, OKX, Bybit 等）加载完整版 PC 桌面交易终端
     const val PC_DESKTOP_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+
+    // 深度模拟真实 PC 桌面 Google Chrome 运行时环境 (彻底解决飞书“浏览器版本不兼容”与各类工作台检测)
+    const val DESKTOP_CHROME_ENVIRONMENT_SCRIPT = """
+        (function() {
+            try {
+                // 1. 深度模拟桌面 Google Chrome 内置 window.chrome 运行时环境 (飞书核心依赖检测)
+                if (!window.chrome) {
+                    window.chrome = {};
+                }
+                if (!window.chrome.app) {
+                    window.chrome.app = {
+                        isInstalled: false,
+                        InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' },
+                        RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' },
+                        getDetails: function() { return null; },
+                        getIsInstalled: function() { return false; },
+                        installState: function(cb) { if (cb) cb('not_installed'); }
+                    };
+                }
+                if (!window.chrome.runtime) {
+                    window.chrome.runtime = {
+                        OnInstalledReason: { CHROME_UPDATE: 'chrome_update', INSTALL: 'install', SHARED_MODULE_UPDATE: 'shared_module_update', UPDATE: 'update' },
+                        OnRestartRequiredReason: { APP_UPDATE: 'app_update', OS_UPDATE: 'os_update', PERIODIC: 'periodic' },
+                        PlatformArch: { ARM: 'arm', ARM64: 'arm64', MIPS: 'mips', MIPS64: 'mips64', X86_32: 'x86-32', X86_64: 'x86-64' },
+                        PlatformNaclArch: { ARM: 'arm', MIPS: 'mips', MIPS64: 'mips64', X86_32: 'x86-32', X86_64: 'x86-64' },
+                        PlatformOs: { ANDROID: 'android', CROS: 'cros', LINUX: 'linux', MAC: 'mac', OPENBSD: 'openbsd', WIN: 'win' },
+                        RequestUpdateCheckStatus: { NO_UPDATE: 'no_update', THROTTLED: 'throttled', UPDATE_AVAILABLE: 'update_available' },
+                        connect: function() { return { onDisconnect: { addListener: function(){} }, onMessage: { addListener: function(){} }, postMessage: function(){} }; },
+                        sendMessage: function() {}
+                    };
+                }
+                if (!window.chrome.loadTimes) {
+                    window.chrome.loadTimes = function() {
+                        var now = Date.now() / 1000;
+                        return {
+                            requestTime: now - 0.5,
+                            startLoadTime: now - 0.5,
+                            commitLoadTime: now - 0.4,
+                            finishDocumentLoadTime: now - 0.1,
+                            finishLoadTime: now,
+                            firstPaintTime: now - 0.3,
+                            firstPaintAfterLoadTime: 0,
+                            navigationType: 'Other',
+                            wasFetchedViaSpdy: true,
+                            wasNpnNegotiated: true,
+                            npnNegotiatedProtocol: 'h2',
+                            connectionInfo: 'h2'
+                        };
+                    };
+                }
+                if (!window.chrome.csi) {
+                    window.chrome.csi = function() {
+                        return { startE: Date.now() - 500, onloadT: Date.now(), pageT: 500, tran: 15 };
+                    };
+                }
+
+                // 2. 模拟真实 PC 桌面 navigator 属性 (Google Inc. 厂商、Win32 平台及完整 Client Hints)
+                try {
+                    Object.defineProperty(navigator, 'vendor', { get: function() { return 'Google Inc.'; }, configurable: true });
+                } catch(e) {}
+
+                try {
+                    Object.defineProperty(navigator, 'platform', { get: function() { return 'Win32'; }, configurable: true });
+                } catch(e) {}
+
+                try {
+                    Object.defineProperty(navigator, 'webdriver', { get: function() { return false; }, configurable: true });
+                } catch(e) {}
+
+                try {
+                    var uaData = {
+                        mobile: false,
+                        platform: 'Windows',
+                        brands: [
+                            { brand: 'Chromium', version: '128' },
+                            { brand: 'Google Chrome', version: '128' },
+                            { brand: 'Not;A=Brand', version: '24' }
+                        ],
+                        getHighEntropyValues: function(hints) {
+                            return Promise.resolve({
+                                architecture: 'x86',
+                                bitness: '64',
+                                brands: [
+                                    { brand: 'Chromium', version: '128' },
+                                    { brand: 'Google Chrome', version: '128' },
+                                    { brand: 'Not;A=Brand', version: '24' }
+                                ],
+                                mobile: false,
+                                model: '',
+                                platform: 'Windows',
+                                platformVersion: '10.0.0',
+                                fullVersionList: [
+                                    { brand: 'Chromium', version: '128.0.0.0' },
+                                    { brand: 'Google Chrome', version: '128.0.0.0' },
+                                    { brand: 'Not;A=Brand', version: '24.0.0.0' }
+                                ]
+                            });
+                        }
+                    };
+                    Object.defineProperty(navigator, 'userAgentData', { get: function() { return uaData; }, configurable: true });
+                } catch(e) {}
+
+                // 3. 桌面 Notification API 兜底 (防止飞书消息推送检测报错)
+                try {
+                    if (!window.Notification) {
+                        window.Notification = function(title, options) {};
+                        window.Notification.permission = 'default';
+                        window.Notification.requestPermission = function() { return Promise.resolve('default'); };
+                    }
+                } catch(e) {}
+
+                // 4. 针对飞书 feishu.cn 与 larksuite.com 域名的屏幕分辨率及桌面环境强制伪装
+                if (location.hostname && (location.hostname.includes('feishu.cn') || location.hostname.includes('larksuite.com'))) {
+                    try {
+                        Object.defineProperty(window.screen, 'width', { get: function() { return 1920; }, configurable: true });
+                        Object.defineProperty(window.screen, 'availWidth', { get: function() { return 1920; }, configurable: true });
+                        Object.defineProperty(window.screen, 'height', { get: function() { return 1080; }, configurable: true });
+                        Object.defineProperty(window.screen, 'availHeight', { get: function() { return 1040; }, configurable: true });
+                    } catch(e) {}
+                }
+            } catch(e) {}
+        })();
+    """
+
+    /**
+     * 深度注入桌面 Chrome 运行时特征环境 (window.chrome, navigator.vendor, userAgentData 等)
+     */
+    fun injectDesktopChromeEnvironment(webView: WebView) {
+        webView.evaluateJavascript(DESKTOP_CHROME_ENVIRONMENT_SCRIPT, null)
+    }
 
     // 固定像素桌面视口基准预设 (默认 1280px 标准桌面基准)
     data class FixedPixelPreset(
@@ -426,38 +557,101 @@ object PersistentWebViewPool {
                             window.__viewport_observer = obs;
                         }
 
-                        // 模拟 PC 平台标头，但保留真实触屏支持，确保周期切换按钮与下拉菜单流畅交互
-                        if (window.navigator) {
+                        // 深度模拟桌面 Google Chrome 运行时环境 (window.chrome, navigator.vendor, userAgentData)
+                        try {
+                            if (!window.chrome) window.chrome = {};
+                            if (!window.chrome.app) {
+                                window.chrome.app = {
+                                    isInstalled: false,
+                                    InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' },
+                                    RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' },
+                                    getDetails: function() { return null; },
+                                    getIsInstalled: function() { return false; },
+                                    installState: function(cb) { if (cb) cb('not_installed'); }
+                                };
+                            }
+                            if (!window.chrome.runtime) {
+                                window.chrome.runtime = {
+                                    OnInstalledReason: { CHROME_UPDATE: 'chrome_update', INSTALL: 'install', SHARED_MODULE_UPDATE: 'shared_module_update', UPDATE: 'update' },
+                                    OnRestartRequiredReason: { APP_UPDATE: 'app_update', OS_UPDATE: 'os_update', PERIODIC: 'periodic' },
+                                    PlatformArch: { ARM: 'arm', ARM64: 'arm64', MIPS: 'mips', MIPS64: 'mips64', X86_32: 'x86-32', X86_64: 'x86-64' },
+                                    PlatformNaclArch: { ARM: 'arm', MIPS: 'mips', MIPS64: 'mips64', X86_32: 'x86-32', X86_64: 'x86-64' },
+                                    PlatformOs: { ANDROID: 'android', CROS: 'cros', LINUX: 'linux', MAC: 'mac', OPENBSD: 'openbsd', WIN: 'win' },
+                                    RequestUpdateCheckStatus: { NO_UPDATE: 'no_update', THROTTLED: 'throttled', UPDATE_AVAILABLE: 'update_available' },
+                                    connect: function() { return { onDisconnect: { addListener: function(){} }, onMessage: { addListener: function(){} }, postMessage: function(){} }; },
+                                    sendMessage: function() {}
+                                };
+                            }
+                            if (!window.chrome.loadTimes) {
+                                window.chrome.loadTimes = function() {
+                                    var n = Date.now() / 1000;
+                                    return {
+                                        requestTime: n - 0.5,
+                                        startLoadTime: n - 0.5,
+                                        commitLoadTime: n - 0.4,
+                                        finishDocumentLoadTime: n - 0.1,
+                                        finishLoadTime: n,
+                                        firstPaintTime: n - 0.3,
+                                        firstPaintAfterLoadTime: 0,
+                                        navigationType: 'Other'
+                                    };
+                                };
+                            }
+                            if (!window.chrome.csi) {
+                                window.chrome.csi = function() {
+                                    return { startE: Date.now() - 500, onloadT: Date.now(), pageT: 500, tran: 15 };
+                                };
+                            }
+
+                            if (window.navigator) {
+                                try { Object.defineProperty(navigator, 'vendor', { get: function() { return 'Google Inc.'; }, configurable: true }); } catch(e) {}
+                                try { Object.defineProperty(navigator, 'platform', { get: function() { return 'Win32'; }, configurable: true }); } catch(e) {}
+                                try { Object.defineProperty(navigator, 'webdriver', { get: function() { return false; }, configurable: true }); } catch(e) {}
+                                try {
+                                    var uaData = {
+                                        mobile: false,
+                                        platform: 'Windows',
+                                        brands: [
+                                            { brand: 'Chromium', version: '128' },
+                                            { brand: 'Google Chrome', version: '128' },
+                                            { brand: 'Not;A=Brand', version: '24' }
+                                        ],
+                                        getHighEntropyValues: function(hints) {
+                                            return Promise.resolve({
+                                                architecture: 'x86',
+                                                bitness: '64',
+                                                brands: [
+                                                    { brand: 'Chromium', version: '128' },
+                                                    { brand: 'Google Chrome', version: '128' }
+                                                ],
+                                                mobile: false,
+                                                model: '',
+                                                platform: 'Windows',
+                                                platformVersion: '10.0.0'
+                                            });
+                                        }
+                                    };
+                                    Object.defineProperty(navigator, 'userAgentData', { get: function() { return uaData; }, configurable: true });
+                                } catch(e) {}
+                            }
+
                             try {
-                                Object.defineProperty(navigator, 'userAgentData', {
-                                    get: function() {
-                                        return {
-                                            mobile: false,
-                                            platform: 'Windows',
-                                            brands: [
-                                                { brand: 'Chromium', version: '128' },
-                                                { brand: 'Google Chrome', version: '128' },
-                                                { brand: 'Not;A=Brand', version: '24' }
-                                            ]
-                                        };
-                                    },
-                                    configurable: true
-                                });
-                                Object.defineProperty(navigator, 'platform', {
-                                    get: function() { return 'Win32'; },
-                                    configurable: true
-                                });
-                                if (location.hostname && (location.hostname.includes('feishu.cn') || location.hostname.includes('larksuite.com'))) {
-                                    try {
-                                        Object.defineProperty(window.screen, 'width', { get: function() { return 1920; }, configurable: true });
-                                        Object.defineProperty(window.screen, 'availWidth', { get: function() { return 1920; }, configurable: true });
-                                        Object.defineProperty(window.screen, 'height', { get: function() { return 1080; }, configurable: true });
-                                        Object.defineProperty(window.screen, 'availHeight', { get: function() { return 1040; }, configurable: true });
-                                    } catch(e) {}
+                                if (!window.Notification) {
+                                    window.Notification = function(title, options) {};
+                                    window.Notification.permission = 'default';
+                                    window.Notification.requestPermission = function() { return Promise.resolve('default'); };
                                 }
                             } catch(e) {}
-                        }
-                    } catch(e) {}
+
+                            if (location.hostname && (location.hostname.includes('feishu.cn') || location.hostname.includes('larksuite.com'))) {
+                                try {
+                                    Object.defineProperty(window.screen, 'width', { get: function() { return 1920; }, configurable: true });
+                                    Object.defineProperty(window.screen, 'availWidth', { get: function() { return 1920; }, configurable: true });
+                                    Object.defineProperty(window.screen, 'height', { get: function() { return 1080; }, configurable: true });
+                                    Object.defineProperty(window.screen, 'availHeight', { get: function() { return 1040; }, configurable: true });
+                                } catch(e) {}
+                            }
+                        } catch(e) {}
                 }
 
                 if (document.readyState === 'loading') {
@@ -754,54 +948,8 @@ object PersistentWebViewPool {
 
             // 注入 Document-Start 早期桌面特征 (提前于 DOM 解析与网页 JS 执行，彻底解决飞书“浏览器不兼容”)
             if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
-                val documentStartScript = """
-                    (function() {
-                        try {
-                            if (navigator.userAgentData) {
-                                Object.defineProperty(navigator, 'userAgentData', {
-                                    get: function() {
-                                        return {
-                                            mobile: false,
-                                            platform: 'Windows',
-                                            brands: [
-                                                { brand: 'Chromium', version: '128' },
-                                                { brand: 'Google Chrome', version: '128' },
-                                                { brand: 'Not;A=Brand', version: '24' }
-                                            ],
-                                            getHighEntropyValues: function(hints) {
-                                                return Promise.resolve({
-                                                    architecture: 'x86',
-                                                    bitness: '64',
-                                                    model: '',
-                                                    platform: 'Windows',
-                                                    platformVersion: '10.0.0',
-                                                    fullVersionList: [
-                                                        { brand: 'Chromium', version: '128.0.0.0' },
-                                                        { brand: 'Google Chrome', version: '128.0.0.0' },
-                                                        { brand: 'Not;A=Brand', version: '24.0.0.0' }
-                                                    ]
-                                                });
-                                            }
-                                        };
-                                    },
-                                    configurable: true
-                                });
-                            }
-                            Object.defineProperty(navigator, 'platform', {
-                                get: function() { return 'Win32'; },
-                                configurable: true
-                            });
-                            if (location.hostname && (location.hostname.includes('feishu.cn') || location.hostname.includes('larksuite.com'))) {
-                                Object.defineProperty(window.screen, 'width', { get: function() { return 1920; }, configurable: true });
-                                Object.defineProperty(window.screen, 'availWidth', { get: function() { return 1920; }, configurable: true });
-                                Object.defineProperty(window.screen, 'height', { get: function() { return 1080; }, configurable: true });
-                                Object.defineProperty(window.screen, 'availHeight', { get: function() { return 1040; }, configurable: true });
-                            }
-                        } catch(e) {}
-                    })();
-                """.trimIndent()
                 try {
-                    WebViewCompat.addDocumentStartJavaScript(this, documentStartScript, setOf("*"))
+                    WebViewCompat.addDocumentStartJavaScript(this, DESKTOP_CHROME_ENVIRONMENT_SCRIPT, setOf("*"))
                 } catch (e: Exception) {
                     e.printStackTrace()
                 }
@@ -814,8 +962,11 @@ object PersistentWebViewPool {
             webViewClient = object : WebViewClient() {
                 override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                     super.onPageStarted(view, url, favicon)
-                    // 页面开始加载时，注入根据当前窗口宽度计算的黄金缩放桌面视口
-                    view?.let { injectDesktopViewport(it, force = true) }
+                    // 页面开始加载时，深度注入 Chrome 桌面特征并根据当前窗口宽度计算黄金缩放桌面视口
+                    view?.let {
+                        injectDesktopChromeEnvironment(it)
+                        injectDesktopViewport(it, force = true)
+                    }
                     if (url != null && url != lastReportedUrl) {
                         lastReportedUrl = url
                         saveWindowUrlForGroup(ownerGroupId, windowId, url, view?.title ?: "", context)
@@ -825,8 +976,9 @@ object PersistentWebViewPool {
 
                 override fun onPageFinished(view: WebView?, url: String?) {
                     super.onPageFinished(view, url)
-                    // 页面渲染完成后再次加固注入，确保桌面宽屏自适应
+                    // 页面渲染完成后再次加固注入，确保桌面特征与宽屏自适应 100% 生效
                     view?.let {
+                        injectDesktopChromeEnvironment(it)
                         injectDesktopViewport(it, force = true)
                     }
                     if (url != null && url != lastReportedUrl) {

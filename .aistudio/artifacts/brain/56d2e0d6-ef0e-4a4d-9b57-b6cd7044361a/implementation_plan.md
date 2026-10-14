@@ -1,108 +1,96 @@
-# 浮动触控板高度减半与网页防自动放大功能实施方案
+# 窗口最大化地址栏独占、新增 AI Studio 快捷按钮与飞书网页版深度兼容实施计划
 
-## 一、用户需求与确认决策总结
+## 一、需求背景与用户确认
 
 > [!IMPORTANT]
-> 针对用户的两项核心诉求，我们已通过前期交互确认与技术方案验证，确立如下落地细节：
-
-- **确认决策 1（触控板尺寸减半）**：
-  - **顶部拖拽区**：高度从 **100dp 减半为 50dp**，内部重构为紧凑精简布局（拖拽手柄图标 + 11sp 醒目文字），既保留灵敏易拖拽的抓手体验，又减少纵向空间占用。
-  - **核心滑动感应区**：高度从 **244dp 减半为 122dp**，**面板宽度保持 260dp**（用户已确认采用横向宽扁形态），使整个触控板垂直高度大幅减少 172dp，将大部分图表与视窗完整暴露出来。
-- **确认决策 2（新增禁止 TradingView 网页弹窗自动放大按钮）**：
-  - **按钮位置**：紧跟在顶部栏「全局缩放按钮（电脑图标）」后方（尺寸同样为 `45dp x 30dp`，保持顶栏完美对齐与对称美感）。
-  - **核心机制**：一键切换「锁定/允许网页动态放大」状态，高亮显示当前状态，并通过持久化偏好存储（SharedPreferences）记忆。
-  - **技术根因与防护**：TradingView 在聚焦搜索输入框（品种/周期）或打开指标配置弹窗时，移动端 WebKit 内核会触发默认的聚焦自适应放大机制。本功能开启后，系统将动态锁定 `viewport` 的 `maximum-scale = minimum-scale = targetScale` 并强制 `user-scalable=no`，同时注入输入框防缩放样式，彻底根绝自动弹窗放大问题！
+> 用户提出的三项核心改造与确认答复：
+> 1. **窗口最大化地址栏联动**：在窗口最大化后点击网址展开按钮，当前会展示全部 4 个窗口的地址栏。需改造为：**仅展示当前最大化窗口的这一块地址栏，并独占整行宽度**，提供更宽阔的网址展示与操控空间；未最大化时恢复并列展示。
+> 2. **新增 AI Studio 快捷按钮**：在各窗口地址栏的 `TradingView` 快捷按钮后面，新增一个快捷跳转按钮，网址为 `https://aistudio.google.com`。
+> 3. **飞书网页版兼容性彻底攻坚**：深入注入完整桌面 Chrome 运行时特征与 `window.chrome` 环境（解决飞书登录后进入网页版提示“浏览器版本不兼容”的痛点）。
+> 4. **GitHub 登录与飞书关系的释疑**：两者完全无关，已向用户阐明 GitHub 官方登录页本身不提供 Google 社交登录按钮，并非环境异常。
 
 ---
 
-## 二、架构设计与系统流程
+## 二、架构分析与改动方案
 
-```
-┌────────────────────────────────────────────────────────────────────────┐
-│                        顶部极简控制栏 (Top Bar)                         │
-│                                                                        │
-│ [标签1/2/3] [窗口1-4最大化/显隐] [全局缩放] [防自动放大🔒] [刷新] [网址配置] │
-└────────────────────────────────────┬───────────────────────────────────┘
-                                     │
-                 ┌───────────────────┴───────────────────┐
-                 │ 点击切换「禁止网页自动放大」状态           │
-                 ▼                                       ▼
-       【关闭状态 (默认自由放缩)】               【开启状态 (锁定当前基准比例)】
-       - viewport: maximum-scale=5.0           - viewport: maximum-scale=targetScale
-       - user-scalable=yes                     - user-scalable=no (严格锁定)
-       - 允许双指捏合缩放                      - 阻止输入框/弹窗引起的自动拉伸
-                                               - 保持 TradingView K线界面原样
-                                               - 按钮青色高亮提示 (带锁图标)
+### 1. 窗口最大化后地址栏的过滤与整行独占渲染
+- **文件**：`app/src/main/java/com/trading/multiview/ui/TradingMultiViewScreen.kt`
+- **原逻辑**：
+  ```kotlin
+  uiState.activeWindowsForGroup.forEach { win ->
+      Column(modifier = Modifier.weight(1f)...) { ... }
+  }
+  ```
+- **新逻辑**：
+  - 计算当前应当展示的视窗列表：
+    ```kotlin
+    val displayedWindows = if (uiState.maximizedWindowId != null) {
+        uiState.activeWindowsForGroup.filter { it.id == uiState.maximizedWindowId }
+    } else {
+        uiState.activeWindowsForGroup
+    }
+    ```
+  - 当 `uiState.maximizedWindowId != null` 时，`displayedWindows` 仅包含 1 个窗口，它将独占整行 `fillMaxWidth()`（在 Row 中单个 `weight(1f)` 即可撑满整行，或外层直接自适应全宽），获得最充裕的显示与操作空间；
+  - 窗口标题处增加 `(全屏独占)` 或高亮状态指示，让用户清晰感知当前正在查看该最大化窗口的网址。
 
-┌────────────────────────────────────────────────────────────────────────┐
-│                 悬浮精准触控板面板 (Virtual Mouse Trackpad)              │
-│                                                                        │
-│ ┌────────────────────────────────────────────────────────────────────┐ │
-│ │  1. 专属拖拽区域 (原 100dp ➔ 现 50dp，节省 50% 顶部高度)            │ │
-│ │     [DragHandle 图标]  拖 拽 触 控 板 (高 50dp)                     │ │
-│ └────────────────────────────────────────────────────────────────────┘ │
-│ ┌────────────────────────────────────────────────────────────────────┐ │
-│ │  2. 工具栏 (高度 32dp: [关闭X] [灵敏度 0.5x/2.0x] [Del删除键])       │ │
-│ └────────────────────────────────────────────────────────────────────┘ │
-│ ┌────────────────────────────────────────────────────────────────────┐ │
-│ │  3. 核心滑动感应区 (原 244dp ➔ 现 122dp，保持 260dp 宽扁形态)         │ │
-│ │     单指滑动移动十字线 · 轻点左键 · 长按500ms右键                    │ │
-│ └────────────────────────────────────────────────────────────────────┘ │
-│ ┌────────────────────────────────────────────────────────────────────┐ │
-│ │  4. 底部动作控制按键 (左键 · 右键 · 按住画线 · 滚轮放大 · 滚轮缩小) │ │
-│ └────────────────────────────────────────────────────────────────────┘ │
-└────────────────────────────────────────────────────────────────────────┘
-```
+### 2. 地址栏新增 `AI Studio` 快捷按钮
+- **文件**：`app/src/main/java/com/trading/multiview/ui/TradingMultiViewScreen.kt`
+- **位置**：紧跟在 `TradingView` 快捷按钮后面，在 `GitHub` 按钮之前：
+  ```kotlin
+  // AI Studio 快捷按钮 (单击直接加载 Google AI Studio 官网)
+  Box(
+      modifier = Modifier
+          .clip(RoundedCornerShape(3.dp))
+          .background(Color(0xFF4F46E5)) // 靛蓝 / AI 专属高质感配色
+          .border(0.5.dp, Color(0xFF6366F1), RoundedCornerShape(3.dp))
+          .clickable {
+              viewModel.navigateToUrl(win.id, "https://aistudio.google.com")
+          }
+          .padding(horizontal = 6.dp, vertical = 2.dp)
+  ) {
+      Text(
+          text = "AI Studio",
+          color = Color.White,
+          fontSize = 10.sp,
+          fontWeight = FontWeight.Bold
+      )
+  }
+  ```
+- 保持与 `TradingView`（深天蓝）、`GitHub`（极客深灰）、`飞书`（经典蓝）的风格高度协调，点击瞬间切换加载 `https://aistudio.google.com`。
 
----
-
-## 三、详细修改清单与技术方案
-
-### 1. 浮动触控板高度减半 (`VirtualMouseTrackpad.kt`)
-- **拖拽区高度调整**：
-  - 将 `Modifier.height(100.dp)` 更改为 `Modifier.height(50.dp)`；
-  - 调整内部元素排列为水平或紧凑垂直居中：手柄图标 `Icons.Default.DragHandle` (20dp) + 标注文案 `"拖 拽 触 控 板 (50dp)"`；
-  - 拖拽手势检测 `detectDragGestures` 完全保留，操作手感依旧平滑灵敏。
-- **滑动感应区高度调整**：
-  - 将 `Modifier.height(244.dp)` 更改为 `Modifier.height(122.dp)`；
-  - 内部中央提示图标缩小为 22dp，文字保持极简，兼顾视觉留白；
-  - 光标位移算法与多点判定逻辑不受任何影响，手指在 122dp 区域内轻扫即可通过灵敏度加速覆盖全屏视窗。
-
-### 2. 增加“禁止自动放大”状态管理 (`TradingViewModel.kt` & `PersistentWebViewPool.kt`)
-- **状态字段与存储**：
-  - 在 `TradingViewModel` 的 `MultiViewUiState` 中增加 `val isAutoZoomLocked: Boolean = true`（默认启用防放大保护，提升交易看盘稳定性）；
-  - 在 `SharedPreferences` 中持久化存储该设置，下次启动自动恢复；
-  - 提供 `fun toggleAutoZoomLock()` 方法，点击时翻转状态并触发全局广播与 Toast 提示。
-- **WebView 视口防放大引擎加固 (`PersistentWebViewPool.kt`)**：
-  - 增加 `fun setAutoZoomLocked(locked: Boolean)` 方法；
-  - 在 `injectDesktopViewport` 中判断 `isAutoZoomLocked`：
-    - 当为 `true` 时，生成的 Viewport Meta 设为：
-      `content="width=${actualPixelWidth}, initial-scale=${scaleStr}, minimum-scale=${scaleStr}, maximum-scale=${scaleStr}, user-scalable=no"`
-    - 同时注入轻量级 CSS 规则：
-      `input, select, textarea { font-size: 16px !important; }`，彻底阻断移动端 Chromium 对小于 16px 文本框获得焦点时的自动推拉放大行为；
-    - 当为 `false` 时，恢复为 `minimum-scale=0.1, maximum-scale=5.0, user-scalable=yes`，允许用户双指自由缩放。
-  - 切换该设置时立即遍历所有当前活跃的 WebView，执行热更新，无需刷新页面，不丢失任何图表指标与未保存数据。
-
-### 3. 顶部栏 UI 布局接入 (`TradingMultiViewScreen.kt`)
-- **新增按钮位置**：
-  - 位于顶部栏中的「全局缩放按钮」正右侧、全局刷新按钮之前；
-  - 尺寸为 `width = 45.dp, height = 30.dp`，与全局缩放按钮保持 1:1 的规格一致性；
-  - 图标：使用 `Icons.Default.FitScreen` 或 `Icons.Default.Lock`，未锁定时为灰蓝色，锁定防放大激活时呈现高亮天蓝色/琥珀色背景与白色图标，状态一目了然；
-  - 点击交互：点击调用 `viewModel.toggleAutoZoomLock(context)`，并弹 Toast 提示（如：“已开启禁止自动放大，锁定当前看盘视图” / “已关闭锁定，支持自由缩放”）。
+### 3. 飞书网页版深度兼容性注入与环境加固
+- **文件**：`app/src/main/java/com/trading/multiview/webview/PersistentWebViewPool.kt`
+- **根因分析**：
+  飞书网页端（`feishu.cn/messenger/` 及协作套件）不仅检查 HTTP 请求头的 User-Agent，还会通过前端 JS 进行浏览器环境探针检测：
+  1. **`window.chrome` 运行时属性**：标准桌面 Chrome 包含 `app`、`runtime`、`loadTimes`、`csi` 等属性对象，Android 原生 WebView 默认不具备这些对象；
+  2. **`navigator.vendor`**：桌面 Chrome 为 `"Google Inc."`；
+  3. **`navigator.userAgentData`**：高版本 Chromium 的 Client Hints API；
+  4. **`window.screen` 与 `window.innerWidth`**：飞书检测屏幕分辨率与可用分辨率是否达到桌面基准；
+  5. **`window.Notification`**：桌面通知 API 支撑；
+  6. **早鸟注入保障**：若系统 WebView 不支持 `DOCUMENT_START_SCRIPT` 或该机制因安全策略被忽略，必须在 `onPageStarted` 与 `injectDesktopViewport` 阶段双重补丁加固！
+- **加固代码实现**：
+  构建 `buildDesktopChromeRuntimeScript()` 完整注入脚本：
+  - 构造完整的 `window.chrome` 模拟对象（含 `app`、`runtime`、`csi`、`loadTimes`）；
+  - 覆盖 `navigator.vendor = 'Google Inc.'`；
+  - 补全 `navigator.userAgentData`（`brands`, `mobile: false`, `platform: 'Windows'`, `getHighEntropyValues`）；
+  - 在飞书及 LarkSuite 域名下，伪装 `window.screen.width = 1920`、`window.screen.height = 1080`；
+  - 补全 `window.Notification` 兜底；
+  - 在 `DOCUMENT_START_SCRIPT`、`onPageStarted` 与 `injectDesktopViewport` 三处协同确保 100% 生效。
 
 ---
 
-## 四、验证与自测计划
+## 三、验证与测试计划
 
-1. **触控板尺寸验证**：
-   - 验证面板总高度显著降低，底部看盘遮挡减少超过 45%；
-   - 验证 50dp 拖拽区仍能平稳、无卡顿地拖动整个面板至屏幕任意位置；
-   - 验证 122dp 滑动区内的单指滑动、轻触单击、长按右键、按住画线功能 100% 保持精准。
-2. **防自动放大功能验证**：
-   - 在 TradingView 视窗中点击左上角搜索栏输入股票代码（如 AAPL、BTCUSDT）；
-   - 点击切换时间周期下拉框（1m、5m、1h、D）；
-   - 点击并打开指标选择弹窗或指标参数设置弹窗；
-   - 确认在防自动放大开启状态下，视窗视口纹丝不动，K线图表与坐标轴绝不会突发放大或位移变形；
-   - 确认关闭防自动放大后，恢复常规弹性缩放支持。
-3. **编译校验**：
-   - 运行 `./gradlew assembleDebug` 或相关构建工具，确保代码 0 语法错误、0 警告。
+1. **窗口最大化与地址栏测试**：
+   - 在 3 窗口或 4 窗口模式下，将某个窗口最大化；
+   - 点击顶部“网址与快捷导航”展开按钮；
+   - 验证：此时地址栏仅展示最大化窗口对应的地址栏，且该地址栏独占整屏宽度，没有显示其他 3 个非活跃窗口；
+   - 还原窗口最大化，验证：地址栏恢复为全部 3 或 4 个视窗并排展示。
+2. **AI Studio 快捷按钮测试**：
+   - 打开地址栏，观察快捷按钮顺序：`TradingView` -> `AI Studio` -> `GitHub` -> `飞书`；
+   - 点击 `AI Studio` 按钮，验证当前视窗立即导航至 `https://aistudio.google.com`。
+3. **飞书网页版兼容性测试**：
+   - 访问 `feishu.cn`，登录账号后点击“进入网页版”；
+   - 验证：系统正常加载飞书工作台与消息界面，不再弹出“浏览器版本不兼容”的阻拦页面。
+4. **代码编译与 Lint 检查**：
+   - 执行 `compile_applet`，确保 Kotlin 编译零错误、无警告，代码健全。

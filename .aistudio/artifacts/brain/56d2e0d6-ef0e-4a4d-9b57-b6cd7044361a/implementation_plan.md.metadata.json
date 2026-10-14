@@ -1,6 +1,6 @@
 {
-  "summary": "实施计划：\n1. 浮动触控板高度减半调整：\n   - 拖拽区域高度由 100dp 减半至 50dp，优化为紧凑排版；\n   - 触控板核心滑动区高度由 244dp 减半至 122dp，保持 260dp 宽扁形态，大幅缩减屏幕遮挡面积。\n2. 新增“禁止自动放大 / 视口锁定”按钮：\n   - 位于顶部栏「全局缩放按钮」正后方（尺寸 45dp x 30dp，与其他控制按钮统一）；\n   - 一键开启/关闭视口缩放锁定，注入 user-scalable=no 与固定 scale 屏障，彻底解决 TradingView 在选择品种、周期或打开指标弹窗时被自动放大的痛点。",
-  "updatedAt": "2026-10-14T03:03:01.500391701Z",
+  "summary": "实施计划：\n1. 窗口最大化后地址栏独占整行显示：\n   - 当检测到当前有窗口全屏最大化时（uiState.maximizedWindowId != null），展开的地址栏仅渲染该最大化窗口，不再展示其他 3 个非活跃窗口；\n   - 最大化窗口地址栏独占整行完整宽度（fillMaxWidth），赋予更宽广的网址展示视界与前进/后退/刷新操控；\n   - 当无窗口最大化时，自动恢复多视窗并排布局。\n2. 地址栏新增 AI Studio 快捷按钮：\n   - 在 TradingView 快捷按钮之后、GitHub 按钮之前，新增“AI Studio”快捷按钮；\n   - 目标网址为 https://aistudio.google.com，统一胶囊标签风格。\n3. 飞书网页版深度兼容性注入强化：\n   - 深入注入完整标准桌面 Chrome 运行时特征环境（包括 window.chrome.app、window.chrome.runtime、csi、loadTimes 等）；\n   - 伪装 navigator.vendor 为 Google Inc.，校正 navigator.platform 为 Win32，提供 window.Notification 兜底；\n   - 双重注入保障机制（Document-Start 早鸟注入 + onPageStarted / Viewport 加固注入），确保各版本系统 WebView 均生效。",
+  "updatedAt": "2026-10-14T04:31:53.245074203Z",
   "requestFeedback": true,
   "userFacing": true
 }
