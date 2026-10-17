@@ -25,7 +25,7 @@ data class TabGroup(
     val name: String,
     val isPreset: Boolean = false,
     val description: String = "",
-    val windowCount: Int = 3, // 每个标签页独立设置：3 或 4 个独立窗口
+    val windowCount: Int = 3, // 每个标签页独立设置：2、3 或 4 个独立窗口
     val zoomPercent: Int = 100, // 每个标签页独立记忆保存的缩放比例 (50% ~ 250%)
     val items: List<TabGroupItem>,
     val maximizedWindowId: Int? = null // 每个标签页独立记忆各自的最大化窗口
@@ -665,7 +665,7 @@ class TradingViewModel : ViewModel() {
                 val name = obj.getString("name")
                 val isPreset = obj.optBoolean("isPreset", false)
                 val desc = obj.optString("description", "")
-                val windowCount = obj.optInt("windowCount", 3).coerceIn(3, 4)
+                val windowCount = obj.optInt("windowCount", 3).coerceIn(2, 4)
                 val zoomPercent = obj.optInt("zoomPercent", 100).coerceIn(50, 250)
                 val maximizedWindowId = if (obj.has("maximizedWindowId") && !obj.isNull("maximizedWindowId")) obj.getInt("maximizedWindowId") else null
                 val itemsArray = obj.getJSONArray("items")
@@ -850,12 +850,13 @@ class TradingViewModel : ViewModel() {
      */
     fun updateGroupConfig(groupId: String, newName: String, count: Int, context: Context? = null) {
         val trimmed = newName.trim().ifEmpty { "未命名" }
-        val safeCount = count.coerceIn(3, 4)
+        val safeCount = count.coerceIn(2, 4)
         _uiState.update { state ->
             val updated = state.groups.map { g ->
                 if (g.id == groupId) g.copy(name = trimmed, windowCount = safeCount) else g
             }
             if (groupId == state.activeGroupId) {
+                PersistentWebViewPool.setWindowActive(3, safeCount >= 3)
                 PersistentWebViewPool.setWindowActive(4, safeCount >= 4)
             }
             persistAllGroupsToPrefs(updated, activeGroupId = state.activeGroupId, context = context)
@@ -865,15 +866,16 @@ class TradingViewModel : ViewModel() {
     }
 
     /**
-     * 每个标签页集合独立配置窗口数量 (3 或 4 个独立窗口，横向 3 联屏或横向 4 联屏)
+     * 每个标签页集合独立配置窗口数量 (2、3 或 4 个独立窗口，横向 2 联屏、横向 3 联屏或横向 4 联屏)
      */
     fun updateGroupWindowCount(groupId: String, count: Int, context: Context? = null) {
-        val safeCount = count.coerceIn(3, 4)
+        val safeCount = count.coerceIn(2, 4)
         _uiState.update { state ->
             val updated = state.groups.map { g ->
                 if (g.id == groupId) g.copy(windowCount = safeCount) else g
             }
             if (groupId == state.activeGroupId) {
+                PersistentWebViewPool.setWindowActive(3, safeCount >= 3)
                 PersistentWebViewPool.setWindowActive(4, safeCount >= 4)
             }
             persistAllGroupsToPrefs(updated, activeGroupId = state.activeGroupId, context = context)

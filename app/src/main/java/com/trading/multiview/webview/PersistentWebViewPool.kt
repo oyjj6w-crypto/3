@@ -372,6 +372,23 @@ object PersistentWebViewPool {
                 var targetContent = '$autoZoomMeta';
                 window.__targetViewportContent = targetContent;
                 
+                function triggerChartResize() {
+                    try {
+                        window.dispatchEvent(new Event('resize'));
+                        window.dispatchEvent(new UIEvent('resize'));
+                        document.dispatchEvent(new Event('resize'));
+                        var iframes = document.getElementsByTagName('iframe');
+                        for (var i = 0; i < iframes.length; i++) {
+                            try {
+                                if (iframes[i].contentWindow) {
+                                    iframes[i].contentWindow.dispatchEvent(new Event('resize'));
+                                    iframes[i].contentWindow.dispatchEvent(new UIEvent('resize'));
+                                }
+                            } catch(e) {}
+                        }
+                    } catch(e) {}
+                }
+
                 function applyDesktop() {
                     try {
                         var metas = document.getElementsByTagName('meta');
@@ -436,13 +453,21 @@ object PersistentWebViewPool {
                                 });
                             } catch (e) {}
                         }
-                    }
+
+                        triggerChartResize();
+                    } catch (e) {}
+                }
 
                 if (document.readyState === 'loading') {
                     document.addEventListener('DOMContentLoaded', applyDesktop, { once: true });
                 } else {
                     applyDesktop();
                 }
+
+                triggerChartResize();
+                requestAnimationFrame(triggerChartResize);
+                setTimeout(triggerChartResize, 25);
+                setTimeout(triggerChartResize, 80);
             })();
             """.trimIndent()
         }
@@ -843,7 +868,7 @@ object PersistentWebViewPool {
         currentZoomPercent = clampedZoom
         saveZoomForGroup(currentGroupId, clampedZoom, appContext)
         webView.settings.textZoom = clampedZoom
-        injectDesktopViewport(webView, clampedZoom, force = true)
+        injectDesktopViewport(webView, zoomPercent = clampedZoom, force = true)
     }
 
     /**
@@ -854,7 +879,7 @@ object PersistentWebViewPool {
         currentZoomPercent = 100
         saveZoomForGroup(currentGroupId, 100, appContext)
         webView.settings.textZoom = 100
-        injectDesktopViewport(webView, 100, force = true)
+        injectDesktopViewport(webView, zoomPercent = 100, force = true)
     }
 
     /**
@@ -876,7 +901,7 @@ object PersistentWebViewPool {
         }
         appliedScaleMap.remove("${currentGroupId}_$windowId")
         if (enableDesktop) {
-            injectDesktopViewport(webView, currentZoomPercent, force = true)
+            injectDesktopViewport(webView, zoomPercent = currentZoomPercent, force = true)
         }
         webView.reload()
     }

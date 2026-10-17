@@ -1703,7 +1703,7 @@ fun GroupConfigDialog(
             border = BorderStroke(1.dp, Color(0xFF374151)),
             shape = RoundedCornerShape(14.dp),
             modifier = Modifier
-                .width(360.dp)
+                .width(420.dp)
                 .padding(16.dp)
         ) {
             Column(
@@ -1744,11 +1744,43 @@ fun GroupConfigDialog(
                     color = Color(0xFFE2E8F0)
                 )
 
-                // 2 个选项：3 个独立窗口 vs 4 个独立窗口
+                // 3 个选项：2 个独立窗口 vs 3 个独立窗口 vs 4 个独立窗口
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
+                    // 2 窗口选项
+                    val is2 = selectedWindowCount == 2
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (is2) Color(0xFF0C4A6E) else Color(0xFF1E293B))
+                            .border(
+                                1.5.dp,
+                                if (is2) Color(0xFF38BDF8) else Color(0xFF334155),
+                                RoundedCornerShape(8.dp)
+                            )
+                            .clickable {
+                                selectedWindowCount = 2
+                            }
+                            .padding(vertical = 10.dp, horizontal = 6.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            text = "2 个独立窗口",
+                            fontSize = 12.sp,
+                            fontWeight = if (is2) FontWeight.Bold else FontWeight.Medium,
+                            color = if (is2) Color.White else Color(0xFFCBD5E1)
+                        )
+                        Text(
+                            text = "横向 2 联屏",
+                            fontSize = 10.sp,
+                            color = if (is2) Color(0xFFBAE6FD) else Color(0xFF64748B)
+                        )
+                    }
+
                     // 3 窗口选项
                     val is3 = selectedWindowCount == 3
                     Column(
@@ -1764,13 +1796,13 @@ fun GroupConfigDialog(
                             .clickable {
                                 selectedWindowCount = 3
                             }
-                            .padding(12.dp),
+                            .padding(vertical = 10.dp, horizontal = 6.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
                         Text(
                             text = "3 个独立窗口",
-                            fontSize = 13.sp,
+                            fontSize = 12.sp,
                             fontWeight = if (is3) FontWeight.Bold else FontWeight.Medium,
                             color = if (is3) Color.White else Color(0xFFCBD5E1)
                         )
@@ -1796,13 +1828,13 @@ fun GroupConfigDialog(
                             .clickable {
                                 selectedWindowCount = 4
                             }
-                            .padding(12.dp),
+                            .padding(vertical = 10.dp, horizontal = 6.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
                         Text(
                             text = "4 个独立窗口",
-                            fontSize = 13.sp,
+                            fontSize = 12.sp,
                             fontWeight = if (is4) FontWeight.Bold else FontWeight.Medium,
                             color = if (is4) Color.White else Color(0xFFCBD5E1)
                         )
@@ -1815,7 +1847,7 @@ fun GroupConfigDialog(
                 }
 
                 Text(
-                    text = "提示：可修改标签页显示名称，选择 3 屏或 4 屏布局后点击「保存并应用」生效。",
+                    text = "提示：可修改标签页显示名称，选择 2 屏、3 屏或 4 屏布局后点击「保存并应用」生效。",
                     fontSize = 11.sp,
                     lineHeight = 16.sp,
                     color = Color(0xFF94A3B8)
