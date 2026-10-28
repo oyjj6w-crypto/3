@@ -734,6 +734,34 @@ object PersistentWebViewPool {
     class StylusStabilizedWebView(context: Context) : WebView(context) {
         private var lastStylusUpTime = 0L
 
+        // 触控笔悬停离开或停顿 300ms 自动清除十字星标 Runnable
+        private val stylusDismissRunnable = Runnable {
+            val clearJs = """
+                (function() {
+                    try {
+                        var cx = -1000;
+                        var cy = -1000;
+                        var targets = Array.from(document.querySelectorAll('canvas, .chart-widget, .layout__area--center') || []);
+                        if (window.__lastHoverTarget && targets.indexOf(window.__lastHoverTarget) === -1) {
+                            targets.push(window.__lastHoverTarget);
+                        }
+                        var ePen = { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy, screenX: cx, screenY: cy, pageX: cx, pageY: cy, pointerType: 'pen', isPrimary: true, pointerId: 1, button: 0, buttons: 0 };
+                        var eMouse = { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy, screenX: cx, screenY: cy, pageX: cx, pageY: cy, button: 0, buttons: 0 };
+                        for (var i = 0; i < targets.length; i++) {
+                            try {
+                                targets[i].dispatchEvent(new PointerEvent('pointerout', ePen));
+                                targets[i].dispatchEvent(new PointerEvent('pointerleave', ePen));
+                                targets[i].dispatchEvent(new MouseEvent('mouseout', eMouse));
+                                targets[i].dispatchEvent(new MouseEvent('mouseleave', eMouse));
+                            } catch(e) {}
+                        }
+                        window.__lastHoverTarget = null;
+                    } catch(e) {}
+                })();
+            """.trimIndent()
+            evaluateJavascript(clearJs, null)
+        }
+
         override fun dispatchTouchEvent(event: MotionEvent): Boolean {
             if (event.pointerCount > 0 && event.getToolType(0) == MotionEvent.TOOL_TYPE_STYLUS) {
                 val action = event.actionMasked
@@ -746,34 +774,21 @@ object PersistentWebViewPool {
 
         override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
             val action = event.actionMasked
-            if (action == MotionEvent.ACTION_HOVER_EXIT) {
-                if (event.pointerCount > 0 && event.getToolType(0) == MotionEvent.TOOL_TYPE_STYLUS) {
-                    // 触控笔离开本视窗感应范围，仅对本 WebView 异步派发一次轻量 JS 消除十字光标，坚决不跨窗口递归派发！
-                    val clearJs = """
-                        (function() {
-                            try {
-                                var cx = -1000;
-                                var cy = -1000;
-                                var c = window.__lastHoverTarget || document.querySelector('canvas.interactive-graphics-layer, canvas') || document.body;
-                                if (c) {
-                                    var ePen = { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy, screenX: cx, screenY: cy, pageX: cx, pageY: cy, pointerType: 'pen', isPrimary: true, pointerId: 1, button: 0, buttons: 0 };
-                                    c.dispatchEvent(new PointerEvent('pointerout', ePen));
-                                    c.dispatchEvent(new PointerEvent('pointerleave', ePen));
-                                }
-                                window.__lastHoverTarget = null;
-                            } catch(e) {}
-                        })();
-                    """.trimIndent()
-                    post { evaluateJavascript(clearJs, null) }
-                }
-            }
-            if (action == MotionEvent.ACTION_HOVER_MOVE || action == MotionEvent.ACTION_HOVER_ENTER) {
-                if (event.pointerCount > 0 && event.getToolType(0) == MotionEvent.TOOL_TYPE_STYLUS) {
+            if (event.pointerCount > 0 && event.getToolType(0) == MotionEvent.TOOL_TYPE_STYLUS) {
+                if (action == MotionEvent.ACTION_HOVER_MOVE || action == MotionEvent.ACTION_HOVER_ENTER) {
+                    // 每次触控笔在空中移动或进入感应区，刷新 300ms 定时器
+                    removeCallbacks(stylusDismissRunnable)
+                    postDelayed(stylusDismissRunnable, 300L)
+
                     val elapsed = SystemClock.uptimeMillis() - lastStylusUpTime
                     if (elapsed < 350L) {
                         // 过滤触控笔抬笔瞬间在菜单周围产生的空中悬停抖动，防止误触发 TradingView 菜单失焦关闭
                         return true
                     }
+                } else if (action == MotionEvent.ACTION_HOVER_EXIT) {
+                    // 触控笔离开本视窗感应范围，立即清除十字星标
+                    removeCallbacks(stylusDismissRunnable)
+                    post(stylusDismissRunnable)
                 }
             }
             return super.dispatchGenericMotionEvent(event)
@@ -1122,6 +1137,39 @@ object PersistentWebViewPool {
                 }
             }, (index * stepDelay))
         }
+
+        if (action.startsWith("timeframe_")) {
+            val totalDelay = (windowIds.size * stepDelay) + 900L
+            handler.postDelayed({
+                // 所有选中视窗均完成周期切换后，在第一个基准视窗主画布点击一次，让各视窗之间的时间轴比例彻底对齐
+                val primaryWv = getWebView(windowIds.firstOrNull() ?: 1)
+                primaryWv?.let { wv ->
+                    val primaryClickScript = """
+                        (function() {
+                            try {
+                                var canvas = document.querySelector('canvas.interactive-graphics-layer') || document.querySelector('canvas');
+                                if (canvas) {
+                                    var r = canvas.getBoundingClientRect();
+                                    var cx = r.left + r.width / 2;
+                                    var cy = r.top + r.height / 2;
+                                    var pDown = new PointerEvent('pointerdown', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, button: 0, buttons: 1, pointerType: 'mouse', isPrimary: true });
+                                    var mDown = new MouseEvent('mousedown', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, button: 0, buttons: 1 });
+                                    var pUp = new PointerEvent('pointerup', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, button: 0, buttons: 0, pointerType: 'mouse', isPrimary: true });
+                                    var mUp = new MouseEvent('mouseup', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, button: 0, buttons: 0 });
+                                    var clk = new MouseEvent('click', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, button: 0, buttons: 0 });
+                                    canvas.dispatchEvent(pDown);
+                                    canvas.dispatchEvent(mDown);
+                                    canvas.dispatchEvent(pUp);
+                                    canvas.dispatchEvent(mUp);
+                                    canvas.dispatchEvent(clk);
+                                }
+                            } catch(e) {}
+                        })();
+                    """.trimIndent()
+                    wv.evaluateJavascript(primaryClickScript, null)
+                }
+            }, totalDelay)
+        }
     }
 
     /**
@@ -1179,6 +1227,59 @@ object PersistentWebViewPool {
             webView.dispatchKeyEvent(KeyEvent(t, t, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER, 0))
             webView.dispatchKeyEvent(KeyEvent(t, t + 25, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER, 0))
         }, currentDelay + 100L)
+
+        // 数据载入后 (600ms)，智能识别 K 线密度最大的子图并派发单次鼠标左键，触发 TradingView 自动统一所有窗口比例
+        handler.postDelayed({
+            val syncClickScript = """
+                (function() {
+                    try {
+                        function triggerLeftClick(targetEl) {
+                            if (!targetEl) return;
+                            var r = targetEl.getBoundingClientRect();
+                            var cx = r.left + r.width / 2;
+                            var cy = r.top + r.height / 2;
+                            var pDown = new PointerEvent('pointerdown', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, button: 0, buttons: 1, pointerType: 'mouse', isPrimary: true });
+                            var mDown = new MouseEvent('mousedown', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, button: 0, buttons: 1 });
+                            var pUp = new PointerEvent('pointerup', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, button: 0, buttons: 0, pointerType: 'mouse', isPrimary: true });
+                            var mUp = new MouseEvent('mouseup', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, button: 0, buttons: 0 });
+                            var clk = new MouseEvent('click', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, button: 0, buttons: 0 });
+                            targetEl.dispatchEvent(pDown);
+                            targetEl.dispatchEvent(mDown);
+                            targetEl.dispatchEvent(pUp);
+                            targetEl.dispatchEvent(mUp);
+                            targetEl.dispatchEvent(clk);
+                        }
+
+                        // 1. 如果有多个子图 (.chart-widget)
+                        var widgets = Array.from(document.querySelectorAll('.chart-widget') || []);
+                        if (widgets.length > 1) {
+                            var bestWidget = null;
+                            var maxDensity = -1;
+                            for (var i = 0; i < widgets.length; i++) {
+                                var w = widgets[i];
+                                var r = w.getBoundingClientRect();
+                                if (r.width < 50 || r.height < 50) continue;
+                                var axisTexts = w.querySelectorAll('[class*="time-axis"] text, [class*="timeAxis"] text, [data-name="time-axis"] text, text');
+                                if (axisTexts.length > maxDensity) {
+                                    maxDensity = axisTexts.length;
+                                    bestWidget = w;
+                                }
+                            }
+                            if (!bestWidget) bestWidget = widgets[0];
+                            var targetCanvas = bestWidget.querySelector('canvas.interactive-graphics-layer') || bestWidget.querySelector('canvas') || bestWidget;
+                            triggerLeftClick(targetCanvas);
+                        } else {
+                            // 单图页面：在主画布中心点击一次，促使 TradingView 自动测量对齐
+                            var canvas = document.querySelector('canvas.interactive-graphics-layer') || document.querySelector('canvas');
+                            if (canvas) {
+                                triggerLeftClick(canvas);
+                            }
+                        }
+                    } catch(e) {}
+                })();
+            """.trimIndent()
+            webView.evaluateJavascript(syncClickScript, null)
+        }, currentDelay + 600L)
     }
 
     private fun buildActionExecutionScript(action: String, customDelayMs: Long = 0L): String {

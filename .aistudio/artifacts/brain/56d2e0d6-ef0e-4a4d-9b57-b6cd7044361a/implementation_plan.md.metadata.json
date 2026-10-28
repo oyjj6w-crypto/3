@@ -1,6 +1,6 @@
 {
-  "summary":  "彻底切断 StylusStabilizedWebView 中触控笔 HOVER_EXIT 跨视窗事件自激死循环，解决触控笔悬停十字星标导致的主线程 ANR 假死故障，触控笔离开感应区时安全无死锁地清除 TradingView 十字星标。",
-  "updatedAt":  "2026-10-28T06:00:51.825210334Z",
+  "summary":  "修订方案：1. 坚决不使用 Alt+R 键，通过对各窗口时间轴刻度及画布 K 线间距进行算法采样，自动识别出 K 线密度更大的基准窗口，并在其上模拟触发单次鼠标左键点击，驱动 TradingView 自动将其紧凑比例同步至所有窗口；2. 触控笔离开或停止悬停 0.3 秒后自动消除十字星标；3. T 周期弹窗移至屏幕右下角且按钮翻倍放大。",
+  "updatedAt":  "2026-10-28T06:33:13.967203195Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

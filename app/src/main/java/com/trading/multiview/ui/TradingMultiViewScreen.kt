@@ -13,6 +13,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.lazy.LazyColumn
@@ -1547,133 +1548,149 @@ fun TimeframeSyncDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
-        Card(
-            colors = CardDefaults.cardColors(containerColor = Color(0xFF111827)),
-            border = BorderStroke(1.dp, Color(0xFF374151)),
-            shape = RoundedCornerShape(12.dp),
+        Box(
             modifier = Modifier
-                .width(320.dp)
-                .padding(16.dp)
+                .fillMaxSize()
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = onDismiss
+                )
+                .padding(bottom = 24.dp, end = 24.dp),
+            contentAlignment = Alignment.BottomEnd
         ) {
-            Column(
-                modifier = Modifier.padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+            Card(
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF111827)),
+                border = BorderStroke(1.5.dp, Color(0xFF374151)),
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier
+                    .width(460.dp)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = {} // 阻止点击卡片内部时关闭对话框
+                    )
             ) {
-                // 窗口目标选择按钮
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    (1..windowCount).forEach { winId ->
-                        val isSelected = selectedWindows.contains(winId)
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .weight(1f)
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(if (isSelected) Color(0xFF1E293B) else Color(0xFF1F2937))
-                                .border(1.dp, if (isSelected) Color(0xFF2563EB) else Color(0xFF374151), RoundedCornerShape(6.dp))
-                                .clickable {
-                                    selectedWindows = if (isSelected) {
-                                        if (selectedWindows.size > 1) selectedWindows - winId else selectedWindows
-                                    } else {
-                                        selectedWindows + winId
+                    // 窗口目标选择按钮
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        (1..windowCount).forEach { winId ->
+                            val isSelected = selectedWindows.contains(winId)
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(if (isSelected) Color(0xFF1E293B) else Color(0xFF1F2937))
+                                    .border(1.5.dp, if (isSelected) Color(0xFF2563EB) else Color(0xFF374151), RoundedCornerShape(8.dp))
+                                    .clickable {
+                                        selectedWindows = if (isSelected) {
+                                            if (selectedWindows.size > 1) selectedWindows - winId else selectedWindows
+                                        } else {
+                                            selectedWindows + winId
+                                        }
+                                    }
+                                    .padding(vertical = 8.dp),
+                                horizontalArrangement = Arrangement.Center
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(16.dp)
+                                        .clip(RoundedCornerShape(4.dp))
+                                        .background(if (isSelected) Color(0xFF2563EB) else Color(0xFF4B5563))
+                                        .border(1.dp, if (isSelected) Color(0xFF2563EB) else Color(0xFF6B7280), RoundedCornerShape(4.dp)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    if (isSelected) {
+                                        Text(
+                                            text = "✓",
+                                            color = Color.White,
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
                                     }
                                 }
-                                .padding(vertical = 6.dp),
-                            horizontalArrangement = Arrangement.Center
-                        ) {
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "窗口 $winId",
+                                    color = if (isSelected) Color.White else Color(0xFF9CA3AF),
+                                    fontSize = 13.sp,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                                )
+                            }
+                        }
+                    }
+
+                    // 快捷分钟周期行 (高度翻倍由 26dp -> 50dp，字号放大至 14sp Bold)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        listOf("3m", "5m", "10m", "15m", "30m").forEach { tf ->
                             Box(
                                 modifier = Modifier
-                                    .size(12.dp)
-                                    .clip(RoundedCornerShape(3.dp))
-                                    .background(if (isSelected) Color(0xFF2563EB) else Color(0xFF4B5563))
-                                    .border(1.dp, if (isSelected) Color(0xFF2563EB) else Color(0xFF6B7280), RoundedCornerShape(3.dp)),
+                                    .weight(1f)
+                                    .height(50.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(Color(0xFF1F2937))
+                                    .border(1.dp, Color(0xFF374151), RoundedCornerShape(8.dp))
+                                    .clickable { onSelectTimeframe(tf, selectedWindows) },
                                 contentAlignment = Alignment.Center
                             ) {
-                                if (isSelected) {
-                                    Text(
-                                        text = "✓",
-                                        color = Color.White,
-                                        fontSize = 8.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                }
+                                Text(text = tf, color = Color(0xFFE2E8F0), fontSize = 14.sp, fontWeight = FontWeight.Bold)
                             }
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = "窗口 $winId",
-                                color = if (isSelected) Color.White else Color(0xFF9CA3AF),
-                                fontSize = 10.sp,
-                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
-                            )
                         }
                     }
-                }
 
-                // 快捷分钟周期行
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    listOf("3m", "5m", "10m", "15m", "30m").forEach { tf ->
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(26.dp)
-                                .clip(RoundedCornerShape(4.dp))
-                                .background(Color(0xFF1F2937))
-                                .border(0.5.dp, Color(0xFF374151), RoundedCornerShape(4.dp))
-                                .clickable { onSelectTimeframe(tf, selectedWindows) },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(text = tf, color = Color(0xFFE2E8F0), fontSize = 10.sp, fontWeight = FontWeight.Medium)
+                    // 快捷小时周期行 (高度翻倍由 26dp -> 50dp，字号放大至 14sp Bold)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        listOf("1h", "2h", "3h", "4h", "6h", "12h").forEach { tf ->
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(50.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(Color(0xFF1F2937))
+                                    .border(1.dp, Color(0xFF374151), RoundedCornerShape(8.dp))
+                                    .clickable { onSelectTimeframe(tf, selectedWindows) },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(text = tf, color = Color(0xFFE2E8F0), fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                            }
                         }
                     }
-                }
 
-                // 快捷小时周期行
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    listOf("1h", "2h", "3h", "4h", "6h", "12h").forEach { tf ->
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(26.dp)
-                                .clip(RoundedCornerShape(4.dp))
-                                .background(Color(0xFF1F2937))
-                                .border(0.5.dp, Color(0xFF374151), RoundedCornerShape(4.dp))
-                                .clickable { onSelectTimeframe(tf, selectedWindows) },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(text = tf, color = Color(0xFFE2E8F0), fontSize = 10.sp, fontWeight = FontWeight.Medium)
-                        }
-                    }
-                }
-
-                // 快捷日线/周月周期行
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    listOf("1D", "2D", "3D", "1W", "1M").forEach { tf ->
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(26.dp)
-                                .clip(RoundedCornerShape(4.dp))
-                                .background(Color(0xFF1F2937))
-                                .border(0.5.dp, Color(0xFF374151), RoundedCornerShape(4.dp))
-                                .clickable { onSelectTimeframe(tf, selectedWindows) },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(text = tf, color = Color(0xFFE2E8F0), fontSize = 10.sp, fontWeight = FontWeight.Medium)
+                    // 快捷日线/周月周期行 (高度翻倍由 26dp -> 50dp，字号放大至 14sp Bold)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        listOf("1D", "2D", "3D", "1W", "1M").forEach { tf ->
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(50.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(Color(0xFF1F2937))
+                                    .border(1.dp, Color(0xFF374151), RoundedCornerShape(8.dp))
+                                    .clickable { onSelectTimeframe(tf, selectedWindows) },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(text = tf, color = Color(0xFFE2E8F0), fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                            }
                         }
                     }
                 }
