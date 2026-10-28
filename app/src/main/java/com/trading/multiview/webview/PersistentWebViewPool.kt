@@ -746,6 +746,12 @@ object PersistentWebViewPool {
 
         override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
             val action = event.actionMasked
+            if (action == MotionEvent.ACTION_HOVER_EXIT) {
+                if (event.pointerCount > 0 && event.getToolType(0) == MotionEvent.TOOL_TYPE_STYLUS) {
+                    // 触控笔离开屏幕感应范围，立即清除十字星标！
+                    clearCrosshairs(exceptWindowId = null)
+                }
+            }
             if (action == MotionEvent.ACTION_HOVER_MOVE || action == MotionEvent.ACTION_HOVER_ENTER) {
                 if (event.pointerCount > 0 && event.getToolType(0) == MotionEvent.TOOL_TYPE_STYLUS) {
                     val elapsed = SystemClock.uptimeMillis() - lastStylusUpTime
@@ -1563,13 +1569,26 @@ object PersistentWebViewPool {
                 try {
                     var cx = -1000;
                     var cy = -1000;
-                    var target = window.__lastHoverTarget || document.querySelector('canvas.interactive-graphics-layer, canvas') || document.body;
-                    if (target) {
-                        var eInit = { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy, screenX: cx, screenY: cy, pageX: cx, pageY: cy, pointerType: 'mouse', isPrimary: true, pointerId: 1, button: 0, buttons: 0 };
-                        target.dispatchEvent(new PointerEvent('pointerout', eInit));
-                        target.dispatchEvent(new MouseEvent('mouseout', eInit));
-                        target.dispatchEvent(new PointerEvent('pointerleave', eInit));
-                        target.dispatchEvent(new MouseEvent('mouseleave', eInit));
+                    var targets = [
+                        window.__lastHoverTarget,
+                        document.querySelector('canvas.interactive-graphics-layer'),
+                        document.querySelector('canvas'),
+                        document.body
+                    ];
+                    var eInit = { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy, screenX: cx, screenY: cy, pageX: cx, pageY: cy, pointerType: 'mouse', isPrimary: true, pointerId: 1, button: 0, buttons: 0 };
+                    var ePen = { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy, screenX: cx, screenY: cy, pageX: cx, pageY: cy, pointerType: 'pen', isPrimary: true, pointerId: 1, button: 0, buttons: 0 };
+                    for (var i = 0; i < targets.length; i++) {
+                        var target = targets[i];
+                        if (target) {
+                            try {
+                                target.dispatchEvent(new PointerEvent('pointerout', eInit));
+                                target.dispatchEvent(new MouseEvent('mouseout', eInit));
+                                target.dispatchEvent(new PointerEvent('pointerleave', eInit));
+                                target.dispatchEvent(new MouseEvent('mouseleave', eInit));
+                                target.dispatchEvent(new PointerEvent('pointerout', ePen));
+                                target.dispatchEvent(new PointerEvent('pointerleave', ePen));
+                            } catch(e) {}
+                        }
                     }
                     window.__lastHoverTarget = null;
                 } catch(e) {}
@@ -1582,7 +1601,7 @@ object PersistentWebViewPool {
             if (!wv.isShown) continue
             wv.post {
                 try {
-                    // 发送 ACTION_HOVER_EXIT 事件至负坐标，通知 WebView 光标彻底离开视窗，切勿发送 TOUCH CANCEL 事件以防 TradingView 降级至移动端触摸模式
+                    // 发送 ACTION_HOVER_EXIT 事件至负坐标，通知 WebView 光标与触控笔彻底离开视窗
                     val exitEvent = createMouseEvent(
                         action = MotionEvent.ACTION_HOVER_EXIT,
                         downTime = now,
@@ -1593,6 +1612,24 @@ object PersistentWebViewPool {
                     )
                     wv.dispatchGenericMotionEvent(exitEvent)
                     exitEvent.recycle()
+
+                    val stylusProps = arrayOf(MotionEvent.PointerProperties().apply {
+                        id = 0
+                        toolType = MotionEvent.TOOL_TYPE_STYLUS
+                    })
+                    val stylusCoords = arrayOf(MotionEvent.PointerCoords().apply {
+                        this.x = -1000f
+                        this.y = -1000f
+                    })
+                    val stylusExitEvent = MotionEvent.obtain(
+                        now, now,
+                        MotionEvent.ACTION_HOVER_EXIT,
+                        1, stylusProps, stylusCoords,
+                        0, 0, 0f, 0f, 0, 0,
+                        android.view.InputDevice.SOURCE_STYLUS, 0
+                    )
+                    wv.dispatchGenericMotionEvent(stylusExitEvent)
+                    stylusExitEvent.recycle()
                 } catch (e: Exception) {
                     e.printStackTrace()
                 }
@@ -1725,6 +1762,7 @@ object PersistentWebViewPool {
 
     /**
      * 模拟真实鼠标单击 (左键或右键)
+     * 精准派发原子级单次点击事件序列，杜绝双击或二次触控事件导致 TradingView 顶部下拉菜单闪现即关
      */
     fun dispatchVirtualMouseClick(screenX: Float, screenY: Float, isRightClick: Boolean = false): Boolean {
         val target = findWebViewAtScreenPoint(screenX, screenY) ?: return false
@@ -1736,7 +1774,11 @@ object PersistentWebViewPool {
         val wvW = wv.width.toFloat().coerceAtLeast(1f)
         val wvH = wv.height.toFloat().coerceAtLeast(1f)
 
-        // 1. DOM / Canvas 级合成事件派发 (精准定位网页与 TradingView 图表)
+        if (!wv.isFocused) {
+            wv.requestFocus()
+        }
+
+        // DOM / Canvas 级合成事件派发 (精准定位网页、内嵌 iframe 与 TradingView 图表)
         val js = """
             (function() {
                 try {
@@ -1744,7 +1786,20 @@ object PersistentWebViewPool {
                     var ry = Math.max(0, Math.min(1, $localY / $wvH));
                     var cx = rx * window.innerWidth;
                     var cy = ry * window.innerHeight;
-                    var el = document.elementFromPoint(cx, cy) || document.body;
+                    var el = document.elementFromPoint(cx, cy);
+                    if (el && el.tagName === 'IFRAME') {
+                        try {
+                            var idoc = el.contentDocument || (el.contentWindow && el.contentWindow.document);
+                            if (idoc) {
+                                var irect = el.getBoundingClientRect();
+                                var icx = cx - irect.left;
+                                var icy = cy - irect.top;
+                                var iEl = idoc.elementFromPoint(icx, icy);
+                                if (iEl) el = iEl;
+                            }
+                        } catch(e) {}
+                    }
+                    if (!el) el = document.body;
                     var isR = $isRightClick;
                     if (isR) {
                         var pDown = new PointerEvent('pointerdown', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, button: 2, buttons: 2, pointerType: 'mouse' });
@@ -1768,61 +1823,14 @@ object PersistentWebViewPool {
                         el.dispatchEvent(pUp);
                         el.dispatchEvent(mUp);
                         el.dispatchEvent(clk);
+                        if (typeof el.focus === 'function') {
+                            el.focus();
+                        }
                     }
                 } catch(e) {}
             })();
         """.trimIndent()
         wv.post { wv.evaluateJavascript(js, null) }
-
-        // 2. 原生系统级 MotionEvent 派发 (按下与抬起间隔 40ms 保证渲染线程可靠识别)
-        val now = SystemClock.uptimeMillis()
-        if (isRightClick) {
-            val downEvent = createMouseEvent(
-                action = MotionEvent.ACTION_DOWN,
-                downTime = now,
-                eventTime = now,
-                x = localX,
-                y = localY,
-                buttonState = MotionEvent.BUTTON_SECONDARY
-            )
-            wv.dispatchTouchEvent(downEvent)
-            downEvent.recycle()
-
-            wv.postDelayed({
-                val upNow = SystemClock.uptimeMillis()
-                val upEvent = createMouseEvent(
-                    action = MotionEvent.ACTION_UP,
-                    downTime = now,
-                    eventTime = upNow,
-                    x = localX,
-                    y = localY,
-                    buttonState = 0
-                )
-                wv.dispatchTouchEvent(upEvent)
-                upEvent.recycle()
-            }, 40L)
-        } else {
-            val downEvent = MotionEvent.obtain(
-                now, now,
-                MotionEvent.ACTION_DOWN,
-                localX, localY,
-                0
-            )
-            wv.dispatchTouchEvent(downEvent)
-            downEvent.recycle()
-
-            wv.postDelayed({
-                val upNow = SystemClock.uptimeMillis()
-                val upEvent = MotionEvent.obtain(
-                    now, upNow,
-                    MotionEvent.ACTION_UP,
-                    localX, localY,
-                    0
-                )
-                wv.dispatchTouchEvent(upEvent)
-                upEvent.recycle()
-            }, 40L)
-        }
         return true
     }
 
