@@ -1,6 +1,6 @@
 {
-  "summary": "虚拟触控板视觉增强与纯净化改造计划：将面板背景保持 30% 高透视，整个外层边框采用 100% 不透明高亮实线标明边界，彻底清空触控核心感应区域的手指点击图标与操作提示文字，呈现极简纯净的交互面板。",
-  "updatedAt": "2026-10-17T15:02:00.567329381Z",
-  "requestFeedback": true,
-  "userFacing": true
+  "summary":  "针对 vivo Pad 6 Pro 平板配合触控笔点击 TradingView 顶部 K 线类型等下拉菜单闪现即关问题的修复计划：通过双层（Android 原生层 + DOM 事件拦截层）过滤触控笔抬笔瞬间的空中悬停抖动（Hover Jitter）与虚假失焦事件，确保触控笔点击下拉菜单稳定展开与正常选择。",
+  "updatedAt":  "2026-10-28T03:53:09.961780535Z",
+  "requestFeedback":  true,
+  "userFacing":  true
 }

@@ -340,6 +340,32 @@ object PersistentWebViewPool {
                     if (pStyle) pStyle.remove();
                 }
 
+                // 触控笔 (Stylus / Pen) 顶部下拉菜单防闪退防抖保护
+                if (!window.__stylus_stabilizer_installed) {
+                    window.__stylus_stabilizer_installed = true;
+                    var lastPenUp = 0;
+                    window.addEventListener('pointerup', function(e) {
+                        if (e.pointerType === 'pen') {
+                            lastPenUp = Date.now();
+                        }
+                    }, true);
+
+                    window.addEventListener('pointermove', function(e) {
+                        if (e.pointerType === 'pen' && Date.now() - lastPenUp < 350) {
+                            e.stopPropagation();
+                        }
+                    }, true);
+
+                    window.addEventListener('mousemove', function(e) {
+                        if (Date.now() - lastPenUp < 350) {
+                            var hasMenu = document.querySelector('[data-name="menu-inner"], .menu-wrap, [class*="menu-"], [data-role="menu"]');
+                            if (hasMenu) {
+                                e.stopPropagation();
+                            }
+                        }
+                    }, true);
+                }
+
                 // 核心提速关键：立即唤醒 TradingView 极速重排重绘，彻底消灭 4-5 秒的轮询延迟
                 function triggerChartResize() {
                     try {
@@ -452,6 +478,32 @@ object PersistentWebViewPool {
                                     configurable: true
                                 });
                             } catch (e) {}
+                        }
+
+                        // 触控笔 (Stylus / Pen) 顶部下拉菜单防闪退防抖保护
+                        if (!window.__stylus_stabilizer_installed) {
+                            window.__stylus_stabilizer_installed = true;
+                            var lastPenUp = 0;
+                            window.addEventListener('pointerup', function(e) {
+                                if (e.pointerType === 'pen') {
+                                    lastPenUp = Date.now();
+                                }
+                            }, true);
+
+                            window.addEventListener('pointermove', function(e) {
+                                if (e.pointerType === 'pen' && Date.now() - lastPenUp < 350) {
+                                    e.stopPropagation();
+                                }
+                            }, true);
+
+                            window.addEventListener('mousemove', function(e) {
+                                if (Date.now() - lastPenUp < 350) {
+                                    var hasMenu = document.querySelector('[data-name="menu-inner"], .menu-wrap, [class*="menu-"], [data-role="menu"]');
+                                    if (hasMenu) {
+                                        e.stopPropagation();
+                                    }
+                                }
+                            }, true);
                         }
 
                         triggerChartResize();
@@ -674,12 +726,45 @@ object PersistentWebViewPool {
         // 原生 WebSocket 与 Blink 内核自然调度，无需 JS 状态干预
     }
 
+    /**
+     * 专属定制的触控笔稳态 WebView：
+     * 精准识别 vivo 触控笔 (TOOL_TYPE_STYLUS) 的点击与抬笔生命周期，
+     * 在触控笔抬笔瞬间 (350ms 内) 拦截空中残余悬停事件 (Hover Jitter)，杜绝 TradingView 下拉菜单瞬间关闭。
+     */
+    class StylusStabilizedWebView(context: Context) : WebView(context) {
+        private var lastStylusUpTime = 0L
+
+        override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+            if (event.pointerCount > 0 && event.getToolType(0) == MotionEvent.TOOL_TYPE_STYLUS) {
+                val action = event.actionMasked
+                if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+                    lastStylusUpTime = SystemClock.uptimeMillis()
+                }
+            }
+            return super.dispatchTouchEvent(event)
+        }
+
+        override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
+            val action = event.actionMasked
+            if (action == MotionEvent.ACTION_HOVER_MOVE || action == MotionEvent.ACTION_HOVER_ENTER) {
+                if (event.pointerCount > 0 && event.getToolType(0) == MotionEvent.TOOL_TYPE_STYLUS) {
+                    val elapsed = SystemClock.uptimeMillis() - lastStylusUpTime
+                    if (elapsed < 350L) {
+                        // 过滤触控笔抬笔瞬间在菜单周围产生的空中悬停抖动，防止误触发 TradingView 菜单失焦关闭
+                        return true
+                    }
+                }
+            }
+            return super.dispatchGenericMotionEvent(event)
+        }
+    }
+
     @SuppressLint("SetJavaScriptEnabled")
     private fun createConfiguredWebView(context: Context, key: String): WebView {
         val ownerGroupId = key.substringBeforeLast("_")
         val parts = key.split("_")
         val windowId = parts.lastOrNull()?.toIntOrNull() ?: 1
-        return WebView(context).apply {
+        return StylusStabilizedWebView(context).apply {
             id = View.generateViewId()
             tag = key
             layoutParams = ViewGroup.LayoutParams(
