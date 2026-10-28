@@ -635,4 +635,3 @@ fun BoxScope.VirtualMouseOverlay(
         }
     }
 }
-}

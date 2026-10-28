@@ -1529,7 +1529,7 @@ object PersistentWebViewPool {
     }
 
     /**
-     * 辅助构造标准鼠标输入事件 (包含 PointerProperties TOOL_TYPE_MOUSE 与 buttonState)
+     * 辅助构造标准鼠标/触控笔输入事件 (包含 PointerProperties 与 buttonState)
      */
     private fun createMouseEvent(
         action: Int,
@@ -1537,11 +1537,13 @@ object PersistentWebViewPool {
         eventTime: Long,
         x: Float,
         y: Float,
-        buttonState: Int = 0
+        buttonState: Int = 0,
+        toolType: Int = MotionEvent.TOOL_TYPE_MOUSE,
+        source: Int = android.view.InputDevice.SOURCE_MOUSE
     ): MotionEvent {
         val props = arrayOf(MotionEvent.PointerProperties().apply {
             id = 0
-            toolType = MotionEvent.TOOL_TYPE_MOUSE
+            this.toolType = toolType
         })
         val coords = arrayOf(MotionEvent.PointerCoords().apply {
             this.x = x
@@ -1552,7 +1554,7 @@ object PersistentWebViewPool {
             action,
             1, props, coords,
             0, buttonState, 1.0f, 1.0f, 0, 0,
-            android.view.InputDevice.SOURCE_MOUSE, 0
+            source, 0
         )
     }
 
@@ -1601,7 +1603,7 @@ object PersistentWebViewPool {
             if (!wv.isShown) continue
             wv.post {
                 try {
-                    // 发送 ACTION_HOVER_EXIT 事件至负坐标，通知 WebView 光标与触控笔彻底离开视窗
+                    // 发送 ACTION_HOVER_EXIT 事件至负坐标，通知 WebView 光标彻底离开视窗
                     val exitEvent = createMouseEvent(
                         action = MotionEvent.ACTION_HOVER_EXIT,
                         downTime = now,
@@ -1613,20 +1615,16 @@ object PersistentWebViewPool {
                     wv.dispatchGenericMotionEvent(exitEvent)
                     exitEvent.recycle()
 
-                    val stylusProps = arrayOf(MotionEvent.PointerProperties().apply {
-                        id = 0
-                        toolType = MotionEvent.TOOL_TYPE_STYLUS
-                    })
-                    val stylusCoords = arrayOf(MotionEvent.PointerCoords().apply {
-                        this.x = -1000f
-                        this.y = -1000f
-                    })
-                    val stylusExitEvent = MotionEvent.obtain(
-                        now, now,
-                        MotionEvent.ACTION_HOVER_EXIT,
-                        1, stylusProps, stylusCoords,
-                        0, 0, 0f, 0f, 0, 0,
-                        android.view.InputDevice.SOURCE_STYLUS, 0
+                    // 同步发送触控笔 ACTION_HOVER_EXIT 事件，通知触控笔笔尖已彻底移开感应范围
+                    val stylusExitEvent = createMouseEvent(
+                        action = MotionEvent.ACTION_HOVER_EXIT,
+                        downTime = now,
+                        eventTime = now,
+                        x = -1000f,
+                        y = -1000f,
+                        buttonState = 0,
+                        toolType = MotionEvent.TOOL_TYPE_STYLUS,
+                        source = android.view.InputDevice.SOURCE_STYLUS
                     )
                     wv.dispatchGenericMotionEvent(stylusExitEvent)
                     stylusExitEvent.recycle()
