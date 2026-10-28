@@ -1,79 +1,37 @@
-# TradingView 周期弹窗优化、比例对齐与画图智能隐藏完整方案
+# TradingView 周期弹窗、比例对齐与画图按键修复方案
 
 ## 一、用户需求与变动要点汇总
 
-1. **周期弹窗（T 按钮）视觉布局调整**：
-   - **按钮宽度缩小为原来的 70%**：弹窗卡片宽度由 460.dp 等比调整为 322.dp（$460 \times 0.7 = 322$），使各行周期按钮宽度收紧为原来的 70%，高度继续保持 50.dp 大按钮高易触控标准。
-   - **小时周期行反向排列**：从右向左为 1h 直至 12h（即从左至右排列为：`12h, 6h, 4h, 3h, 2h, 1h`）。
-   - **日线周期行反向排列**：从右向左为 1D 直至 1M（即从左至右排列为：`1M, 1W, 3D, 2D, 1D`）。
-   - **分钟周期行**：保持不变（`3m, 5m, 10m, 15m, 30m`）。
+1. **彻底修复隐藏画图快捷按钮（右侧浮动眼睛图标）**：
+   - 彻底移除 `action === 'hide'` 中加入的 `isAlreadyHidden` 单向拦截；
+   - 恢复为无条件原生触发（点击按钮或分发快捷键 `Ctrl+Alt+H`），确保用户随时随地点击都能稳定切换（隐藏 ↔ 显示）。
 
-2. **K 线比例跨图对齐（图 A $\to$ 图 B != 图 A）**：
-   - 坚决不在当前输入周期的活跃图 A 上点击。
-   - 智能识别排除图 A 后的候选子图中 K 线密度最大的图 B，通过 800ms 与 1300ms 两段式延迟模拟鼠标左键，强制触发全局比例广播。
+2. **彻底删除周期切换里的自动隐藏画图**：
+   - 从 `dispatchNativeTimeframe` 中彻底清除所有后台自动隐藏画图（`hideBtn` / `getAllShapes` / `Ctrl+Alt+H`）的逻辑，不再对 TradingView 的画图状态做任何后台误触。
 
-3. **画图状态智能识别与安全隐藏（Safe Hide）**：
-   - 切换周期的窗口中，先嗅探隐藏画图按钮的激活属性与 aria 状态。
-   - 仅当明确检测到“当前处于显示画图状态”时才触发隐藏，若已是隐藏状态则直接跳过，杜绝因盲目 Toggle 导致反向误调出画图。
-
----
-
-## 二、关键技术实现细节
-
-### 1. 周期弹窗排列与尺寸重构 (`TradingMultiViewScreen.kt`)
-
-```kotlin
-// 卡片宽度调整为原来的 70% (460.dp * 0.7 = 322.dp)
-Card(
-    modifier = Modifier.width(322.dp)...
-)
-
-// 1. 分钟行：保持不变
-listOf("3m", "5m", "10m", "15m", "30m")
-
-// 2. 小时行：从右向左为 1h 到 12h (左 -> 右: 12h, 6h, 4h, 3h, 2h, 1h)
-listOf("12h", "6h", "4h", "3h", "2h", "1h")
-
-// 3. 日线行：反向排列 (左 -> 右: 1M, 1W, 3D, 2D, 1D)
-listOf("1M", "1W", "3D", "2D", "1D")
-```
-
-### 2. 跨图焦点迁移对齐算法 (`PersistentWebViewPool.kt`)
-
-在 `dispatchNativeTimeframe` 回车触发后：
-- **阶段 1 (800ms)**：
-  - 通过 `.chart-widget.i-active` 或 `document.activeElement` 锁定刚输入周期的图 A。
-  - 从全部 `.chart-widget` 过滤掉图 A，取得 `otherWidgets = widgets.filter(w => w !== activeWidget)`。
-  - 在 `otherWidgets` 中比对时间轴文本数量 `time-axis text`，挑选刻度最密集的图 B。
-  - 向图 B 交互 Canvas 连续派发 `pointerdown`、`mousedown`、`pointerup`、`mouseup`、`click` 完整事件链。
-- **阶段 2 (1300ms)**：
-  - 二次轻触确认，确保网络数据或图表重新计算延迟完成时比例绝对同步。
-
-### 3. 画图状态安全嗅探与定向隐藏 (`PersistentWebViewPool.kt`)
-
-- 针对所有切换周期的 WebView 注入检测脚本：
-  - 查找 TradingView 隐藏画图按钮（如 `[data-name="hide-all-drawing-tools"]` 或匹配 `aria-label*="隐藏"`）。
-  - 检查状态标志：
-    - 若含 `isActive-`、`data-active="true"`、`aria-pressed="true"`，或文案包含“显示”，说明**当前已处于隐藏画图状态**，直接返回，**绝不触发**。
-    - 若处于未隐藏状态，则派发安全隐藏动作（点击该按钮或在图表区域派发一次 `Ctrl + Alt + H`）。
+3. **流水线方案二：多窗口错峰键入 + 2秒独立看护比例校准**：
+   - **错峰键入**：窗口 1 与窗口 2 之间保持 650ms 安全焦点交接间隔，各窗口依次键入周期字符并敲回车，避免按键冲突与焦点争抢；
+   - **各自独立 2 秒看护校准**：
+     - 回车后 700ms（阶段 1）：跨图点击非活跃图 B，触发初步比例广播；
+     - 回车后 2000ms（阶段 2 巡检）：遍历所有 `.chart-widget` 计算 K 线密度 $D = \frac{\text{时间轴刻度数}}{\text{宽度}}$。
+     - 若最大密度与最小密度比值 $\frac{D_{\max}}{D_{\min}} > 1.35$ 或刻度标签相差 $\ge 3$（说明存在比例过大窗口）：
+     - 精准点击密度最大、比例正常的窗口 $D_{\max}$ 的 Canvas，强制 TradingView 同步所有窗口为紧凑正常比例！
 
 ---
 
-## 三、待修改文件列表
+## 二、关键代码变动
 
-1. `app/src/main/java/com/trading/multiview/ui/TradingMultiViewScreen.kt`:
-   - 调整 `TimeframeSyncDialog` 的 `Card` 宽度至 `322.dp`。
-   - 调整小时行与日线行的列表顺序，保持分钟行不变。
-2. `app/src/main/java/com/trading/multiview/webview/PersistentWebViewPool.kt`:
-   - 重构 `dispatchNativeTimeframe` 跨图对齐逻辑（坚决避开图 A，点击非图 A 中密度最大的图 B，两段式延迟 800ms + 1300ms）。
-   - 注入画图状态前置探测逻辑，仅对有画图显示的窗口安全隐藏。
+1. `app/src/main/java/com/trading/multiview/webview/PersistentWebViewPool.kt`:
+   - `dispatchTradingViewAction`：设置 `action.startsWith("timeframe_") -> 650L`，实现多窗口错峰流水线。
+   - `dispatchNativeTimeframe`：阶段 1 移除自动隐藏画图，阶段 2 设置为 2000ms 执行 $D_{\max} / D_{\min} > 1.35$ 比例巡检与精准补点。
+   - `buildActionExecutionScript`：`action === 'hide'` 恢复无条件触发，随点随切。
+2. `src/data/androidProjectSource.ts`:
+   - 同步 `PersistentWebViewPool` 的最新参数与逻辑。
 
 ---
 
-## 四、验证步骤
+## 三、验证结果
 
-1. 打开右下角 T 按钮，确认弹窗宽度紧凑为 322.dp（原宽 70%），按钮高度依旧饱满易点。
-2. 确认 1h 行从右向左依次为 1h 至 12h；1d 行从右向左依次为 1D 至 1M；3m 行保持 3m 至 30m。
-3. 切换周期后观察：
-   - 比例对齐：自动跳出图 A，点击图 B，全部分屏 K 线间距与比例完全同步对齐。
-   - 画图隐藏：有画图的窗口被安全收起，原本没有画图或已隐藏的窗口不会被意外调出。
+1. **Brace Check**: 所有 Kotlin 语法花括号及圆括号平衡校验通过。
+2. **TypeScript**: `tsc --noEmit` 0 错误。
+3. **Applet Compilation**: `compile_applet` 编译成功。

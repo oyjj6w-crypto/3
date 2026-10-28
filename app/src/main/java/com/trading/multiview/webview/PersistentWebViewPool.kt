@@ -1120,7 +1120,7 @@ object PersistentWebViewPool {
         // 4图翻转每个窗口内部有4个子图串行处理，根据用户设定的自定义延迟 (默认 0ms) 动态计算窗口间排队延时
         val stepDelay = when {
             action == "invert4" -> if (customDelayMs == 0L) 30L else (4 * (customDelayMs * 2 + 60) + 100).coerceAtLeast(300L)
-            action.startsWith("timeframe_") -> 1000L
+            action.startsWith("timeframe_") -> 650L
             else -> if (customDelayMs == 0L) 20L else 400L
         }
         windowIds.forEachIndexed { index, windowId ->
@@ -1197,7 +1197,7 @@ object PersistentWebViewPool {
             webView.dispatchKeyEvent(KeyEvent(t, t + 25, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER, 0))
         }, currentDelay + 100L)
 
-        // 阶段 1 (800ms)：等待 K 线数据与 Canvas 首帧重绘完毕后，先安全识别并隐藏画图，再跨图点击非活跃图 B 触发全局比例广播
+        // 阶段 1 (700ms)：等待 K 线数据与 Canvas 首帧重绘后，跨图点击非活跃图 B 触发全局比例广播 (彻底移除自动隐藏画图，杜绝误触)
         handler.postDelayed({
             val stage1Script = """
                 (function() {
@@ -1228,53 +1228,6 @@ object PersistentWebViewPool {
                                 targetEl.dispatchEvent(new MouseEvent('click', Object.assign({}, evtOpts, { buttons: 0 })));
                             } catch(e) {
                                 targetEl.dispatchEvent(new MouseEvent('click', evtOpts));
-                            }
-                        }
-
-                        // 【安全识别并隐藏画图】：前置检查状态，若当前已是隐藏状态则绝不盲目触发，严防反向显示！
-                        var hideBtn = document.querySelector('[data-name="hide-all-drawing-tools"]') ||
-                                      document.querySelector('[data-name="hide-all-drawings"]') ||
-                                      document.querySelector('button[data-tooltip*="隐藏所有画图"]') ||
-                                      document.querySelector('button[data-tooltip*="Hide all drawings"]') ||
-                                      document.querySelector('button[aria-label*="隐藏所有画图"]') ||
-                                      document.querySelector('button[aria-label*="Hide all drawings"]') ||
-                                      document.querySelector('button[title*="隐藏所有画图"]') ||
-                                      document.querySelector('button[title*="Hide all drawings"]');
-
-                        if (hideBtn) {
-                            var cls = hideBtn.className || "";
-                            var isAlreadyHidden = cls.indexOf("isActive") !== -1 ||
-                                                  cls.indexOf("active") !== -1 ||
-                                                  hideBtn.getAttribute("aria-pressed") === "true" ||
-                                                  hideBtn.getAttribute("data-active") === "true" ||
-                                                  (hideBtn.getAttribute("title") || "").indexOf("显示") !== -1 ||
-                                                  (hideBtn.getAttribute("aria-label") || "").indexOf("显示") !== -1 ||
-                                                  (hideBtn.getAttribute("title") || "").indexOf("Show") !== -1 ||
-                                                  (hideBtn.getAttribute("aria-label") || "").indexOf("Show") !== -1;
-
-                            if (!isAlreadyHidden) {
-                                hideBtn.click();
-                            }
-                        } else {
-                            var hasShapes = false;
-                            if (window.tvWidget && typeof window.tvWidget.activeChart === 'function') {
-                                var c = window.tvWidget.activeChart();
-                                if (c && typeof c.getAllShapes === 'function') {
-                                    var s = c.getAllShapes();
-                                    if (s && s.length > 0) hasShapes = true;
-                                }
-                            }
-                            if (hasShapes) {
-                                var hOpts = { key: 'h', code: 'KeyH', keyCode: 72, which: 72, altKey: true, ctrlKey: true, bubbles: true, cancelable: true, composed: true };
-                                var hTarget = document.activeElement || document.querySelector('canvas') || document.body;
-                                hTarget.dispatchEvent(new KeyboardEvent('keydown', hOpts));
-                                document.dispatchEvent(new KeyboardEvent('keydown', hOpts));
-                                window.dispatchEvent(new KeyboardEvent('keydown', hOpts));
-                                setTimeout(function() {
-                                    hTarget.dispatchEvent(new KeyboardEvent('keyup', hOpts));
-                                    document.dispatchEvent(new KeyboardEvent('keyup', hOpts));
-                                    window.dispatchEvent(new KeyboardEvent('keyup', hOpts));
-                                }, 25);
                             }
                         }
 
@@ -1340,9 +1293,9 @@ object PersistentWebViewPool {
                 })();
             """.trimIndent()
             webView.evaluateJavascript(stage1Script, null)
-        }, currentDelay + 800L)
+        }, currentDelay + 700L)
 
-        // 阶段 2 (1300ms)：两段式延迟二次确认，防止网络较慢时第一次重排未就绪
+        // 阶段 2 (2000ms 看护巡检)：等待 2 秒确认所有子图 WebSocket 行情与 Canvas 渲染完毕，若不同窗口比例差异显著，精准补点密度紧凑的正常窗口
         handler.postDelayed({
             val stage2Script = """
                 (function() {
@@ -1386,47 +1339,36 @@ object PersistentWebViewPool {
                         });
 
                         if (validWidgets.length > 1) {
-                            var activeWidget = null;
-                            for (var wi = 0; wi < validWidgets.length; wi++) {
-                                var w = validWidgets[wi];
-                                var cName = w.className || "";
-                                if (cName.indexOf("active") !== -1 || cName.indexOf("selected") !== -1 || w.getAttribute("data-active") === "true") {
-                                    activeWidget = w;
-                                    break;
-                                }
-                            }
-                            if (!activeWidget && document.activeElement) {
-                                activeWidget = document.activeElement.closest('.chart-widget') || document.activeElement.closest('[data-role="chart"]');
-                            }
-
-                            var otherWidgets = validWidgets.filter(function(w) {
-                                return w !== activeWidget;
+                            // 统计每个窗口的时间轴刻度标签数与宽度，计算密度 (刻度数 / 宽度)
+                            var widgetStats = validWidgets.map(function(w) {
+                                var r = w.getBoundingClientRect();
+                                var axisTexts = w.querySelectorAll('[class*="time-axis"] text, [class*="timeAxis"] text, [data-name="time-axis"] text, text');
+                                var count = axisTexts.length;
+                                var density = count / (r.width || 1);
+                                return { widget: w, count: count, density: density, width: r.width };
                             });
-                            if (otherWidgets.length === 0) otherWidgets = validWidgets;
 
-                            var bestWidget = null;
-                            var maxDensity = -1;
-                            for (var oi = 0; oi < otherWidgets.length; oi++) {
-                                var ow = otherWidgets[oi];
-                                var axisTexts = ow.querySelectorAll('[class*="time-axis"] text, [class*="timeAxis"] text, [data-name="time-axis"] text, text');
-                                var density = axisTexts.length;
-                                if (density > maxDensity) {
-                                    maxDensity = density;
-                                    bestWidget = ow;
-                                }
+                            var maxItem = widgetStats[0];
+                            var minItem = widgetStats[0];
+                            for (var i = 1; i < widgetStats.length; i++) {
+                                if (widgetStats[i].density > maxItem.density) maxItem = widgetStats[i];
+                                if (widgetStats[i].density < minItem.density) minItem = widgetStats[i];
                             }
-                            if (!bestWidget) bestWidget = otherWidgets[0];
 
-                            var targetCanvas = bestWidget.querySelector('canvas.interactive-graphics-layer') || 
-                                               bestWidget.querySelector('canvas') || 
-                                               bestWidget;
-                            triggerLeftClick(targetCanvas);
+                            // 若最高密度比最低密度高出 35% 以上或刻度标签数相差 >= 3，说明存在比例过大的异常窗口
+                            var ratio = (minItem.density > 0) ? (maxItem.density / minItem.density) : 2.0;
+                            if (ratio > 1.35 || (maxItem.count - minItem.count >= 3)) {
+                                var targetCanvas = maxItem.widget.querySelector('canvas.interactive-graphics-layer') || 
+                                                   maxItem.widget.querySelector('canvas') || 
+                                                   maxItem.widget;
+                                triggerLeftClick(targetCanvas);
+                            }
                         }
                     } catch(e) {}
                 })();
             """.trimIndent()
             webView.evaluateJavascript(stage2Script, null)
-        }, currentDelay + 1300L)
+        }, currentDelay + 2000L)
     }
 
     private fun buildActionExecutionScript(action: String, customDelayMs: Long = 0L): String {
@@ -1591,19 +1533,7 @@ object PersistentWebViewPool {
                                               document.querySelector('button[title*="Hide all drawings"]');
 
                                 if (hideBtn) {
-                                    var cls = hideBtn.className || "";
-                                    var isAlreadyHidden = cls.indexOf("isActive") !== -1 ||
-                                                          cls.indexOf("active") !== -1 ||
-                                                          hideBtn.getAttribute("aria-pressed") === "true" ||
-                                                          hideBtn.getAttribute("data-active") === "true" ||
-                                                          (hideBtn.getAttribute("title") || "").indexOf("显示") !== -1 ||
-                                                          (hideBtn.getAttribute("aria-label") || "").indexOf("显示") !== -1 ||
-                                                          (hideBtn.getAttribute("title") || "").indexOf("Show") !== -1 ||
-                                                          (hideBtn.getAttribute("aria-label") || "").indexOf("Show") !== -1;
-
-                                    if (!isAlreadyHidden) {
-                                        hideBtn.click();
-                                    }
+                                    hideBtn.click();
                                     setTimeout(function() {
                                         processPoint(idx + 1);
                                     }, customDelay);

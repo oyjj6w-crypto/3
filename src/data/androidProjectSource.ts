@@ -938,7 +938,7 @@ object PersistentWebViewPool {
         // 4图翻转每个窗口内部有4个子图串行处理，根据用户设定的自定义延迟 (默认 0ms) 动态计算窗口间排队延时
         val stepDelay = when {
             action == "invert4" -> if (customDelayMs == 0L) 30L else (4 * (customDelayMs * 2 + 60) + 100).coerceAtLeast(300L)
-            action.startsWith("timeframe_") -> 1000L
+            action.startsWith("timeframe_") -> 650L
             else -> if (customDelayMs == 0L) 20L else 400L
         }
         windowIds.forEachIndexed { index, windowId ->
