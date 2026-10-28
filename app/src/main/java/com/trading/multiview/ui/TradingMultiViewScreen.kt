@@ -1564,7 +1564,7 @@ fun TimeframeSyncDialog(
                 border = BorderStroke(1.5.dp, Color(0xFF374151)),
                 shape = RoundedCornerShape(14.dp),
                 modifier = Modifier
-                    .width(460.dp)
+                    .width(322.dp)
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null,
@@ -1628,7 +1628,7 @@ fun TimeframeSyncDialog(
                         }
                     }
 
-                    // 快捷分钟周期行 (高度翻倍由 26dp -> 50dp，字号放大至 14sp Bold)
+                    // 快捷分钟周期行 (保持不变：3m 至 30m)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
@@ -1650,13 +1650,13 @@ fun TimeframeSyncDialog(
                         }
                     }
 
-                    // 快捷小时周期行 (高度翻倍由 26dp -> 50dp，字号放大至 14sp Bold)
+                    // 快捷小时周期行 (从右到左为 1h 到 12h，即从左到右：12h 至 1h)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        listOf("1h", "2h", "3h", "4h", "6h", "12h").forEach { tf ->
+                        listOf("12h", "6h", "4h", "3h", "2h", "1h").forEach { tf ->
                             Box(
                                 modifier = Modifier
                                     .weight(1f)
@@ -1672,13 +1672,13 @@ fun TimeframeSyncDialog(
                         }
                     }
 
-                    // 快捷日线/周月周期行 (高度翻倍由 26dp -> 50dp，字号放大至 14sp Bold)
+                    // 快捷日线/周月周期行 (从右到左为 1D 到 1M，即从左到右：1M 至 1D)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        listOf("1D", "2D", "3D", "1W", "1M").forEach { tf ->
+                        listOf("1M", "1W", "3D", "2D", "1D").forEach { tf ->
                             Box(
                                 modifier = Modifier
                                     .weight(1f)

@@ -1138,38 +1138,7 @@ object PersistentWebViewPool {
             }, (index * stepDelay))
         }
 
-        if (action.startsWith("timeframe_")) {
-            val totalDelay = (windowIds.size * stepDelay) + 900L
-            handler.postDelayed({
-                // 所有选中视窗均完成周期切换后，在第一个基准视窗主画布点击一次，让各视窗之间的时间轴比例彻底对齐
-                val primaryWv = getWebView(windowIds.firstOrNull() ?: 1)
-                primaryWv?.let { wv ->
-                    val primaryClickScript = """
-                        (function() {
-                            try {
-                                var canvas = document.querySelector('canvas.interactive-graphics-layer') || document.querySelector('canvas');
-                                if (canvas) {
-                                    var r = canvas.getBoundingClientRect();
-                                    var cx = r.left + r.width / 2;
-                                    var cy = r.top + r.height / 2;
-                                    var pDown = new PointerEvent('pointerdown', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, button: 0, buttons: 1, pointerType: 'mouse', isPrimary: true });
-                                    var mDown = new MouseEvent('mousedown', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, button: 0, buttons: 1 });
-                                    var pUp = new PointerEvent('pointerup', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, button: 0, buttons: 0, pointerType: 'mouse', isPrimary: true });
-                                    var mUp = new MouseEvent('mouseup', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, button: 0, buttons: 0 });
-                                    var clk = new MouseEvent('click', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, button: 0, buttons: 0 });
-                                    canvas.dispatchEvent(pDown);
-                                    canvas.dispatchEvent(mDown);
-                                    canvas.dispatchEvent(pUp);
-                                    canvas.dispatchEvent(mUp);
-                                    canvas.dispatchEvent(clk);
-                                }
-                            } catch(e) {}
-                        })();
-                    """.trimIndent()
-                    wv.evaluateJavascript(primaryClickScript, null)
-                }
-            }, totalDelay)
-        }
+        // 注意：切换周期后的跨图焦点对齐与画图智能隐藏已由各 WebView 内部 dispatchNativeTimeframe 两段式独立执行
     }
 
     /**
@@ -1228,9 +1197,9 @@ object PersistentWebViewPool {
             webView.dispatchKeyEvent(KeyEvent(t, t + 25, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER, 0))
         }, currentDelay + 100L)
 
-        // 数据载入后 (600ms)，智能识别 K 线密度最大的子图并派发单次鼠标左键，触发 TradingView 自动统一所有窗口比例
+        // 阶段 1 (800ms)：等待 K 线数据与 Canvas 首帧重绘完毕后，先安全识别并隐藏画图，再跨图点击非活跃图 B 触发全局比例广播
         handler.postDelayed({
-            val syncClickScript = """
+            val stage1Script = """
                 (function() {
                     try {
                         function triggerLeftClick(targetEl) {
@@ -1238,48 +1207,226 @@ object PersistentWebViewPool {
                             var r = targetEl.getBoundingClientRect();
                             var cx = r.left + r.width / 2;
                             var cy = r.top + r.height / 2;
-                            var pDown = new PointerEvent('pointerdown', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, button: 0, buttons: 1, pointerType: 'mouse', isPrimary: true });
-                            var mDown = new MouseEvent('mousedown', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, button: 0, buttons: 1 });
-                            var pUp = new PointerEvent('pointerup', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, button: 0, buttons: 0, pointerType: 'mouse', isPrimary: true });
-                            var mUp = new MouseEvent('mouseup', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, button: 0, buttons: 0 });
-                            var clk = new MouseEvent('click', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, button: 0, buttons: 0 });
-                            targetEl.dispatchEvent(pDown);
-                            targetEl.dispatchEvent(mDown);
-                            targetEl.dispatchEvent(pUp);
-                            targetEl.dispatchEvent(mUp);
-                            targetEl.dispatchEvent(clk);
+                            var evtOpts = {
+                                bubbles: true,
+                                cancelable: true,
+                                clientX: cx,
+                                clientY: cy,
+                                screenX: cx,
+                                screenY: cy,
+                                view: window,
+                                button: 0,
+                                buttons: 1,
+                                pointerType: 'mouse',
+                                isPrimary: true
+                            };
+                            try {
+                                targetEl.dispatchEvent(new PointerEvent('pointerdown', evtOpts));
+                                targetEl.dispatchEvent(new MouseEvent('mousedown', evtOpts));
+                                targetEl.dispatchEvent(new PointerEvent('pointerup', Object.assign({}, evtOpts, { buttons: 0 })));
+                                targetEl.dispatchEvent(new MouseEvent('mouseup', Object.assign({}, evtOpts, { buttons: 0 })));
+                                targetEl.dispatchEvent(new MouseEvent('click', Object.assign({}, evtOpts, { buttons: 0 })));
+                            } catch(e) {
+                                targetEl.dispatchEvent(new MouseEvent('click', evtOpts));
+                            }
                         }
 
-                        // 1. 如果有多个子图 (.chart-widget)
-                        var widgets = Array.from(document.querySelectorAll('.chart-widget') || []);
-                        if (widgets.length > 1) {
-                            var bestWidget = null;
-                            var maxDensity = -1;
-                            for (var i = 0; i < widgets.length; i++) {
-                                var w = widgets[i];
-                                var r = w.getBoundingClientRect();
-                                if (r.width < 50 || r.height < 50) continue;
-                                var axisTexts = w.querySelectorAll('[class*="time-axis"] text, [class*="timeAxis"] text, [data-name="time-axis"] text, text');
-                                if (axisTexts.length > maxDensity) {
-                                    maxDensity = axisTexts.length;
-                                    bestWidget = w;
+                        // 【安全识别并隐藏画图】：前置检查状态，若当前已是隐藏状态则绝不盲目触发，严防反向显示！
+                        var hideBtn = document.querySelector('[data-name="hide-all-drawing-tools"]') ||
+                                      document.querySelector('[data-name="hide-all-drawings"]') ||
+                                      document.querySelector('button[data-tooltip*="隐藏所有画图"]') ||
+                                      document.querySelector('button[data-tooltip*="Hide all drawings"]') ||
+                                      document.querySelector('button[aria-label*="隐藏所有画图"]') ||
+                                      document.querySelector('button[aria-label*="Hide all drawings"]') ||
+                                      document.querySelector('button[title*="隐藏所有画图"]') ||
+                                      document.querySelector('button[title*="Hide all drawings"]');
+
+                        if (hideBtn) {
+                            var cls = hideBtn.className || "";
+                            var isAlreadyHidden = cls.indexOf("isActive") !== -1 ||
+                                                  cls.indexOf("active") !== -1 ||
+                                                  hideBtn.getAttribute("aria-pressed") === "true" ||
+                                                  hideBtn.getAttribute("data-active") === "true" ||
+                                                  (hideBtn.getAttribute("title") || "").indexOf("显示") !== -1 ||
+                                                  (hideBtn.getAttribute("aria-label") || "").indexOf("显示") !== -1 ||
+                                                  (hideBtn.getAttribute("title") || "").indexOf("Show") !== -1 ||
+                                                  (hideBtn.getAttribute("aria-label") || "").indexOf("Show") !== -1;
+
+                            if (!isAlreadyHidden) {
+                                hideBtn.click();
+                            }
+                        } else {
+                            var hasShapes = false;
+                            if (window.tvWidget && typeof window.tvWidget.activeChart === 'function') {
+                                var c = window.tvWidget.activeChart();
+                                if (c && typeof c.getAllShapes === 'function') {
+                                    var s = c.getAllShapes();
+                                    if (s && s.length > 0) hasShapes = true;
                                 }
                             }
-                            if (!bestWidget) bestWidget = widgets[0];
-                            var targetCanvas = bestWidget.querySelector('canvas.interactive-graphics-layer') || bestWidget.querySelector('canvas') || bestWidget;
-                            triggerLeftClick(targetCanvas);
-                        } else {
-                            // 单图页面：在主画布中心点击一次，促使 TradingView 自动测量对齐
-                            var canvas = document.querySelector('canvas.interactive-graphics-layer') || document.querySelector('canvas');
-                            if (canvas) {
-                                triggerLeftClick(canvas);
+                            if (hasShapes) {
+                                var hOpts = { key: 'h', code: 'KeyH', keyCode: 72, which: 72, altKey: true, ctrlKey: true, bubbles: true, cancelable: true, composed: true };
+                                var hTarget = document.activeElement || document.querySelector('canvas') || document.body;
+                                hTarget.dispatchEvent(new KeyboardEvent('keydown', hOpts));
+                                document.dispatchEvent(new KeyboardEvent('keydown', hOpts));
+                                window.dispatchEvent(new KeyboardEvent('keydown', hOpts));
+                                setTimeout(function() {
+                                    hTarget.dispatchEvent(new KeyboardEvent('keyup', hOpts));
+                                    document.dispatchEvent(new KeyboardEvent('keyup', hOpts));
+                                    window.dispatchEvent(new KeyboardEvent('keyup', hOpts));
+                                }, 25);
                             }
+                        }
+
+                        // 【跨图焦点迁移】：坚决避开当前图 A，精确提取非图 A 候选列表中 K 线密度最大的图 B
+                        var allWidgets = Array.from(document.querySelectorAll('.chart-widget') || []);
+                        if (allWidgets.length === 0) {
+                            allWidgets = Array.from(document.querySelectorAll('[data-role="chart"]') || []);
+                        }
+                        var validWidgets = allWidgets.filter(function(w) {
+                            var r = w.getBoundingClientRect();
+                            return r.width > 50 && r.height > 50;
+                        });
+
+                        if (validWidgets.length > 1) {
+                            // 识别刚输入周期的活跃图 A
+                            var activeWidget = null;
+                            for (var wi = 0; wi < validWidgets.length; wi++) {
+                                var w = validWidgets[wi];
+                                var cName = w.className || "";
+                                if (cName.indexOf("active") !== -1 || cName.indexOf("selected") !== -1 || w.getAttribute("data-active") === "true") {
+                                    activeWidget = w;
+                                    break;
+                                }
+                            }
+                            if (!activeWidget && document.activeElement) {
+                                activeWidget = document.activeElement.closest('.chart-widget') || document.activeElement.closest('[data-role="chart"]');
+                            }
+
+                            // 坚决排除图 A，只在剩余子图中比对
+                            var otherWidgets = validWidgets.filter(function(w) {
+                                return w !== activeWidget;
+                            });
+                            if (otherWidgets.length === 0) otherWidgets = validWidgets;
+
+                            // 寻找时间轴刻度密度最大或正常的图 B
+                            var bestWidget = null;
+                            var maxDensity = -1;
+                            for (var oi = 0; oi < otherWidgets.length; oi++) {
+                                var ow = otherWidgets[oi];
+                                var axisTexts = ow.querySelectorAll('[class*="time-axis"] text, [class*="timeAxis"] text, [data-name="time-axis"] text, text');
+                                var density = axisTexts.length;
+                                if (density > maxDensity) {
+                                    maxDensity = density;
+                                    bestWidget = ow;
+                                }
+                            }
+                            if (!bestWidget) bestWidget = otherWidgets[0];
+
+                            var targetCanvas = bestWidget.querySelector('canvas.interactive-graphics-layer') || 
+                                               bestWidget.querySelector('canvas') || 
+                                               bestWidget;
+                            triggerLeftClick(targetCanvas);
+                        } else if (validWidgets.length === 1) {
+                            var singleCanvas = validWidgets[0].querySelector('canvas.interactive-graphics-layer') || 
+                                               validWidgets[0].querySelector('canvas') || 
+                                               validWidgets[0];
+                            triggerLeftClick(singleCanvas);
+                        } else {
+                            var fallbackCanvas = document.querySelector('canvas.interactive-graphics-layer') || document.querySelector('canvas');
+                            if (fallbackCanvas) triggerLeftClick(fallbackCanvas);
                         }
                     } catch(e) {}
                 })();
             """.trimIndent()
-            webView.evaluateJavascript(syncClickScript, null)
-        }, currentDelay + 600L)
+            webView.evaluateJavascript(stage1Script, null)
+        }, currentDelay + 800L)
+
+        // 阶段 2 (1300ms)：两段式延迟二次确认，防止网络较慢时第一次重排未就绪
+        handler.postDelayed({
+            val stage2Script = """
+                (function() {
+                    try {
+                        function triggerLeftClick(targetEl) {
+                            if (!targetEl) return;
+                            var r = targetEl.getBoundingClientRect();
+                            var cx = r.left + r.width / 2;
+                            var cy = r.top + r.height / 2;
+                            var evtOpts = {
+                                bubbles: true,
+                                cancelable: true,
+                                clientX: cx,
+                                clientY: cy,
+                                screenX: cx,
+                                screenY: cy,
+                                view: window,
+                                button: 0,
+                                buttons: 1,
+                                pointerType: 'mouse',
+                                isPrimary: true
+                            };
+                            try {
+                                targetEl.dispatchEvent(new PointerEvent('pointerdown', evtOpts));
+                                targetEl.dispatchEvent(new MouseEvent('mousedown', evtOpts));
+                                targetEl.dispatchEvent(new PointerEvent('pointerup', Object.assign({}, evtOpts, { buttons: 0 })));
+                                targetEl.dispatchEvent(new MouseEvent('mouseup', Object.assign({}, evtOpts, { buttons: 0 })));
+                                targetEl.dispatchEvent(new MouseEvent('click', Object.assign({}, evtOpts, { buttons: 0 })));
+                            } catch(e) {
+                                targetEl.dispatchEvent(new MouseEvent('click', evtOpts));
+                            }
+                        }
+
+                        var allWidgets = Array.from(document.querySelectorAll('.chart-widget') || []);
+                        if (allWidgets.length === 0) {
+                            allWidgets = Array.from(document.querySelectorAll('[data-role="chart"]') || []);
+                        }
+                        var validWidgets = allWidgets.filter(function(w) {
+                            var r = w.getBoundingClientRect();
+                            return r.width > 50 && r.height > 50;
+                        });
+
+                        if (validWidgets.length > 1) {
+                            var activeWidget = null;
+                            for (var wi = 0; wi < validWidgets.length; wi++) {
+                                var w = validWidgets[wi];
+                                var cName = w.className || "";
+                                if (cName.indexOf("active") !== -1 || cName.indexOf("selected") !== -1 || w.getAttribute("data-active") === "true") {
+                                    activeWidget = w;
+                                    break;
+                                }
+                            }
+                            if (!activeWidget && document.activeElement) {
+                                activeWidget = document.activeElement.closest('.chart-widget') || document.activeElement.closest('[data-role="chart"]');
+                            }
+
+                            var otherWidgets = validWidgets.filter(function(w) {
+                                return w !== activeWidget;
+                            });
+                            if (otherWidgets.length === 0) otherWidgets = validWidgets;
+
+                            var bestWidget = null;
+                            var maxDensity = -1;
+                            for (var oi = 0; oi < otherWidgets.length; oi++) {
+                                var ow = otherWidgets[oi];
+                                var axisTexts = ow.querySelectorAll('[class*="time-axis"] text, [class*="timeAxis"] text, [data-name="time-axis"] text, text');
+                                var density = axisTexts.length;
+                                if (density > maxDensity) {
+                                    maxDensity = density;
+                                    bestWidget = ow;
+                                }
+                            }
+                            if (!bestWidget) bestWidget = otherWidgets[0];
+
+                            var targetCanvas = bestWidget.querySelector('canvas.interactive-graphics-layer') || 
+                                               bestWidget.querySelector('canvas') || 
+                                               bestWidget;
+                            triggerLeftClick(targetCanvas);
+                        }
+                    } catch(e) {}
+                })();
+            """.trimIndent()
+            webView.evaluateJavascript(stage2Script, null)
+        }, currentDelay + 1300L)
     }
 
     private fun buildActionExecutionScript(action: String, customDelayMs: Long = 0L): String {
@@ -1434,6 +1581,35 @@ object PersistentWebViewPool {
                         // 安全延迟等待：若延迟设为 0ms 则以最小 5ms 微任务直接推进
                         setTimeout(function() {
                             if (action === 'hide') {
+                                var hideBtn = document.querySelector('[data-name="hide-all-drawing-tools"]') ||
+                                              document.querySelector('[data-name="hide-all-drawings"]') ||
+                                              document.querySelector('button[data-tooltip*="隐藏所有画图"]') ||
+                                              document.querySelector('button[data-tooltip*="Hide all drawings"]') ||
+                                              document.querySelector('button[aria-label*="隐藏所有画图"]') ||
+                                              document.querySelector('button[aria-label*="Hide all drawings"]') ||
+                                              document.querySelector('button[title*="隐藏所有画图"]') ||
+                                              document.querySelector('button[title*="Hide all drawings"]');
+
+                                if (hideBtn) {
+                                    var cls = hideBtn.className || "";
+                                    var isAlreadyHidden = cls.indexOf("isActive") !== -1 ||
+                                                          cls.indexOf("active") !== -1 ||
+                                                          hideBtn.getAttribute("aria-pressed") === "true" ||
+                                                          hideBtn.getAttribute("data-active") === "true" ||
+                                                          (hideBtn.getAttribute("title") || "").indexOf("显示") !== -1 ||
+                                                          (hideBtn.getAttribute("aria-label") || "").indexOf("显示") !== -1 ||
+                                                          (hideBtn.getAttribute("title") || "").indexOf("Show") !== -1 ||
+                                                          (hideBtn.getAttribute("aria-label") || "").indexOf("Show") !== -1;
+
+                                    if (!isAlreadyHidden) {
+                                        hideBtn.click();
+                                    }
+                                    setTimeout(function() {
+                                        processPoint(idx + 1);
+                                    }, customDelay);
+                                    return;
+                                }
+
                                 var opts = { key: 'h', code: 'KeyH', keyCode: 72, which: 72, altKey: true, ctrlKey: true, bubbles: true, cancelable: true, composed: true };
                                 var kd = new KeyboardEvent('keydown', opts);
                                 target.dispatchEvent(kd);
