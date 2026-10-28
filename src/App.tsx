@@ -157,6 +157,7 @@ export default function App() {
   const [isSaveGroupModalOpen, setIsSaveGroupModalOpen] = useState<boolean>(false);
   const [newGroupName, setNewGroupName] = useState<string>('');
   const [isMagnetActive, setIsMagnetActive] = useState<boolean>(false);
+  const [isHideDrawingsActive, setIsHideDrawingsActive] = useState<boolean>(false);
   const [showTimeframeMenu, setShowTimeframeMenu] = useState<boolean>(false);
   const [customTfInput, setCustomTfInput] = useState<string>('');
   const [actionToast, setActionToast] = useState<string | null>(null);
@@ -592,7 +593,7 @@ export default function App() {
   // 统一物理激活与模拟快捷键指令分发中心 (Android 与 Web 双端融合支持)
   const handleTriggerAction = (action: 'hide' | 'latest_kline' | 'invert' | 'magnet' | 'invert4' | 'invert8', windowId?: number) => {
     let actionLabel = "";
-    if (action === 'hide') actionLabel = "隐藏/显示画线 (Ctrl+Alt+H)";
+    if (action === 'hide') actionLabel = isHideDrawingsActive ? "恢复显示画线 (Ctrl+Alt+H)" : "隐藏画线 (Ctrl+Alt+H)";
     else if (action === 'latest_kline') actionLabel = "移至最新K线 (Alt+Shift+Right)";
     else if (action === 'invert') actionLabel = "翻转K线 (Alt+I)";
     else if (action === 'invert4') actionLabel = "4图布局依次翻转 K线 (Alt+I)";
@@ -622,6 +623,7 @@ export default function App() {
   };
 
   const handleTriggerHideDrawings = () => {
+    setIsHideDrawingsActive((prev) => !prev);
     handleTriggerAction('hide');
   };
 
@@ -1252,8 +1254,12 @@ export default function App() {
                   onMouseDown={handleHideDrawingsMouseDown}
                   onMouseUp={handleHideDrawingsMouseUp}
                   onClick={handleHideDrawingsClick}
-                  className="w-[30px] h-[30px] flex items-center justify-center rounded-md bg-transparent hover:bg-slate-800/50 text-slate-300 hover:text-sky-300 transition-colors cursor-pointer select-none"
-                  title="点击：同步隐藏3视窗画线；长按：选择针对单窗隐藏 (Ctrl+Alt+H)"
+                  className={`w-[30px] h-[30px] flex items-center justify-center rounded-md transition-colors cursor-pointer select-none ${
+                    isHideDrawingsActive
+                      ? 'bg-amber-600/30 text-amber-400 shadow-[0_0_8px_rgba(245,158,11,0.25)]'
+                      : 'bg-transparent text-slate-300 hover:text-sky-300 hover:bg-slate-800/50'
+                  }`}
+                  title={isHideDrawingsActive ? "画线已隐藏 (再次点击恢复显示)" : "点击：同步隐藏3视窗画线；长按：选择针对单窗隐藏 (Ctrl+Alt+H)"}
                 >
                   <EyeOff className="w-3.5 h-3.5" />
                 </button>

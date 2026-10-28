@@ -1,37 +1,54 @@
-# TradingView 周期弹窗、比例对齐与画图按键修复方案
+# TradingView 隐藏画图功能深度排查与修复方案
 
-## 一、用户需求与变动要点汇总
+## 一、排查原因分析（为何点击隐藏画图按钮无效果）
 
-1. **彻底修复隐藏画图快捷按钮（右侧浮动眼睛图标）**：
-   - 彻底移除 `action === 'hide'` 中加入的 `isAlreadyHidden` 单向拦截；
-   - 恢复为无条件原生触发（点击按钮或分发快捷键 `Ctrl+Alt+H`），确保用户随时随地点击都能稳定切换（隐藏 ↔ 显示）。
+经过深入排查源代码历史与最近的修改记录，确认造成“隐藏画图按钮点击后无效果”的根本原因如下：
 
-2. **彻底删除周期切换里的自动隐藏画图**：
-   - 从 `dispatchNativeTimeframe` 中彻底清除所有后台自动隐藏画图（`hideBtn` / `getAllShapes` / `Ctrl+Alt+H`）的逻辑，不再对 TradingView 的画图状态做任何后台误触。
+1. **JavaScript 事件冒泡三重分发导致 Toggle 自我抵消（最核心问题）**：
+   - 源代码中分发组合键时，连续执行了：
+     ```javascript
+     target.dispatchEvent(kd);
+     document.dispatchEvent(kd);
+     window.dispatchEvent(kd);
+     ```
+   - 由于 `opts` 中设置了 `bubbles: true`，`target.dispatchEvent` 本身就会自然冒泡至 `document` 和 `window`。紧接着再次向 `document` 与 `window` 派发，导致 `window` 在同一个毫秒内连续接收了 **3 次按键事件**。
+   - `Ctrl+Alt+H` 在 TradingView 中是显隐切换（Toggle）机制。连续触发多次导致图表瞬间“隐藏 -> 显示 -> 隐藏/还原”，最终呈现为无变化。
 
-3. **流水线方案二：多窗口错峰键入 + 2秒独立看护比例校准**：
-   - **错峰键入**：窗口 1 与窗口 2 之间保持 650ms 安全焦点交接间隔，各窗口依次键入周期字符并敲回车，避免按键冲突与焦点争抢；
-   - **各自独立 2 秒看护校准**：
-     - 回车后 700ms（阶段 1）：跨图点击非活跃图 B，触发初步比例广播；
-     - 回车后 2000ms（阶段 2 巡检）：遍历所有 `.chart-widget` 计算 K 线密度 $D = \frac{\text{时间轴刻度数}}{\text{宽度}}$。
-     - 若最大密度与最小密度比值 $\frac{D_{\max}}{D_{\min}} > 1.35$ 或刻度标签相差 $\ge 3$（说明存在比例过大窗口）：
-     - 精准点击密度最大、比例正常的窗口 $D_{\max}$ 的 Canvas，强制 TradingView 同步所有窗口为紧凑正常比例！
+2. **工具栏折叠时无法找到 DOM，且 JS 合成按键受 `isTrusted: false` 限制**：
+   - 用户明确提出“工具栏平时都是隐藏的”。当左侧画图工具栏折叠时，DOM 中不存在可见的 `[data-name="hide-all-drawing-tools"]`，导致只能依赖快捷键。
+   - 之前只在周期切换（timeframe）中实现了 Android 原生硬件按键管道 `dispatchNativeTimeframe`，而隐藏画图（hide）仅在 JS 层通过 `new KeyboardEvent` 派发。现代 Chromium 内核对未授权的合成按键标记为 `isTrusted: false`，TradingView 内部直接忽略了非信任的快捷键。
 
----
+3. **DOM 容器提取偏差**：
+   - 部分版本的 TradingView 中 `[data-name="hide-all-drawing-tools"]` 是外层包裹 `div`，直接对其调用 `.click()` 并不能触发内部 `<button>` 的点击监听。
 
-## 二、关键代码变动
-
-1. `app/src/main/java/com/trading/multiview/webview/PersistentWebViewPool.kt`:
-   - `dispatchTradingViewAction`：设置 `action.startsWith("timeframe_") -> 650L`，实现多窗口错峰流水线。
-   - `dispatchNativeTimeframe`：阶段 1 移除自动隐藏画图，阶段 2 设置为 2000ms 执行 $D_{\max} / D_{\min} > 1.35$ 比例巡检与精准补点。
-   - `buildActionExecutionScript`：`action === 'hide'` 恢复无条件触发，随点随切。
-2. `src/data/androidProjectSource.ts`:
-   - 同步 `PersistentWebViewPool` 的最新参数与逻辑。
+4. **多窗口间焦点争抢（20ms 延时过短）**：
+   - 之前针对 hide 的窗口步进延时仅为 `20ms`，导致 3 个 WebView 几乎同时申请焦点，Android 系统层发生焦点抖动与丢失。
 
 ---
 
-## 三、验证结果
+## 二、修复措施与实施详情
 
-1. **Brace Check**: 所有 Kotlin 语法花括号及圆括号平衡校验通过。
-2. **TypeScript**: `tsc --noEmit` 0 错误。
-3. **Applet Compilation**: `compile_applet` 编译成功。
+1. **新增 Android 原生硬件级 KeyEvent 派发管道（`dispatchNativeHideDrawings`）**：
+   - 对当前目标 WebView 申请系统级焦点（`webView.requestFocus()`）；
+   - 在主线程以真实硬件序列发送 `Ctrl_DOWN -> Alt_DOWN -> H_DOWN -> H_UP -> Alt_UP -> Ctrl_UP`；
+   - 保证事件在 Chromium 内核中具有 `isTrusted = true` 属性，无论侧边工具栏是否隐藏均能直接生效。
+
+2. **优化窗口间安全排队延时**：
+   - 将多窗口触发 `hide` 的步进间隔（`stepDelay`）提升至 `160ms`，确保每个 WebView 有充足时间完成焦点获取和按键捕获。
+
+3. **重构 JS 执行脚本（三级防御）**：
+   - **第一级**：尝试调用 TradingView 内核官方 API `chart.executeActionById('hideAllDrawingTools')`；
+   - **第二级**：精准提取 DOM 内部真实的 `button` 节点触发原生点击；
+   - **第三级**：仅向画布目标派发单次 `Ctrl+Alt+H` 自然冒泡，彻底删除对 `document` 和 `window` 的重复派发，杜绝自我抵消。
+
+4. **Web 模拟器端状态联动与视觉高亮**：
+   - 补充 `isHideDrawingsActive` 状态管理，点击后按钮具备琥珀色高亮光晕与切换提示，双端体验一致。
+
+---
+
+## 三、代码同步与编译验证
+
+1. `app/src/main/java/com/trading/multiview/webview/PersistentWebViewPool.kt`: 语法平衡检验（braces=0, parens=0）。
+2. `src/data/androidProjectSource.ts`: 完整同步最新逻辑。
+3. `src/App.tsx`: 状态与按钮高亮更新。
+4. TypeScript 语法检查（`tsc --noEmit`）与 Applet 编译（`compile_applet`）全部通过。

@@ -1,6 +1,6 @@
 {
-  "summary":  "Updated implementation plan with option 2 staggered multi-window timeframe switching, 2000ms density ratio watchdog (Dmax / Dmin > 1.35) with corrective click on dense charts, removal of auto-hide drawings, and restoration of the unconditional toggle for the hide drawings shortcut button.",
-  "updatedAt":  "2026-10-28T11:15:47.422760748Z",
+  "summary":  "分析并彻底修复了隐藏画图按钮失效的根本原因：\n1. 修复了多重事件冒泡导致的 3 次重复派发与自身状态抵消问题；\n2. 增加了多窗口错峰时隙（stepDelay = 160ms），杜绝多视窗焦点争抢；\n3. 新增了 Android 原生硬件级 dispatchNativeHideDrawings（Ctrl + Alt + H）事件管道，实现 isTrusted=true，彻底突破侧边工具栏折叠和 JavaScript 合成按键限制；\n4. 补充了 TradingView 内核 API（executeActionById）及深层 DOM button 提取；\n5. 在 Web 模拟器端补充了完整的 isHideDrawingsActive 状态切换与高亮反馈。",
+  "updatedAt":  "2026-10-28T13:58:38.675533282Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

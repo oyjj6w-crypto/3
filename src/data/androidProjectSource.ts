@@ -939,6 +939,7 @@ object PersistentWebViewPool {
         val stepDelay = when {
             action == "invert4" -> if (customDelayMs == 0L) 30L else (4 * (customDelayMs * 2 + 60) + 100).coerceAtLeast(300L)
             action.startsWith("timeframe_") -> 650L
+            action == "hide" -> 160L
             else -> if (customDelayMs == 0L) 20L else 400L
         }
         windowIds.forEachIndexed { index, windowId ->
@@ -950,6 +951,8 @@ object PersistentWebViewPool {
                     if (action.startsWith("timeframe_")) {
                         val tfVal = action.removePrefix("timeframe_")
                         dispatchNativeTimeframe(webView, tfVal)
+                    } else if (action == "hide") {
+                        dispatchNativeHideDrawings(webView)
                     }
                     onProgress?.invoke(windowId, windowIds.size)
                 }
@@ -970,8 +973,39 @@ object PersistentWebViewPool {
             if (action.startsWith("timeframe_")) {
                 val tfVal = action.removePrefix("timeframe_")
                 dispatchNativeTimeframe(webView, tfVal)
+            } else if (action == "hide") {
+                dispatchNativeHideDrawings(webView)
             }
         }
+    }
+
+    /**
+     * 原生硬件按键级隐藏/恢复画图引擎 (Android OS 管道 KeyEvent，isTrusted=true)
+     * 发送真实的 Ctrl + Alt + H 组合按键，彻底突破 JavaScript 合成按键 isTrusted=false
+     * 以及侧边工具栏折叠时无法找到 DOM 节点的根本限制。
+     */
+    private fun dispatchNativeHideDrawings(webView: WebView) {
+        val handler = Handler(Looper.getMainLooper())
+        webView.requestFocus()
+
+        handler.postDelayed({
+            val t = SystemClock.uptimeMillis()
+
+            // 发送标准硬件级 Ctrl + Alt + H 组合按键 (Linux / Android 平台 TradingView 标准画图显隐切换热键)
+            val ctrlDown = KeyEvent(t, t, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_CTRL_LEFT, 0, KeyEvent.META_CTRL_ON or KeyEvent.META_CTRL_LEFT_ON)
+            val altDown = KeyEvent(t, t, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ALT_LEFT, 0, KeyEvent.META_CTRL_ON or KeyEvent.META_ALT_ON or KeyEvent.META_ALT_LEFT_ON)
+            val hDown = KeyEvent(t, t, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_H, 0, KeyEvent.META_CTRL_ON or KeyEvent.META_ALT_ON)
+            val hUp = KeyEvent(t, t + 35, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_H, 0, KeyEvent.META_CTRL_ON or KeyEvent.META_ALT_ON)
+            val altUp = KeyEvent(t, t + 45, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ALT_LEFT, 0, KeyEvent.META_CTRL_ON)
+            val ctrlUp = KeyEvent(t, t + 55, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_CTRL_LEFT, 0, 0)
+
+            webView.dispatchKeyEvent(ctrlDown)
+            webView.dispatchKeyEvent(altDown)
+            webView.dispatchKeyEvent(hDown)
+            webView.dispatchKeyEvent(hUp)
+            webView.dispatchKeyEvent(altUp)
+            webView.dispatchKeyEvent(ctrlUp)
+        }, 80L)
     }
 
     /**
@@ -1166,17 +1200,56 @@ object PersistentWebViewPool {
                         // 安全延迟等待：若延迟设为 0ms 则以最小 5ms 微任务直接推进
                         setTimeout(function() {
                             if (action === 'hide') {
+                                // 1. 尝试 TradingView 官方/内核 API
+                                try {
+                                    if (window.tvWidget && typeof window.tvWidget.chart === 'function') {
+                                        var c = window.tvWidget.chart();
+                                        if (typeof c.executeActionById === 'function') {
+                                            c.executeActionById('hideAllDrawingTools');
+                                            setTimeout(function() { processPoint(idx + 1); }, customDelay);
+                                            return;
+                                        }
+                                    }
+                                    if (window.TradingView && typeof window.TradingView.activeChart === 'function') {
+                                        var ac = window.TradingView.activeChart();
+                                        if (typeof ac.executeActionById === 'function') {
+                                            ac.executeActionById('hideAllDrawingTools');
+                                            setTimeout(function() { processPoint(idx + 1); }, customDelay);
+                                            return;
+                                        }
+                                    }
+                                } catch(e) {}
+
+                                // 2. 尝试 DOM 中的各种隐藏画图按钮 (精准提取真正的 button 元素并触发原生 click)
+                                var hideBtn = document.querySelector('[data-name="hide-all-drawing-tools"] button') ||
+                                              document.querySelector('[data-name="hide-all-drawings"] button') ||
+                                              document.querySelector('[data-name="hide-all-drawing-tools"]') ||
+                                              document.querySelector('[data-name="hide-all-drawings"]') ||
+                                              document.querySelector('button[data-name="hide-all-drawing-tools"]') ||
+                                              document.querySelector('button[data-tooltip*="隐藏所有画图"]') ||
+                                              document.querySelector('button[data-tooltip*="Hide all drawings"]') ||
+                                              document.querySelector('button[aria-label*="隐藏所有画图"]') ||
+                                              document.querySelector('button[aria-label*="Hide all drawings"]') ||
+                                              document.querySelector('button[title*="隐藏所有画图"]') ||
+                                              document.querySelector('button[title*="Hide all drawings"]');
+
+                                if (hideBtn) {
+                                    var clickTarget = (hideBtn.tagName === 'BUTTON') ? hideBtn : (hideBtn.querySelector('button') || hideBtn);
+                                    clickTarget.click();
+                                    setTimeout(function() {
+                                        processPoint(idx + 1);
+                                    }, customDelay);
+                                    return;
+                                }
+
+                                // 3. 回退为向当前 target 派发 1 次自然冒泡的 Ctrl+Alt+H 组合键 (严禁给 document/window 重复分发造成重复抵消)
                                 var opts = { key: 'h', code: 'KeyH', keyCode: 72, which: 72, altKey: true, ctrlKey: true, bubbles: true, cancelable: true, composed: true };
                                 var kd = new KeyboardEvent('keydown', opts);
                                 target.dispatchEvent(kd);
-                                document.dispatchEvent(kd);
-                                window.dispatchEvent(kd);
                                 var keyHold = (customDelay > 0) ? Math.min(50, customDelay) : 10;
                                 setTimeout(function() {
                                     var ku = new KeyboardEvent('keyup', opts);
                                     target.dispatchEvent(ku);
-                                    document.dispatchEvent(ku);
-                                    window.dispatchEvent(ku);
                                     setTimeout(function() {
                                         processPoint(idx + 1);
                                     }, customDelay);
