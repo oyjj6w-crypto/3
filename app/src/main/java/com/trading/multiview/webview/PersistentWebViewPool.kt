@@ -748,8 +748,23 @@ object PersistentWebViewPool {
             val action = event.actionMasked
             if (action == MotionEvent.ACTION_HOVER_EXIT) {
                 if (event.pointerCount > 0 && event.getToolType(0) == MotionEvent.TOOL_TYPE_STYLUS) {
-                    // 触控笔离开屏幕感应范围，立即清除十字星标！
-                    clearCrosshairs(exceptWindowId = null)
+                    // 触控笔离开本视窗感应范围，仅对本 WebView 异步派发一次轻量 JS 消除十字光标，坚决不跨窗口递归派发！
+                    val clearJs = """
+                        (function() {
+                            try {
+                                var cx = -1000;
+                                var cy = -1000;
+                                var c = window.__lastHoverTarget || document.querySelector('canvas.interactive-graphics-layer, canvas') || document.body;
+                                if (c) {
+                                    var ePen = { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy, screenX: cx, screenY: cy, pageX: cx, pageY: cy, pointerType: 'pen', isPrimary: true, pointerId: 1, button: 0, buttons: 0 };
+                                    c.dispatchEvent(new PointerEvent('pointerout', ePen));
+                                    c.dispatchEvent(new PointerEvent('pointerleave', ePen));
+                                }
+                                window.__lastHoverTarget = null;
+                            } catch(e) {}
+                        })();
+                    """.trimIndent()
+                    post { evaluateJavascript(clearJs, null) }
                 }
             }
             if (action == MotionEvent.ACTION_HOVER_MOVE || action == MotionEvent.ACTION_HOVER_ENTER) {
@@ -1603,7 +1618,7 @@ object PersistentWebViewPool {
             if (!wv.isShown) continue
             wv.post {
                 try {
-                    // 发送 ACTION_HOVER_EXIT 事件至负坐标，通知 WebView 光标彻底离开视窗
+                    // 发送虚拟光标 ACTION_HOVER_EXIT 事件至负坐标，通知 WebView 光标彻底离开视窗 (绝不派发触控笔事件以免引发递归)
                     val exitEvent = createMouseEvent(
                         action = MotionEvent.ACTION_HOVER_EXIT,
                         downTime = now,
@@ -1614,20 +1629,6 @@ object PersistentWebViewPool {
                     )
                     wv.dispatchGenericMotionEvent(exitEvent)
                     exitEvent.recycle()
-
-                    // 同步发送触控笔 ACTION_HOVER_EXIT 事件，通知触控笔笔尖已彻底移开感应范围
-                    val stylusExitEvent = createMouseEvent(
-                        action = MotionEvent.ACTION_HOVER_EXIT,
-                        downTime = now,
-                        eventTime = now,
-                        x = -1000f,
-                        y = -1000f,
-                        buttonState = 0,
-                        toolType = MotionEvent.TOOL_TYPE_STYLUS,
-                        source = android.view.InputDevice.SOURCE_STYLUS
-                    )
-                    wv.dispatchGenericMotionEvent(stylusExitEvent)
-                    stylusExitEvent.recycle()
                 } catch (e: Exception) {
                     e.printStackTrace()
                 }

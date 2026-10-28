@@ -1,6 +1,6 @@
 {
-  "summary":  "虚拟触控板点击下拉菜单防闪退、触控笔离开立即消除十字光标、以及触控板外框纯不透明而内部全量20%透明度（附按键按压高亮反馈）的综合优化方案。",
-  "updatedAt":  "2026-10-28T05:12:10.575275556Z",
+  "summary":  "彻底切断 StylusStabilizedWebView 中触控笔 HOVER_EXIT 跨视窗事件自激死循环，解决触控笔悬停十字星标导致的主线程 ANR 假死故障，触控笔离开感应区时安全无死锁地清除 TradingView 十字星标。",
+  "updatedAt":  "2026-10-28T06:00:51.825210334Z",
   "requestFeedback":  true,
   "userFacing":  true
 }
