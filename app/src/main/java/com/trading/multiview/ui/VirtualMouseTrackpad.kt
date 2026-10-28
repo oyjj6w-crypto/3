@@ -161,10 +161,9 @@ fun BoxScope.VirtualMouseOverlay(
             .width(308.dp)
             .shadow(elevation = 12.dp, shape = RoundedCornerShape(12.dp))
             .clip(RoundedCornerShape(12.dp))
-            .alpha(0.3f) // 触控面板整体 30% 透明度 (包括按键与背景全部 30% 半透明透视)
-            .background(Color(0xFF0B111E).copy(alpha = 0.95f))
+            .background(Color(0xFF0B111E).copy(alpha = 0.30f)) // 背景保持 30% 高透视
             .border(
-                border = BorderStroke(1.dp, Color(0xFF334155)),
+                border = BorderStroke(1.5.dp, Color(0xFF38BDF8)), // 整个外围使用 100% 不透明高亮实线条
                 shape = RoundedCornerShape(12.dp)
             )
     ) {
@@ -353,8 +352,8 @@ fun BoxScope.VirtualMouseOverlay(
                     .fillMaxWidth()
                     .height(122.dp)
                     .clip(RoundedCornerShape(8.dp))
-                    .background(Color(0xFF060911))
-                    .border(1.dp, Color(0xFF1E293B), RoundedCornerShape(8.dp))
+                    .background(Color(0xFF060911).copy(alpha = 0.35f))
+                    .border(1.dp, Color(0xFF334155), RoundedCornerShape(8.dp))
                     .pointerInput(sensitivity, isHoldingDown, screenWidthPx, screenHeightPx) {
                         coroutineScope {
                             awaitEachGesture {
@@ -424,27 +423,7 @@ fun BoxScope.VirtualMouseOverlay(
                             }
                         }
                     },
-                contentAlignment = Alignment.Center
-            ) {
-                // 触控板中央辅助视觉提示
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(2.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.TouchApp,
-                        contentDescription = null,
-                        tint = Color(0xFF334155),
-                        modifier = Modifier.size(20.dp)
-                    )
-                    Text(
-                        text = "单指滑动 · 轻点左键 · 长按右键",
-                        color = Color(0xFF64748B),
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Medium
-                    )
-                }
-            }
+            )
 
             // =====================================================================
             // 动作控制按键行 (左键 · 右键 · 按住画线 · 滚轮放大 · 滚轮缩小 · Del快捷键)

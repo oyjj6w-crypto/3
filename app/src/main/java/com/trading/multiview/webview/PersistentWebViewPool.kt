@@ -686,6 +686,8 @@ object PersistentWebViewPool {
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
             )
+            isFocusable = true
+            isFocusableInTouchMode = true
 
             // 关键优化 1：彻底解决 K 线图表在数据更新更正时的周期性闪烁！
             // Android 窗口在 AndroidManifest 中已开启硬件加速，Chromium 原生通过专用 GPU 合成线程渲染 WebGL / Canvas。
@@ -1476,13 +1478,15 @@ object PersistentWebViewPool {
                 try {
                     var cx = -1000;
                     var cy = -1000;
-                    var el = document.body;
-                    if (el) {
-                        el.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: cx, clientY: cy, pointerType: 'mouse' }));
-                        el.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: cx, clientY: cy }));
-                        el.dispatchEvent(new PointerEvent('pointerout', { bubbles: true, clientX: cx, clientY: cy, pointerType: 'mouse' }));
-                        el.dispatchEvent(new PointerEvent('pointerleave', { bubbles: true, clientX: cx, clientY: cy, pointerType: 'mouse' }));
+                    var target = window.__lastHoverTarget || document.querySelector('canvas.interactive-graphics-layer, canvas') || document.body;
+                    if (target) {
+                        var eInit = { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy, screenX: cx, screenY: cy, pageX: cx, pageY: cy, pointerType: 'mouse', isPrimary: true, pointerId: 1, button: 0, buttons: 0 };
+                        target.dispatchEvent(new PointerEvent('pointerout', eInit));
+                        target.dispatchEvent(new MouseEvent('mouseout', eInit));
+                        target.dispatchEvent(new PointerEvent('pointerleave', eInit));
+                        target.dispatchEvent(new MouseEvent('mouseleave', eInit));
                     }
+                    window.__lastHoverTarget = null;
                 } catch(e) {}
             })();
         """.trimIndent()
@@ -1493,41 +1497,17 @@ object PersistentWebViewPool {
             if (!wv.isShown) continue
             wv.post {
                 try {
-                    // 1. 发送位于边界角落 (1f, 1f) 的 hover move 事件。
-                    // 因为 1f, 1f 在 WebView 视口内，Android 系统会下发至 Chromium。
-                    // 从而使 Chromium 判定光标移开了 iframe 区域，向 TradingView 派发 leave 离场事件！
-                    val moveEvent = createMouseEvent(
-                        action = MotionEvent.ACTION_HOVER_MOVE,
-                        downTime = now,
-                        eventTime = now,
-                        x = 1f,
-                        y = 1f,
-                        buttonState = 0
-                    )
-                    wv.dispatchGenericMotionEvent(moveEvent)
-                    moveEvent.recycle()
-
-                    // 2. 发送 ACTION_HOVER_EXIT 事件，通知 WebView 光标彻底离开屏幕
+                    // 发送 ACTION_HOVER_EXIT 事件至负坐标，通知 WebView 光标彻底离开视窗，切勿发送 TOUCH CANCEL 事件以防 TradingView 降级至移动端触摸模式
                     val exitEvent = createMouseEvent(
                         action = MotionEvent.ACTION_HOVER_EXIT,
                         downTime = now,
                         eventTime = now,
-                        x = 1f,
-                        y = 1f,
+                        x = -1000f,
+                        y = -1000f,
                         buttonState = 0
                     )
                     wv.dispatchGenericMotionEvent(exitEvent)
                     exitEvent.recycle()
-
-                    // 3. 同时发送一个 ACTION_CANCEL 触摸事件，以确保任何残存的触摸、滑动或拖拽手势重置
-                    val cancelEvent = MotionEvent.obtain(
-                        now, now,
-                        MotionEvent.ACTION_CANCEL,
-                        1f, 1f,
-                        0
-                    )
-                    wv.dispatchTouchEvent(cancelEvent)
-                    cancelEvent.recycle()
                 } catch (e: Exception) {
                     e.printStackTrace()
                 }
@@ -1564,6 +1544,9 @@ object PersistentWebViewPool {
         val now = SystemClock.uptimeMillis()
 
         if (isNewWindow) {
+            if (!wv.isFocused) {
+                wv.requestFocus()
+            }
             val enterEvent = createMouseEvent(
                 action = MotionEvent.ACTION_HOVER_ENTER,
                 downTime = now,
@@ -1596,52 +1579,58 @@ object PersistentWebViewPool {
                     var ry = Math.max(0, Math.min(1, $localY / $wvH));
                     var cx = rx * window.innerWidth;
                     var cy = ry * window.innerHeight;
-                    var pMove = new PointerEvent('pointermove', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, pointerType: 'mouse' });
-                    var mMove = new MouseEvent('mousemove', { bubbles: true, cancelable: true, clientX: cx, clientY: cy });
 
-                    // 1. 尝试直接向坐标命中元素派发
-                    var el = document.elementFromPoint(cx, cy) || document.body;
-                    if (el) {
-                        if ($isNewWindow) {
-                            el.dispatchEvent(new PointerEvent('pointerenter', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, pointerType: 'mouse' }));
-                            el.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, cancelable: true, clientX: cx, clientY: cy }));
-                        }
-                        el.dispatchEvent(pMove);
-                        el.dispatchEvent(mMove);
-                    }
-
-                    // 2. 核心穿透加固：直接向 TradingView 交互图形 Canvas 派发，确保任何情况下十字光标均不丢失
-                    var tvCanvases = document.querySelectorAll('canvas.interactive-graphics-layer, canvas');
-                    for (var i = 0; i < tvCanvases.length; i++) {
-                        var c = tvCanvases[i];
-                        if (c !== el) {
-                            if ($isNewWindow) {
-                                c.dispatchEvent(new PointerEvent('pointerenter', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, pointerType: 'mouse' }));
-                                c.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, cancelable: true, clientX: cx, clientY: cy }));
-                            }
-                            c.dispatchEvent(pMove);
-                            c.dispatchEvent(mMove);
-                        }
-                    }
-
-                    // 3. iframe 内部穿透派发
-                    var iframes = document.querySelectorAll('iframe');
-                    for (var j = 0; j < iframes.length; j++) {
+                    // 1. 精准获取当前坐标下的核心目标元素 (不给所有 Canvas 群发以防坐标错乱冲撞导致十字准星被隐藏)
+                    var el = document.elementFromPoint(cx, cy);
+                    if (el && el.tagName === 'IFRAME') {
                         try {
-                            var idoc = iframes[j].contentDocument || iframes[j].contentWindow.document;
+                            var idoc = el.contentDocument || (el.contentWindow && el.contentWindow.document);
                             if (idoc) {
-                                var iCanvas = idoc.querySelector('canvas.interactive-graphics-layer, canvas');
-                                if (iCanvas) {
-                                    if ($isNewWindow) {
-                                        iCanvas.dispatchEvent(new PointerEvent('pointerenter', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, pointerType: 'mouse' }));
-                                        iCanvas.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, cancelable: true, clientX: cx, clientY: cy }));
-                                    }
-                                    iCanvas.dispatchEvent(pMove);
-                                    iCanvas.dispatchEvent(mMove);
-                                }
+                                var irect = el.getBoundingClientRect();
+                                var icx = cx - irect.left;
+                                var icy = cy - irect.top;
+                                var iEl = idoc.elementFromPoint(icx, icy);
+                                if (iEl) el = iEl;
                             }
                         } catch(e) {}
                     }
+                    if (!el) {
+                        el = document.querySelector('canvas.interactive-graphics-layer') || document.querySelector('canvas') || document.body;
+                    }
+
+                    var opts = {
+                        bubbles: true,
+                        cancelable: true,
+                        view: window,
+                        clientX: cx,
+                        clientY: cy,
+                        screenX: cx,
+                        screenY: cy,
+                        pageX: cx,
+                        pageY: cy,
+                        button: 0,
+                        buttons: 0,
+                        pointerId: 1,
+                        pointerType: 'mouse',
+                        isPrimary: true
+                    };
+
+                    if (window.__lastHoverTarget !== el) {
+                        if (window.__lastHoverTarget) {
+                            try {
+                                window.__lastHoverTarget.dispatchEvent(new PointerEvent('pointerout', opts));
+                                window.__lastHoverTarget.dispatchEvent(new MouseEvent('mouseout', opts));
+                            } catch(e) {}
+                        }
+                        window.__lastHoverTarget = el;
+                        el.dispatchEvent(new PointerEvent('pointerover', opts));
+                        el.dispatchEvent(new MouseEvent('mouseover', opts));
+                        el.dispatchEvent(new PointerEvent('pointerenter', opts));
+                        el.dispatchEvent(new MouseEvent('mouseenter', opts));
+                    }
+
+                    el.dispatchEvent(new PointerEvent('pointermove', opts));
+                    el.dispatchEvent(new MouseEvent('mousemove', opts));
                 } catch(e) {}
             })();
         """.trimIndent()
