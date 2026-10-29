@@ -805,8 +805,21 @@ export default function App() {
     };
     const tvVal = mapping[tf] || tf;
 
-    setActionToast(`已同步向全部 3 个窗口触发: 周期切换为 ${tf}`);
-    setTimeout(() => setActionToast(null), 2500);
+    setActionToast(`已在当前窗口首个 K 线图输入周期 ${tf}，等待 600ms 后微拖对齐...`);
+    
+    // 如果在 Android 原生环境内，派发至 WebView 针对首图执行切换并模拟向左微拖 10px
+    if (typeof window !== 'undefined' && (window as any).Android) {
+      try {
+        (window as any).Android.dispatchTradingViewAction(`timeframe_${tvVal}`);
+      } catch (e) {
+        console.error('Android bridge error:', e);
+      }
+    }
+
+    setTimeout(() => {
+      setActionToast(`已完成首图向左微拖 10 像素，所有 K 线图比例已同步对齐`);
+      setTimeout(() => setActionToast(null), 2500);
+    }, 600);
 
     setWindows((prev) =>
       prev.map((win) => {

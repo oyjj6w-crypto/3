@@ -360,6 +360,50 @@ export function generateUserScript(options: Partial<ScriptOptions> = {}): string
         await sendTimeframe(widget, cleanTf);
     }
 
+    // 模拟鼠标左键向左拖动图表指定像素，以唤醒并触发 TradingView 内部多图横向时间轴与 K 线柱比例强行拉齐
+    function simulateDragLeft(widget, distancePx = 10) {
+        return new Promise((resolve) => {
+            if (!widget) return resolve();
+            const canvas = widget.querySelector('canvas.interactive-graphics-layer') || 
+                           widget.querySelector('canvas') || 
+                           widget;
+            const rect = canvas.getBoundingClientRect();
+            const startX = rect.left + rect.width / 2;
+            const startY = rect.top + rect.height / 2;
+            const targetX = startX - distancePx;
+
+            const downOpts = { clientX: startX, clientY: startY, screenX: startX, screenY: startY, buttons: 1, button: 0, bubbles: true, cancelable: true, view: window, composed: true };
+            const moveOpts = { clientX: targetX, clientY: startY, screenX: targetX, screenY: startY, buttons: 1, button: 0, bubbles: true, cancelable: true, view: window, composed: true };
+            const upOpts = { clientX: targetX, clientY: startY, screenX: targetX, screenY: startY, buttons: 0, button: 0, bubbles: true, cancelable: true, view: window, composed: true };
+
+            try {
+                canvas.dispatchEvent(new PointerEvent('pointerdown', downOpts));
+                canvas.dispatchEvent(new MouseEvent('mousedown', downOpts));
+            } catch(e) {
+                canvas.dispatchEvent(new MouseEvent('mousedown', downOpts));
+            }
+
+            setTimeout(() => {
+                try {
+                    canvas.dispatchEvent(new PointerEvent('pointermove', moveOpts));
+                    canvas.dispatchEvent(new MouseEvent('mousemove', moveOpts));
+                } catch(e) {
+                    canvas.dispatchEvent(new MouseEvent('mousemove', moveOpts));
+                }
+
+                setTimeout(() => {
+                    try {
+                        canvas.dispatchEvent(new PointerEvent('pointerup', upOpts));
+                        canvas.dispatchEvent(new MouseEvent('mouseup', upOpts));
+                    } catch(e) {
+                        canvas.dispatchEvent(new MouseEvent('mouseup', upOpts));
+                    }
+                    resolve();
+                }, 50);
+            }, 50);
+        });
+    }
+
     // 3. 磁力功能 (切换 Ctrl 吸附状态 / 或触发左侧磁吸工具)
     function handleTriggerMagnet(btnElement) {
         isMagnetActive = !isMagnetActive;
@@ -572,12 +616,20 @@ export function generateUserScript(options: Partial<ScriptOptions> = {}): string
                     { label: '日线', val: 'D' }
                 ];
 
-                function doSync(val, label) {
+                async function doSync(val, label) {
                     if (!val) return;
                     modal.style.display = 'none';
-                    dispatchToAllWindows('切换周期为 ' + (label || val), async (widget, i) => {
-                        return await applyTimeframeToWindow(widget, val, i);
-                    });
+                    // 新机制：每次切换周期一定是在当前窗口，第一个 K 线图上去选择输入时间周期，然后等待 600ms 模拟鼠标拖动第一个 K 线窗口往左边拖动 10 个像素，让所有 K 线图保持比例一致
+                    const widgets = getChartWidgets();
+                    const firstWidget = widgets.length > 0 ? widgets[0] : null;
+                    if (firstWidget) {
+                        showToast('正在首图输入周期: ' + (label || val), 'info');
+                        await applyTimeframeToWindow(firstWidget, val, 0);
+                        setTimeout(async () => {
+                            await simulateDragLeft(firstWidget, 10);
+                            showToast('已向左微拖 10 像素，所有 K 线图比例已同步对齐', 'success');
+                        }, 600);
+                    }
                 }
 
                 periods.forEach(p => {
