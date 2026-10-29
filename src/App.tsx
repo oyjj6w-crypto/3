@@ -38,7 +38,7 @@ import {
   Cpu,
   ChevronsRight
 } from 'lucide-react';
-import { WindowConfig, OrientationMode, WindowGroup, WebviewInstanceStat } from './types';
+import { WindowConfig, OrientationMode, WindowGroup, WebviewInstanceStat, WindowVisibilityPreset } from './types';
 import { TradingWindow } from './components/TradingWindow';
 import { HiddenWindowsDock } from './components/HiddenWindowsDock';
 import { CodeExplorerModal } from './components/CodeExplorerModal';
@@ -284,6 +284,109 @@ export default function App() {
 
   const handleReloadWindow = (id: number) => {
     setReloadKeys(prev => ({ ...prev, [id]: (prev[id] || 0) + 1 }));
+  };
+
+  // 快捷视窗组合预设配置 (3个快捷按钮，支持单击秒切、长按自定义名称和显隐勾选)
+  const [windowPresets, setWindowPresets] = useState<WindowVisibilityPreset[]>(() => {
+    try {
+      const saved = localStorage.getItem('tradingview_window_presets');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length === 3) {
+          return parsed;
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to parse window presets from localStorage', e);
+    }
+    return [
+      { id: 1, name: '预设1', visibleIds: [1] },
+      { id: 2, name: '预设2', visibleIds: [1, 2] },
+      { id: 3, name: '预设3', visibleIds: [1, 2, 3] },
+    ];
+  });
+
+  const [editingPreset, setEditingPreset] = useState<WindowVisibilityPreset | null>(null);
+  const [editingPresetName, setEditingPresetName] = useState<string>('');
+  const [editingPresetVisibleIds, setEditingPresetVisibleIds] = useState<number[]>([]);
+  const [presetModalError, setPresetModalError] = useState<string | null>(null);
+
+  const presetLongPressTimer = useRef<NodeJS.Timeout | null>(null);
+  const isPresetLongPress = useRef<boolean>(false);
+
+  const openPresetEditModal = (preset: WindowVisibilityPreset) => {
+    setEditingPreset(preset);
+    setEditingPresetName(preset.name);
+    setEditingPresetVisibleIds([...preset.visibleIds]);
+    setPresetModalError(null);
+  };
+
+  const handlePresetTouchStart = (preset: WindowVisibilityPreset) => {
+    isPresetLongPress.current = false;
+    presetLongPressTimer.current = setTimeout(() => {
+      isPresetLongPress.current = true;
+      openPresetEditModal(preset);
+    }, 500);
+  };
+
+  const handlePresetTouchEnd = (e: React.TouchEvent) => {
+    if (presetLongPressTimer.current) clearTimeout(presetLongPressTimer.current);
+    if (isPresetLongPress.current) {
+      e.preventDefault();
+    }
+  };
+
+  const handlePresetMouseDown = (preset: WindowVisibilityPreset) => {
+    isPresetLongPress.current = false;
+    presetLongPressTimer.current = setTimeout(() => {
+      isPresetLongPress.current = true;
+      openPresetEditModal(preset);
+    }, 500);
+  };
+
+  const handlePresetMouseUp = () => {
+    if (presetLongPressTimer.current) clearTimeout(presetLongPressTimer.current);
+  };
+
+  const applyWindowPreset = (preset: WindowVisibilityPreset) => {
+    setWindows((prev) =>
+      prev.map((win) => ({
+        ...win,
+        isHidden: !preset.visibleIds.includes(win.id),
+        isMaximized: false,
+      }))
+    );
+    setActionToast(`已应用快捷组合: ${preset.name}`);
+    setTimeout(() => setActionToast(null), 2000);
+  };
+
+  const handlePresetClick = (preset: WindowVisibilityPreset) => {
+    if (!isPresetLongPress.current) {
+      applyWindowPreset(preset);
+    }
+  };
+
+  const handleSavePresetModal = () => {
+    if (!editingPreset) return;
+    if (editingPresetVisibleIds.length === 0) {
+      setPresetModalError('至少需要保留一个视窗勾选显示');
+      return;
+    }
+    const trimmedName = editingPresetName.trim() || `预设${editingPreset.id}`;
+    const updated: WindowVisibilityPreset = {
+      ...editingPreset,
+      name: trimmedName,
+      visibleIds: editingPresetVisibleIds,
+    };
+    const newPresets = windowPresets.map((p) => (p.id === updated.id ? updated : p));
+    setWindowPresets(newPresets);
+    try {
+      localStorage.setItem('tradingview_window_presets', JSON.stringify(newPresets));
+    } catch (e) {
+      console.warn('Failed to save window presets', e);
+    }
+    applyWindowPreset(updated);
+    setEditingPreset(null);
   };
 
   // 3 视窗网页全局缩放与全局折叠状态
@@ -1123,6 +1226,34 @@ export default function App() {
                 ))}
               </div>
 
+              {/* 新增：3 个自定义视窗显示/隐藏快捷组合按钮 */}
+              <div className="flex items-center gap-1 shrink-0">
+                {windowPresets.map((preset) => {
+                  const isPresetActive = windows.every((w) =>
+                    preset.visibleIds.includes(w.id) ? !w.isHidden : w.isHidden
+                  );
+                  return (
+                    <button
+                      key={preset.id}
+                      type="button"
+                      onTouchStart={() => handlePresetTouchStart(preset)}
+                      onTouchEnd={handlePresetTouchEnd}
+                      onMouseDown={() => handlePresetMouseDown(preset)}
+                      onMouseUp={handlePresetMouseUp}
+                      onClick={() => handlePresetClick(preset)}
+                      className={`h-[30px] px-2 flex items-center justify-center rounded-md text-xs font-medium transition-all cursor-pointer select-none border ${
+                        isPresetActive
+                          ? 'bg-sky-600/30 border-sky-400 text-sky-200 font-bold shadow-[0_0_8px_rgba(56,189,248,0.25)]'
+                          : 'bg-slate-900/80 border-slate-700/80 text-slate-300 hover:text-white hover:bg-slate-800 hover:border-slate-600'
+                      }`}
+                      title={`单击：应用组合 (${preset.name})；长按：自定义文字与选择显示视窗`}
+                    >
+                      {preset.name}
+                    </button>
+                  );
+                })}
+              </div>
+
               {/* ================= 油猴快捷 3 视窗动作组 (无边框极简扁平化设计) ================= */}
               <div className="flex items-center gap-1 shrink-0">
                 {/* T. 周期选择 (T字按钮)：标准 w-[30px] h-[30px] */}
@@ -1264,28 +1395,18 @@ export default function App() {
                   <EyeOff className="w-3.5 h-3.5" />
                 </button>
 
-                {/* 2. 磁力吸附切换：标准 w-[30px] h-[30px] */}
+                {/* 2. 磁力吸附切换：内部改成“磁吸”两个字，标准 w-[30px] h-[30px] */}
                 <button
                   type="button"
                   onClick={handleTriggerToggleMagnet}
-                  className={`w-[30px] h-[30px] flex items-center justify-center rounded-md transition-colors cursor-pointer ${
+                  className={`w-[30px] h-[30px] flex items-center justify-center rounded-md transition-colors cursor-pointer text-[11px] font-bold ${
                     isMagnetActive
-                      ? 'bg-rose-600/20 text-rose-400 shadow-[0_0_8px_rgba(244,63,94,0.2)]'
+                      ? 'bg-rose-600/25 text-rose-300 shadow-[0_0_8px_rgba(244,63,94,0.3)] border border-rose-500/50'
                       : 'bg-transparent text-slate-300 hover:text-sky-300 hover:bg-slate-800/50'
                   }`}
                   title="全部 3 窗口同步触发：磁力吸附切换 (Magnet / Ctrl)"
                 >
-                  <Magnet className="w-3.5 h-3.5" />
-                </button>
-
-                {/* 3. 翻转K线图 (Alt+I)：标准 w-[30px] h-[30px] */}
-                <button
-                  type="button"
-                  onClick={handleTriggerInvertChart}
-                  className="w-[30px] h-[30px] flex items-center justify-center rounded-md bg-transparent hover:bg-slate-800/50 text-slate-300 hover:text-sky-300 transition-colors cursor-pointer font-mono font-bold text-xs"
-                  title="全部 3 窗口同步翻转 K 线 (Alt+I)"
-                >
-                  翻
+                  <span className="leading-none select-none">磁吸</span>
                 </button>
 
                 {/* 4. 网页整版缩放锁定 (锁按钮)：标准 w-[30px] h-[30px] */}
@@ -1817,6 +1938,114 @@ export default function App() {
                 className="mt-2 py-1.5 px-4 rounded border border-slate-700/80 hover:bg-slate-800 text-slate-400 text-xs cursor-pointer"
               >
                 取消
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 快捷视窗组合预设配置弹窗 (长按快捷按钮弹出) */}
+      {editingPreset && (
+        <div className="fixed inset-0 bg-black/75 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+          <div className="bg-[#0f172a] border border-slate-700 rounded-xl p-5 w-full max-w-sm shadow-2xl text-slate-200 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <h3 className="font-bold text-sm text-sky-400 flex items-center gap-2">
+                ⚙️ 配置快捷按钮 #{editingPreset.id}
+              </h3>
+              <button
+                type="button"
+                onClick={() => setEditingPreset(null)}
+                className="text-slate-400 hover:text-white p-1 rounded-md transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="flex flex-col gap-4 py-4">
+              {/* 自定义名称输入框 */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                  按钮显示文字 (自定义标识)
+                </label>
+                <input
+                  type="text"
+                  maxLength={8}
+                  placeholder="如：全览、BTC单图、双屏等"
+                  value={editingPresetName}
+                  onChange={(e) => {
+                    setEditingPresetName(e.target.value);
+                    setPresetModalError(null);
+                  }}
+                  className="w-full bg-slate-900 border border-slate-700 focus:border-sky-500 rounded-lg px-3 py-2 text-sm text-white placeholder:text-slate-500 outline-none transition-colors"
+                />
+                <span className="text-[10px] text-slate-500 mt-1 block">最多 8 个字符，将直接显示在顶栏快捷按钮上</span>
+              </div>
+
+              {/* 勾选需要显示的视窗 */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-2">
+                  选择显示的视窗 (勾选为显示，未勾选为隐藏)
+                </label>
+                <div className="flex flex-col gap-2">
+                  {windows.map((win) => {
+                    const isChecked = editingPresetVisibleIds.includes(win.id);
+                    return (
+                      <label
+                        key={win.id}
+                        className={`flex items-center justify-between px-3 py-2 rounded-lg border cursor-pointer transition-colors select-none ${
+                          isChecked
+                            ? 'bg-sky-950/40 border-sky-600 text-sky-200'
+                            : 'bg-slate-900 border-slate-800 text-slate-400 hover:border-slate-700'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2.5">
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={() => {
+                              setPresetModalError(null);
+                              if (isChecked) {
+                                setEditingPresetVisibleIds(editingPresetVisibleIds.filter((id) => id !== win.id));
+                              } else {
+                                setEditingPresetVisibleIds([...editingPresetVisibleIds, win.id].sort((a, b) => a - b));
+                              }
+                            }}
+                            className="w-4 h-4 accent-sky-500 rounded cursor-pointer"
+                          />
+                          <span className="text-xs font-mono font-bold">W{win.id}</span>
+                          <span className="text-xs text-slate-300">({win.symbol || win.title})</span>
+                        </div>
+                        <span className={`text-[11px] font-mono ${isChecked ? 'text-sky-400 font-semibold' : 'text-slate-500'}`}>
+                          {isChecked ? '显示' : '隐藏'}
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* 错误提示 */}
+              {presetModalError && (
+                <div className="text-xs text-rose-400 bg-rose-950/40 border border-rose-900/60 rounded-lg p-2 text-center">
+                  {presetModalError}
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => setEditingPreset(null)}
+                className="px-3 py-1.5 rounded-lg border border-slate-700 hover:bg-slate-800 text-slate-300 text-xs font-semibold transition-colors cursor-pointer"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={handleSavePresetModal}
+                className="px-4 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold transition-colors cursor-pointer shadow-md"
+              >
+                保存并立即应用
               </button>
             </div>
           </div>

@@ -2627,6 +2627,8 @@ private fun Context.findActivity(): Activity? {
     return null
 }
 
+data class WindowPresetData(val id: Int, val name: String, val visibleIds: List<Int>)
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun TradingMultiViewScreen(
@@ -2647,6 +2649,18 @@ fun TradingMultiViewScreen(
     var showReorderDialog by remember { mutableStateOf(false) }
     var showLatestKlineDialog by remember { mutableStateOf(false) }
     var floatingButtonOffset by remember { mutableStateOf(Offset(0f, 0f)) }
+
+    // 快捷视窗组合预设 (3个快捷按钮，支持单击应用与长按自定义名称和显隐)
+    var windowPresets by remember {
+        mutableStateOf(
+            listOf(
+                WindowPresetData(1, "预设1", listOf(1)),
+                WindowPresetData(2, "预设2", listOf(1, 2)),
+                WindowPresetData(3, "预设3", listOf(1, 2, 3))
+            )
+        )
+    }
+    var editingPreset by remember { mutableStateOf<WindowPresetData?>(null) }
 
     // 初始化时加载本地存储的自定义分组
     LaunchedEffect(Unit) {
@@ -2814,6 +2828,56 @@ fun TradingMultiViewScreen(
                     }
                 }
 
+                // 新增：3个自定义视窗快捷预设按钮组 (单击秒切，长按自定义名称和选择显示视窗)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    windowPresets.forEach { preset ->
+                        val isPresetActive = uiState.windows.all { win ->
+                            if (preset.visibleIds.contains(win.id)) !win.isHidden else win.isHidden
+                        }
+                        Box(
+                            modifier = Modifier
+                                .height(30.dp)
+                                .defaultMinSize(minWidth = 36.dp)
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(
+                                    if (isPresetActive) Color(0xFF0369A1).copy(alpha = 0.4f)
+                                    else Color(0xFF1E293B)
+                                )
+                                .border(
+                                    width = 1.dp,
+                                    color = if (isPresetActive) Color(0xFF38BDF8) else Color(0xFF334155),
+                                    shape = RoundedCornerShape(6.dp)
+                                )
+                                .combinedClickable(
+                                    onClick = {
+                                        uiState.windows.forEach { win ->
+                                            if (preset.visibleIds.contains(win.id)) {
+                                                viewModel.restoreWindow(win.id, context)
+                                            } else {
+                                                viewModel.hideWindow(win.id, context)
+                                            }
+                                        }
+                                    },
+                                    onLongClick = {
+                                        editingPreset = preset
+                                    }
+                                )
+                                .padding(horizontal = 6.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = preset.name,
+                                color = if (isPresetActive) Color(0xFF38BDF8) else Color(0xFFCBD5E1),
+                                fontSize = 11.sp,
+                                fontWeight = if (isPresetActive) FontWeight.Bold else FontWeight.Medium
+                            )
+                        }
+                    }
+                }
+
                 Spacer(modifier = Modifier.width(6.dp))
 
                 // ================= 油猴快捷 3 视窗动作组 (隐藏画线 · 磁力吸附 · 翻转K线 · 全局缩放 · 缩放锁定) =================
@@ -2874,7 +2938,7 @@ fun TradingMultiViewScreen(
                         )
                     }
 
-                    // 2. 磁力吸附切换 (Magnet / Ctrl)：单击直接执行(0ms延迟)，长按弹出选择窗口
+                    // 2. 磁力吸附切换 (Magnet / Ctrl)：内部显示“磁吸”汉字，单击直接执行(0ms延迟)，长按弹出选择窗口
                     val activeMagnetWin = uiState.windows.find { it.isMagnetActive }
                     val isAnyMagnetActive = activeMagnetWin != null
                     Box(
@@ -2897,40 +2961,11 @@ fun TradingMultiViewScreen(
                             ),
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.CenterFocusStrong,
-                            contentDescription = "磁力吸附切换",
-                            tint = if (showMagnetDialog) Color.White else if (isAnyMagnetActive) Color(0xFFFB7185) else Color(0xFFCBD5E1),
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
-
-                    // 3. 4图翻转 K线 (Alt+I)：默认0ms延迟，单击直接对全部3/4个窗口执行翻转，长按弹出选择窗口
-                    Box(
-                        modifier = Modifier
-                            .size(30.dp)
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(
-                                if (showInvertDialog) Color(0xFF059669)
-                                else Color(0xFF1E293B)
-                            )
-                            .border(
-                                width = 1.dp,
-                                color = if (showInvertDialog) Color(0xFF34D399) else Color(0xFF334155),
-                                shape = RoundedCornerShape(6.dp)
-                            )
-                            .combinedClickable(
-                                onClick = { viewModel.triggerInvert4Charts(delayMs = 0L, context = context) },
-                                onLongClick = { showInvertDialog = true }
-                            ),
-                        contentAlignment = Alignment.Center
-                    ) {
                         Text(
-                            text = "4",
-                            color = if (showInvertDialog) Color.White else Color(0xFF34D399),
-                            fontSize = 12.sp,
+                            text = "磁吸",
+                            fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
-                            fontFamily = FontFamily.Monospace
+                            color = if (showMagnetDialog) Color.White else if (isAnyMagnetActive) Color(0xFFFB7185) else Color(0xFFCBD5E1)
                         )
                     }
 
@@ -3496,6 +3531,126 @@ fun TradingMultiViewScreen(
                 showLatestKlineDialog = false
             }
         )
+    }
+
+    editingPreset?.let { targetPreset ->
+        var tempName by remember(targetPreset) { mutableStateOf(targetPreset.name) }
+        var tempVisibleIds by remember(targetPreset) { mutableStateOf(targetPreset.visibleIds.toSet()) }
+        var errorMessage by remember { mutableStateOf<String?>(null) }
+
+        Dialog(onDismissRequest = { editingPreset = null }) {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A)),
+                border = BorderStroke(1.dp, Color(0xFF334155)),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.width(320.dp).padding(16.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        text = "⚙️ 配置快捷按钮 #\${targetPreset.id}",
+                        color = Color(0xFF38BDF8),
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+
+                    OutlinedTextField(
+                        value = tempName,
+                        onValueChange = {
+                            if (it.length <= 8) {
+                                tempName = it
+                                errorMessage = null
+                            }
+                        },
+                        label = { Text("按钮名称 (自定义标识)") },
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Color(0xFF38BDF8),
+                            unfocusedBorderColor = Color(0xFF334155),
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Text(
+                        text = "选择显示的视窗：",
+                        color = Color(0xFF94A3B8),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        (1..uiState.currentWindowCount).forEach { winId ->
+                            val isChecked = tempVisibleIds.contains(winId)
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(if (isChecked) Color(0xFF0284C7) else Color(0xFF1E293B))
+                                    .border(1.dp, if (isChecked) Color(0xFF38BDF8) else Color(0xFF334155), RoundedCornerShape(6.dp))
+                                    .clickable {
+                                        errorMessage = null
+                                        tempVisibleIds = if (isChecked) tempVisibleIds - winId else tempVisibleIds + winId
+                                    }
+                                    .padding(vertical = 8.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "W$winId",
+                                    color = if (isChecked) Color.White else Color(0xFF94A3B8),
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+
+                    errorMessage?.let {
+                        Text(text = it, color = Color(0xFFEF4444), fontSize = 11.sp)
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        TextButton(onClick = { editingPreset = null }) {
+                            Text("取消", color = Color(0xFF94A3B8))
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Button(
+                            onClick = {
+                                if (tempVisibleIds.isEmpty()) {
+                                    errorMessage = "至少保留一个视窗显示"
+                                    return@Button
+                                }
+                                val updated = targetPreset.copy(
+                                    name = tempName.trim().ifEmpty { "预设\${targetPreset.id}" },
+                                    visibleIds = tempVisibleIds.toList().sorted()
+                                )
+                                windowPresets = windowPresets.map { if (it.id == updated.id) updated else it }
+                                uiState.windows.forEach { win ->
+                                    if (updated.visibleIds.contains(win.id)) {
+                                        viewModel.restoreWindow(win.id, context)
+                                    } else {
+                                        viewModel.hideWindow(win.id, context)
+                                    }
+                                }
+                                editingPreset = null
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7))
+                        ) {
+                            Text("保存并应用", color = Color.White)
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
