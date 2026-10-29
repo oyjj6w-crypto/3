@@ -2650,16 +2650,18 @@ fun TradingMultiViewScreen(
     var showLatestKlineDialog by remember { mutableStateOf(false) }
     var floatingButtonOffset by remember { mutableStateOf(Offset(0f, 0f)) }
 
-    // 快捷视窗组合预设 (3个快捷按钮，支持单击应用与长按自定义名称和显隐)
-    var windowPresets by remember {
-        mutableStateOf(
-            listOf(
-                WindowPresetData(1, "预设1", listOf(1)),
-                WindowPresetData(2, "预设2", listOf(1, 2)),
-                WindowPresetData(3, "预设3", listOf(1, 2, 3))
-            )
+    // 快捷视窗组合预设 (每个标签页独立隔离保存)
+    val defaultPresets = remember {
+        listOf(
+            WindowPresetData(1, "预设1", listOf(1)),
+            WindowPresetData(2, "预设2", listOf(1, 2)),
+            WindowPresetData(3, "预设3", listOf(1, 2, 3))
         )
     }
+    var windowPresetsMap by remember {
+        mutableStateOf<Map<String, List<WindowPresetData>>>(emptyMap())
+    }
+    val currentTabPresets = windowPresetsMap[uiState.activeGroupId] ?: defaultPresets
     var editingPreset by remember { mutableStateOf<WindowPresetData?>(null) }
 
     // 初始化时加载本地存储的自定义分组
@@ -2833,7 +2835,7 @@ fun TradingMultiViewScreen(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    windowPresets.forEach { preset ->
+                    currentTabPresets.forEach { preset ->
                         val isPresetActive = uiState.windows.all { win ->
                             if (preset.visibleIds.contains(win.id)) !win.isHidden else win.isHidden
                         }
@@ -3633,7 +3635,10 @@ fun TradingMultiViewScreen(
                                     name = tempName.trim().ifEmpty { "预设\${targetPreset.id}" },
                                     visibleIds = tempVisibleIds.toList().sorted()
                                 )
-                                windowPresets = windowPresets.map { if (it.id == updated.id) updated else it }
+                                val groupPresets = (windowPresetsMap[uiState.activeGroupId] ?: defaultPresets).map {
+                                    if (it.id == updated.id) updated else it
+                                }
+                                windowPresetsMap = windowPresetsMap + (uiState.activeGroupId to groupPresets)
                                 uiState.windows.forEach { win ->
                                     if (updated.visibleIds.contains(win.id)) {
                                         viewModel.restoreWindow(win.id, context)

@@ -38,7 +38,7 @@ import {
   Cpu,
   ChevronsRight
 } from 'lucide-react';
-import { WindowConfig, OrientationMode, WindowGroup, WebviewInstanceStat, WindowVisibilityPreset } from './types';
+import { WindowConfig, OrientationMode, WindowGroup, WebviewInstanceStat, WindowVisibilityPreset, TabGroupPresetsMap } from './types';
 import { TradingWindow } from './components/TradingWindow';
 import { HiddenWindowsDock } from './components/HiddenWindowsDock';
 import { CodeExplorerModal } from './components/CodeExplorerModal';
@@ -286,25 +286,41 @@ export default function App() {
     setReloadKeys(prev => ({ ...prev, [id]: (prev[id] || 0) + 1 }));
   };
 
-  // 快捷视窗组合预设配置 (3个快捷按钮，支持单击秒切、长按自定义名称和显隐勾选)
-  const [windowPresets, setWindowPresets] = useState<WindowVisibilityPreset[]>(() => {
+  // 默认视窗组合预设模板
+  const DEFAULT_PRESETS: WindowVisibilityPreset[] = [
+    { id: 1, name: '预设1', visibleIds: [1] },
+    { id: 2, name: '预设2', visibleIds: [1, 2] },
+    { id: 3, name: '预设3', visibleIds: [1, 2, 3] },
+  ];
+
+  // 每个标签页（分组）独立隔离保存 3 个快捷视窗组合预设
+  const [tabGroupPresetsMap, setTabGroupPresetsMap] = useState<TabGroupPresetsMap>(() => {
     try {
-      const saved = localStorage.getItem('tradingview_window_presets');
-      if (saved) {
-        const parsed = JSON.parse(saved);
+      const savedMap = localStorage.getItem('tradingview_tab_group_presets_map');
+      if (savedMap) {
+        return JSON.parse(savedMap);
+      }
+      // 兼容旧版单一预设存储，作为首个标签页的初始预设
+      const oldSinglePresets = localStorage.getItem('tradingview_window_presets');
+      if (oldSinglePresets) {
+        const parsed = JSON.parse(oldSinglePresets);
         if (Array.isArray(parsed) && parsed.length === 3) {
-          return parsed;
+          return { 'group-1': parsed };
         }
       }
     } catch (e) {
-      console.warn('Failed to parse window presets from localStorage', e);
+      console.warn('Failed to parse tabGroupPresetsMap from localStorage', e);
     }
-    return [
-      { id: 1, name: '预设1', visibleIds: [1] },
-      { id: 2, name: '预设2', visibleIds: [1, 2] },
-      { id: 3, name: '预设3', visibleIds: [1, 2, 3] },
-    ];
+    return {};
   });
+
+  // 获取当前激活标签页的专属预设列表（各标签完全独立隔离）
+  const currentTabPresets = useMemo<WindowVisibilityPreset[]>(() => {
+    if (activeGroupId && tabGroupPresetsMap[activeGroupId]) {
+      return tabGroupPresetsMap[activeGroupId];
+    }
+    return DEFAULT_PRESETS;
+  }, [tabGroupPresetsMap, activeGroupId]);
 
   const [editingPreset, setEditingPreset] = useState<WindowVisibilityPreset | null>(null);
   const [editingPresetName, setEditingPresetName] = useState<string>('');
@@ -367,7 +383,7 @@ export default function App() {
   };
 
   const handleSavePresetModal = () => {
-    if (!editingPreset) return;
+    if (!editingPreset || !activeGroupId) return;
     if (editingPresetVisibleIds.length === 0) {
       setPresetModalError('至少需要保留一个视窗勾选显示');
       return;
@@ -378,12 +394,17 @@ export default function App() {
       name: trimmedName,
       visibleIds: editingPresetVisibleIds,
     };
-    const newPresets = windowPresets.map((p) => (p.id === updated.id ? updated : p));
-    setWindowPresets(newPresets);
+    const existingPresets = tabGroupPresetsMap[activeGroupId] || DEFAULT_PRESETS;
+    const newPresetsForGroup = existingPresets.map((p) => (p.id === updated.id ? updated : p));
+    const nextMap: TabGroupPresetsMap = {
+      ...tabGroupPresetsMap,
+      [activeGroupId]: newPresetsForGroup,
+    };
+    setTabGroupPresetsMap(nextMap);
     try {
-      localStorage.setItem('tradingview_window_presets', JSON.stringify(newPresets));
+      localStorage.setItem('tradingview_tab_group_presets_map', JSON.stringify(nextMap));
     } catch (e) {
-      console.warn('Failed to save window presets', e);
+      console.warn('Failed to save tabGroupPresetsMap', e);
     }
     applyWindowPreset(updated);
     setEditingPreset(null);
@@ -1226,9 +1247,9 @@ export default function App() {
                 ))}
               </div>
 
-              {/* 新增：3 个自定义视窗显示/隐藏快捷组合按钮 */}
+              {/* 新增：3 个自定义视窗显示/隐藏快捷组合按钮 (每个标签页独立保存) */}
               <div className="flex items-center gap-1 shrink-0">
-                {windowPresets.map((preset) => {
+                {currentTabPresets.map((preset) => {
                   const isPresetActive = windows.every((w) =>
                     preset.visibleIds.includes(w.id) ? !w.isHidden : w.isHidden
                   );
@@ -1949,13 +1970,16 @@ export default function App() {
         <div className="fixed inset-0 bg-black/75 backdrop-blur-xs z-50 flex items-center justify-center p-4">
           <div className="bg-[#0f172a] border border-slate-700 rounded-xl p-5 w-full max-w-sm shadow-2xl text-slate-200 animate-in fade-in zoom-in-95 duration-150">
             <div className="flex items-center justify-between pb-3 border-b border-slate-800">
-              <h3 className="font-bold text-sm text-sky-400 flex items-center gap-2">
-                ⚙️ 配置快捷按钮 #{editingPreset.id}
-              </h3>
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="font-bold text-sm text-sky-400 shrink-0">⚙️ 快捷按钮 #{editingPreset.id}</span>
+                <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-sky-950/80 border border-sky-800/80 text-sky-300 truncate max-w-[130px]" title={groups.find(g => g.id === activeGroupId)?.name || '当前标签'}>
+                  {groups.find(g => g.id === activeGroupId)?.name || '当前标签'}
+                </span>
+              </div>
               <button
                 type="button"
                 onClick={() => setEditingPreset(null)}
-                className="text-slate-400 hover:text-white p-1 rounded-md transition-colors cursor-pointer"
+                className="text-slate-400 hover:text-white p-1 rounded-md transition-colors cursor-pointer shrink-0"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -1965,7 +1989,7 @@ export default function App() {
               {/* 自定义名称输入框 */}
               <div>
                 <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                  按钮显示文字 (自定义标识)
+                  按钮显示文字 (当前标签专属标识)
                 </label>
                 <input
                   type="text"
@@ -1978,7 +2002,7 @@ export default function App() {
                   }}
                   className="w-full bg-slate-900 border border-slate-700 focus:border-sky-500 rounded-lg px-3 py-2 text-sm text-white placeholder:text-slate-500 outline-none transition-colors"
                 />
-                <span className="text-[10px] text-slate-500 mt-1 block">最多 8 个字符，将直接显示在顶栏快捷按钮上</span>
+                <span className="text-[10px] text-slate-500 mt-1 block">最多 8 个字符，独立保存在此标签页内</span>
               </div>
 
               {/* 勾选需要显示的视窗 */}

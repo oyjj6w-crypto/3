@@ -69,3 +69,5 @@ export interface WindowVisibilityPreset {
   name: string;        // 自定义文字标识，例如 "预设1"、"全览"
   visibleIds: number[]; // 勾选显示的窗口ID数组，例如 [1], [1, 2], [1, 2, 3]
 }
+
+export type TabGroupPresetsMap = Record<string, WindowVisibilityPreset[]>;
