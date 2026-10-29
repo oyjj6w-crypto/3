@@ -96,7 +96,6 @@ fun TradingMultiViewScreen(
     var showGlobalZoomDialog by remember { mutableStateOf(false) }
     var showReorderDialog by remember { mutableStateOf(false) }
     var showLatestKlineDialog by remember { mutableStateOf(false) }
-    var showVirtualMouse by remember { mutableStateOf(false) }
     var floatingButtonOffset by remember { mutableStateOf(Offset(0f, 0f)) }
 
     // 快捷视窗组合预设 (每个标签页独立隔离保存)
@@ -444,31 +443,6 @@ fun TradingMultiViewScreen(
                             imageVector = Icons.Default.Computer,
                             contentDescription = "全局缩放与桌面基准像素",
                             tint = if (showGlobalZoomDialog) Color.White else Color(0xFF38BDF8),
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
-
-                    // 5. 虚拟触控板/光标按钮
-                    Box(
-                        modifier = Modifier
-                            .size(30.dp)
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(
-                                if (showVirtualMouse) Color(0xFF0284C7)
-                                else Color(0xFF1E293B)
-                            )
-                            .border(
-                                width = 1.dp,
-                                color = if (showVirtualMouse) Color(0xFF38BDF8) else Color(0xFF334155),
-                                shape = RoundedCornerShape(6.dp)
-                            )
-                            .clickable { showVirtualMouse = !showVirtualMouse },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.NearMe,
-                            contentDescription = "虚拟触控板/鼠标光标",
-                            tint = if (showVirtualMouse) Color.White else Color(0xFF38BDF8),
                             modifier = Modifier.size(16.dp)
                         )
                     }
@@ -1008,7 +982,9 @@ fun TradingMultiViewScreen(
         )
     }
 
-    editingPreset?.let { targetPreset ->
+    val currentEditingPreset = editingPreset
+    if (currentEditingPreset != null) {
+        val targetPreset: WindowPresetData = currentEditingPreset
         var tempName by remember(targetPreset) { mutableStateOf(targetPreset.name) }
         var tempVisibleIds by remember(targetPreset) { mutableStateOf(targetPreset.visibleIds.toSet()) }
         var errorMessage by remember { mutableStateOf<String?>(null) }
@@ -1086,8 +1062,9 @@ fun TradingMultiViewScreen(
                         }
                     }
 
-                    errorMessage?.let {
-                        Text(text = it, color = Color(0xFFEF4444), fontSize = 11.sp)
+                    val msg = errorMessage
+                    if (msg != null) {
+                        Text(text = msg, color = Color(0xFFEF4444), fontSize = 11.sp)
                     }
 
                     Row(
@@ -1129,12 +1106,6 @@ fun TradingMultiViewScreen(
                 }
             }
         }
-
-        // 虚拟光标与悬浮精准触控板
-        VirtualMouseOverlay(
-            isEnabled = showVirtualMouse,
-            onClose = { showVirtualMouse = false }
-        )
     }
 }
 
