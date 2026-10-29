@@ -3060,15 +3060,15 @@ fun TradingMultiViewScreen(
                         modifier = Modifier.padding(end = 4.dp)
                     ) {
                         Text(
-                            text = "v2.6.0",
-                            color = Color(0xFF64748B),
+                            text = "v2.7.0",
+                            color = Color(0xFF38BDF8),
                             fontSize = 9.sp,
                             fontFamily = FontFamily.Monospace,
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = "2026-09-21 14:30",
-                            color = Color(0xFF475569),
+                            text = "2026-10-29 20:00",
+                            color = Color(0xFF64748B),
                             fontSize = 8.sp,
                             fontFamily = FontFamily.Monospace
                         )
@@ -5132,8 +5132,8 @@ android {
         applicationId = "com.trading.multiview"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 270
+        versionName = "2.7.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

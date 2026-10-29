@@ -29,6 +29,9 @@ class MainActivity : ComponentActivity() {
         // 强制传感器横屏锁定 (Sensor Landscape，支持 180° 正反横屏倒转，禁止误切竖屏，保证 3 窗口最宽可视区)
         requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
 
+        // 保持屏幕常亮（看盘专用）
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+
         // 隐藏系统导航栏和状态栏，最大化横屏可视面积
         WindowCompat.setDecorFitsSystemWindows(window, false)
         val controller = WindowInsetsControllerCompat(window, window.decorView)
@@ -36,11 +39,11 @@ class MainActivity : ComponentActivity() {
         controller.systemBarsBehavior =
             WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
 
-        // 恢复持久化配置（上次输入的网址、历史分组及分辨率）
-        viewModel.loadSavedGroupsFromPrefs(applicationContext)
-
         // 初始化常驻单例 WebView 池（与 Activity 实例解耦，绝不反复销毁）
         PersistentWebViewPool.init(applicationContext)
+
+        // 恢复持久化配置（上次输入的网址、历史分组及分辨率）
+        viewModel.loadSavedGroupsFromPrefs(applicationContext)
 
         setContent {
             TradingMultiViewTheme {

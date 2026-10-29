@@ -13,7 +13,6 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.lazy.LazyColumn
@@ -35,7 +34,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -77,6 +75,8 @@ private fun Context.findActivity(): Activity? {
     return null
 }
 
+data class WindowPresetData(val id: Int, val name: String, val visibleIds: List<Int>)
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun TradingMultiViewScreen(
@@ -86,7 +86,6 @@ fun TradingMultiViewScreen(
     val uiState by viewModel.uiState.collectAsState()
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
-    val floatingPrefs = remember(context) { context.getSharedPreferences(PersistentWebViewPool.PREFS_NAME, Context.MODE_PRIVATE) }
     var showSaveDialog by remember { mutableStateOf(false) }
     var showGroupConfigDialog by remember { mutableStateOf(false) }
     var targetGroupForConfig by remember { mutableStateOf<TabGroup?>(null) }
@@ -97,36 +96,21 @@ fun TradingMultiViewScreen(
     var showGlobalZoomDialog by remember { mutableStateOf(false) }
     var showReorderDialog by remember { mutableStateOf(false) }
     var showLatestKlineDialog by remember { mutableStateOf(false) }
-    var latestKlineFloatingButtonOffsetY by remember {
-        mutableStateOf(floatingPrefs.getFloat("floating_latest_kline_offset_y", 0f))
-    }
-    var mouseFloatingButtonOffsetY by remember {
-        mutableStateOf(floatingPrefs.getFloat("floating_mouse_offset_y", -56f))
-    }
-    var timeframeFloatingButtonOffsetY by remember {
-        mutableStateOf(floatingPrefs.getFloat("floating_timeframe_offset_y", 56f))
-    }
-    var hideDrawingsFloatingButtonOffsetY by remember {
-        mutableStateOf(floatingPrefs.getFloat("floating_hidedrawings_offset_y", 112f))
-    }
-    var invertFloatingButtonOffsetY by remember {
-        mutableStateOf(floatingPrefs.getFloat("floating_invert_offset_y", -112f))
-    }
-    var isFloatingLocked by remember {
-        mutableStateOf(floatingPrefs.getBoolean("floating_locked", false))
-    }
-    var showRestartAppDialog by remember { mutableStateOf(false) }
+    var floatingButtonOffset by remember { mutableStateOf(Offset(0f, 0f)) }
 
-    val invertCooldownMs by viewModel.invertCooldownRemainingMs.collectAsState()
-    val isInvertCooldownActive = invertCooldownMs > 0
-    val cooldownSecondsTotal = (invertCooldownMs + 999) / 1000
-    val cooldownMin = cooldownSecondsTotal / 60
-    val cooldownSec = cooldownSecondsTotal % 60
-    val cooldownText = if (cooldownMin > 0) {
-        String.format(java.util.Locale.US, "%d:%02d", cooldownMin, cooldownSec)
-    } else {
-        "${cooldownSec}s"
+    // 快捷视窗组合预设 (每个标签页独立隔离保存)
+    val defaultPresets = remember {
+        listOf(
+            WindowPresetData(1, "预设1", listOf(1)),
+            WindowPresetData(2, "预设2", listOf(1, 2)),
+            WindowPresetData(3, "预设3", listOf(1, 2, 3))
+        )
     }
+    var windowPresetsMap by remember {
+        mutableStateOf<Map<String, List<WindowPresetData>>>(emptyMap())
+    }
+    val currentTabPresets = windowPresetsMap[uiState.activeGroupId] ?: defaultPresets
+    var editingPreset by remember { mutableStateOf<WindowPresetData?>(null) }
 
     // 初始化时加载本地存储的自定义分组
     LaunchedEffect(Unit) {
@@ -164,13 +148,6 @@ fun TradingMultiViewScreen(
                 ) {
                     uiState.groups.forEach { group ->
                         val isActive = uiState.activeGroupId == group.id
-                        val charCount = group.name.length
-                        val tabFontSize = when {
-                            charCount <= 2 -> 12.sp
-                            charCount <= 4 -> 11.sp
-                            charCount <= 6 -> 10.sp
-                            else -> 9.sp
-                        }
                         Box(
                             modifier = Modifier
                                 .height(30.dp)
@@ -189,17 +166,15 @@ fun TradingMultiViewScreen(
                                         showGroupConfigDialog = true
                                     }
                                 )
-                                .padding(horizontal = if (charCount > 4) 6.dp else 8.dp),
+                                .padding(horizontal = 8.dp),
                             contentAlignment = Alignment.Center
                         ) {
-                            Text(
-                                text = group.name,
-                                color = if (isActive) Color.White else Color(0xFFE2E8F0),
-                                fontSize = tabFontSize,
-                                fontWeight = if (isActive) FontWeight.Bold else FontWeight.Medium,
-                                maxLines = 1,
-                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-                            )
+                                Text(
+                                    text = group.name,
+                                    color = if (isActive) Color.White else Color(0xFFE2E8F0),
+                                    fontSize = 12.sp,
+                                    fontWeight = if (isActive) FontWeight.Bold else FontWeight.Medium
+                                )
                         }
                     }
 
@@ -221,53 +196,6 @@ fun TradingMultiViewScreen(
                             contentDescription = "保存为新分组",
                             tint = Color(0xFF34D399),
                             modifier = Modifier.size(16.dp)
-                        )
-                    }
-
-                    // 锁死/解锁右边浮动按钮 (相同大小 30.dp)
-                    Box(
-                        modifier = Modifier
-                            .size(30.dp)
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(if (isFloatingLocked) Color(0xFF1E1B4B) else Color(0xFF1E293B))
-                            .border(1.dp, if (isFloatingLocked) Color(0xFF6366F1) else Color(0xFF475569), RoundedCornerShape(6.dp))
-                            .clickable {
-                                isFloatingLocked = !isFloatingLocked
-                                floatingPrefs.edit().putBoolean("floating_locked", isFloatingLocked).apply()
-                            },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = if (isFloatingLocked) Icons.Default.Lock else Icons.Default.LockOpen,
-                            contentDescription = if (isFloatingLocked) "解锁右侧浮动按钮" else "锁定右侧浮动按钮",
-                            tint = if (isFloatingLocked) Color(0xFF818CF8) else Color(0xFF94A3B8),
-                            modifier = Modifier.size(14.dp)
-                        )
-                    }
-
-                    // 保存当前所有标签页内所有窗口当前网址按钮 (单击保存，长按弹出重启app弹窗)
-                    Box(
-                        modifier = Modifier
-                            .size(30.dp)
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(Color(0xFF1E293B))
-                            .border(1.dp, Color(0xFF475569), RoundedCornerShape(6.dp))
-                            .combinedClickable(
-                                onClick = {
-                                    val count = viewModel.saveAllTabsCurrentUrls(context)
-                                    android.widget.Toast.makeText(context, "已成功保存全部标签页所有窗口当前网址", android.widget.Toast.LENGTH_SHORT).show()
-                                },
-                                onLongClick = {
-                                    showRestartAppDialog = true
-                                }
-                            ),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Save,
-                            contentDescription = "保存所有标签页网址 (长按重启应用)",
-                            tint = Color(0xFF38BDF8),
-                            modifier = Modifier.size(15.dp)
                         )
                     }
                 }
@@ -348,11 +276,153 @@ fun TradingMultiViewScreen(
                             }
                         }
                     }
+                }
 
-                    // 全局缩放按钮：紧跟在第四个最大化和隐藏窗口按钮后面 (长度改大1.5倍：45dp x 30dp)
+                // 新增：3个自定义视窗快捷预设按钮组 (单击秒切，长按自定义名称和选择显示视窗)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    currentTabPresets.forEach { preset ->
+                        val isPresetActive = uiState.windows.all { win ->
+                            if (preset.visibleIds.contains(win.id)) !win.isHidden else win.isHidden
+                        }
+                        Box(
+                            modifier = Modifier
+                                .height(30.dp)
+                                .defaultMinSize(minWidth = 36.dp)
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(
+                                    if (isPresetActive) Color(0xFF0369A1).copy(alpha = 0.4f)
+                                    else Color(0xFF1E293B)
+                                )
+                                .border(
+                                    width = 1.dp,
+                                    color = if (isPresetActive) Color(0xFF38BDF8) else Color(0xFF334155),
+                                    shape = RoundedCornerShape(6.dp)
+                                )
+                                .combinedClickable(
+                                    onClick = {
+                                        uiState.windows.forEach { win ->
+                                            if (preset.visibleIds.contains(win.id)) {
+                                                viewModel.restoreWindow(win.id, context)
+                                            } else {
+                                                viewModel.hideWindow(win.id, context)
+                                            }
+                                        }
+                                    },
+                                    onLongClick = {
+                                        editingPreset = preset
+                                    }
+                                )
+                                .padding(horizontal = 6.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = preset.name,
+                                color = if (isPresetActive) Color(0xFF38BDF8) else Color(0xFFCBD5E1),
+                                fontSize = 11.sp,
+                                fontWeight = if (isPresetActive) FontWeight.Bold else FontWeight.Medium
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.width(6.dp))
+
+                // ================= 油猴快捷 3 视窗动作组 (隐藏画线 · 磁力吸附 · 翻转K线 · 全局缩放 · 缩放锁定) =================
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    // T. 周期选择 (T字按钮)
                     Box(
                         modifier = Modifier
-                            .size(width = 45.dp, height = 30.dp)
+                            .size(30.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(
+                                if (showTimeframeDialog) Color(0xFF0284C7)
+                                else Color(0xFF1E293B)
+                            )
+                            .border(
+                                width = 1.dp,
+                                color = if (showTimeframeDialog) Color(0xFF38BDF8) else Color(0xFF334155),
+                                shape = RoundedCornerShape(6.dp)
+                            )
+                            .clickable { showTimeframeDialog = true },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "T",
+                            color = if (showTimeframeDialog) Color.White else Color(0xFF38BDF8),
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    // 1. 隐藏/恢复画线 (Ctrl+Alt+H)：单击直接执行(0ms延迟)，长按弹出选择窗口
+                    Box(
+                        modifier = Modifier
+                            .size(30.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(
+                                if (showHideDrawingsDialog) Color(0xFF0284C7)
+                                else Color(0xFF1E293B)
+                            )
+                            .border(
+                                width = 1.dp,
+                                color = if (showHideDrawingsDialog) Color(0xFF38BDF8) else Color(0xFF334155),
+                                shape = RoundedCornerShape(6.dp)
+                            )
+                            .combinedClickable(
+                                onClick = { viewModel.triggerHideDrawings(delayMs = 0L, context = context) },
+                                onLongClick = { showHideDrawingsDialog = true }
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.VisibilityOff,
+                            contentDescription = "隐藏/恢复画线",
+                            tint = if (showHideDrawingsDialog) Color.White else Color(0xFF38BDF8),
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+
+                    // 2. 磁力吸附切换 (Magnet / Ctrl)：内部显示“磁吸”汉字，单击直接执行(0ms延迟)，长按弹出选择窗口
+                    val activeMagnetWin = uiState.windows.find { it.isMagnetActive }
+                    val isAnyMagnetActive = activeMagnetWin != null
+                    Box(
+                        modifier = Modifier
+                            .size(30.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(
+                                if (showMagnetDialog) Color(0xFFE11D48)
+                                else if (isAnyMagnetActive) Color(0xFFE11D48).copy(alpha = 0.35f)
+                                else Color(0xFF1E293B)
+                            )
+                            .border(
+                                width = 1.dp,
+                                color = if (showMagnetDialog) Color.White else if (isAnyMagnetActive) Color(0xFFFB7185) else Color(0xFF334155),
+                                shape = RoundedCornerShape(6.dp)
+                            )
+                            .combinedClickable(
+                                onClick = { viewModel.triggerToggleMagnet(delayMs = 0L, context = context) },
+                                onLongClick = { showMagnetDialog = true }
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "磁吸",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (showMagnetDialog) Color.White else if (isAnyMagnetActive) Color(0xFFFB7185) else Color(0xFFCBD5E1)
+                        )
+                    }
+
+                    // 4. 全局缩放按钮：单击循环切换固定分辨率基准，长按弹出全局缩放与分辨率选择对话框
+                    Box(
+                        modifier = Modifier
+                            .size(30.dp)
                             .clip(RoundedCornerShape(6.dp))
                             .background(
                                 if (showGlobalZoomDialog) Color(0xFF0284C7)
@@ -377,44 +447,41 @@ fun TradingMultiViewScreen(
                         )
                     }
 
-                    // 禁止网页自动放大按钮：紧跟在全局缩放按钮后面 (45dp x 30dp)
-                    // 用于彻底阻断 TradingView 搜索品种、选择周期、打开指标设置弹窗时的自动放大
-                    Box(
-                        modifier = Modifier
-                            .size(width = 45.dp, height = 30.dp)
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(
-                                if (uiState.isAutoZoomLocked) Color(0xFF065F46)
-                                else Color(0xFF1E293B)
-                            )
-                            .border(
-                                width = 1.dp,
-                                color = if (uiState.isAutoZoomLocked) Color(0xFF10B981) else Color(0xFF334155),
-                                shape = RoundedCornerShape(6.dp)
-                            )
-                            .clickable { viewModel.toggleAutoZoomLock(context) },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = if (uiState.isAutoZoomLocked) Icons.Default.Lock else Icons.Default.LockOpen,
-                            contentDescription = if (uiState.isAutoZoomLocked) "已开启禁止自动放大 (输入/弹窗保持原比例)" else "已关闭锁定 (允许自由放大)",
-                            tint = if (uiState.isAutoZoomLocked) Color(0xFF34D399) else Color(0xFF94A3B8),
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
+
                 }
 
                 Spacer(modifier = Modifier.width(6.dp))
 
-                // 全局控制区 (全局刷新 + 网址配置 + 屏幕旋转，长度改大1.5倍：45dp x 30dp)
+                // 右侧：全局控制区 (全局刷新 + 网址配置 + 屏幕旋转，全部统一 30dp 高度)
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    // 全局一键刷新按钮：45dp x 30dp 方形，圆角 6dp
+                    // 版本与更新时间 (放在刷新按钮之前)
+                    Column(
+                        horizontalAlignment = Alignment.End,
+                        verticalArrangement = Arrangement.Center,
+                        modifier = Modifier.padding(end = 4.dp)
+                    ) {
+                        Text(
+                            text = "v2.7.0",
+                            color = Color(0xFF38BDF8),
+                            fontSize = 9.sp,
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "2026-10-29 20:00",
+                            color = Color(0xFF64748B),
+                            fontSize = 8.sp,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
+
+                    // 全局一键刷新按钮：标准 30dp x 30dp 方形，圆角 6dp
                     Box(
                         modifier = Modifier
-                            .size(width = 45.dp, height = 30.dp)
+                            .size(30.dp)
                             .clip(RoundedCornerShape(6.dp))
                             .background(Color(0xFF1E293B))
                             .border(1.dp, Color(0xFF334155), RoundedCornerShape(6.dp))
@@ -429,11 +496,11 @@ fun TradingMultiViewScreen(
                         )
                     }
 
-                    // 网址快捷导航与只读栏展开按钮：45dp x 30dp
+                    // 网址配置 (地址栏展开) 按钮：移到刷新和旋转中间
                     val isUrlBarExpanded = !uiState.isGlobalUrlCollapsed
                     Box(
                         modifier = Modifier
-                            .size(width = 45.dp, height = 30.dp)
+                            .size(30.dp)
                             .clip(RoundedCornerShape(6.dp))
                             .background(if (isUrlBarExpanded) Color(0xFF075985) else Color(0xFF1E293B))
                             .border(
@@ -445,17 +512,17 @@ fun TradingMultiViewScreen(
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
-                            imageVector = if (isUrlBarExpanded) Icons.Default.ExpandLess else Icons.Default.Language,
-                            contentDescription = "网址与快捷导航",
+                            imageVector = if (isUrlBarExpanded) Icons.Default.ExpandLess else Icons.Default.Settings,
+                            contentDescription = "配置网址",
                             tint = if (isUrlBarExpanded) Color.White else Color(0xFF38BDF8),
                             modifier = Modifier.size(15.dp)
                         )
                     }
 
-                    // 屏幕旋转按钮：45dp x 30dp 方形，圆角 6dp
+                    // 屏幕旋转按钮：标准 30dp x 30dp 方形，圆角 6dp
                     Box(
                         modifier = Modifier
-                            .size(width = 45.dp, height = 30.dp)
+                            .size(30.dp)
                             .clip(RoundedCornerShape(6.dp))
                             .background(Color(0xFF1E293B))
                             .border(1.dp, Color(0xFF334155), RoundedCornerShape(6.dp))
@@ -478,106 +545,6 @@ fun TradingMultiViewScreen(
                         )
                     }
                 }
-
-                Spacer(modifier = Modifier.width(6.dp))
-
-                // 油猴快捷 2 视窗动作组 (磁力吸附 · 翻转K线，长度改为现有的2倍: 60.dp x 30.dp)
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    // 2. 磁力吸附切换 (Magnet / Ctrl)：单击直接执行(0ms延迟)，长按弹出选择窗口，长度 60dp
-                    val activeMagnetWin = uiState.windows.find { it.isMagnetActive }
-                    val isAnyMagnetActive = activeMagnetWin != null
-                    Box(
-                        modifier = Modifier
-                            .width(60.dp)
-                            .height(30.dp)
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(
-                                if (showMagnetDialog) Color(0xFFE11D48)
-                                else if (isAnyMagnetActive) Color(0xFFE11D48).copy(alpha = 0.35f)
-                                else Color(0xFF1E293B)
-                            )
-                            .border(
-                                width = 1.dp,
-                                color = if (showMagnetDialog) Color.White else if (isAnyMagnetActive) Color(0xFFFB7185) else Color(0xFF334155),
-                                shape = RoundedCornerShape(6.dp)
-                            )
-                            .combinedClickable(
-                                onClick = { viewModel.triggerToggleMagnet(delayMs = 0L, context = context) },
-                                onLongClick = { showMagnetDialog = true }
-                            ),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.CenterFocusStrong,
-                            contentDescription = "磁力吸附切换",
-                            tint = if (showMagnetDialog) Color.White else if (isAnyMagnetActive) Color(0xFFFB7185) else Color(0xFFCBD5E1),
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
-
-                    // 3. 4图翻转 K线 (Alt+I)：默认0ms延迟，单击直接对全部3/4个窗口执行翻转，长按弹出选择窗口，长度 60dp
-
-                    Box(
-                        modifier = Modifier
-                            .width(60.dp)
-                            .height(30.dp)
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(
-                                when {
-                                    isInvertCooldownActive -> Color(0xFF1E293B).copy(alpha = 0.5f)
-                                    showInvertDialog -> Color(0xFF059669)
-                                    else -> Color(0xFF1E293B)
-                                }
-                            )
-                            .border(
-                                width = 1.dp,
-                                color = when {
-                                    isInvertCooldownActive -> Color(0xFF374151).copy(alpha = 0.5f)
-                                    showInvertDialog -> Color(0xFF34D399)
-                                    else -> Color(0xFF334155)
-                                },
-                                shape = RoundedCornerShape(6.dp)
-                            )
-                            .combinedClickable(
-                                onClick = {
-                                    if (isInvertCooldownActive) {
-                                        android.widget.Toast.makeText(context, "K线翻转按钮冷却中！剩余时间: ${cooldownText}", android.widget.Toast.LENGTH_SHORT).show()
-                                    } else {
-                                        viewModel.triggerInvert4Charts(delayMs = 0L, context = context)
-                                    }
-                                },
-                                onLongClick = {
-                                    if (isInvertCooldownActive) {
-                                        android.widget.Toast.makeText(context, "K线翻转按钮冷却中！剩余时间: ${cooldownText}", android.widget.Toast.LENGTH_SHORT).show()
-                                    } else {
-                                        showInvertDialog = true
-                                    }
-                                }
-                            ),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        if (isInvertCooldownActive) {
-                            Text(
-                                text = cooldownText,
-                                color = Color(0xFFEF4444),
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                fontFamily = FontFamily.Monospace
-                            )
-                        } else {
-                            Text(
-                                text = "4",
-                                color = if (showInvertDialog) Color.White else Color(0xFF34D399),
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
-                                fontFamily = FontFamily.Monospace
-                            )
-                        }
-                    }
-                }
             }
         }
 
@@ -598,38 +565,13 @@ fun TradingMultiViewScreen(
                         .padding(horizontal = 8.dp, vertical = 6.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    // 状态提示：地址栏已锁定
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Lock,
-                            contentDescription = null,
-                            tint = Color(0xFF10B981),
-                            modifier = Modifier.size(13.dp)
-                        )
-                        Text(
-                            text = "地址栏已锁定（禁止输入，仅限使用各视窗快捷按钮）",
-                            color = Color(0xFF94A3B8),
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Medium
-                        )
-                    }
-
-                    // 1. 各窗口详细网址与快捷操作 (若当前有窗口最大化，仅独占展示该最大化窗口；否则展示当前标签页所有活跃视窗)
-                    val displayedWindows = if (uiState.maximizedWindowId != null) {
-                        uiState.activeWindowsForGroup.filter { it.id == uiState.maximizedWindowId }
-                    } else {
-                        uiState.activeWindowsForGroup
-                    }
-
+                    // 1. 各窗口详细网址配置行 (当前标签页活跃视窗)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        displayedWindows.forEach { win ->
+                        uiState.activeWindowsForGroup.forEach { win ->
+                            var inputUrl by remember(win.currentUrl) { mutableStateOf(win.currentUrl) }
                             Column(
                                 modifier = Modifier
                                     .weight(1f)
@@ -652,19 +594,13 @@ fun TradingMultiViewScreen(
                                             modifier = Modifier
                                                 .size(6.dp)
                                                 .clip(CircleShape)
-                                                .background(if (uiState.maximizedWindowId != null) Color(0xFF38BDF8) else Color(0xFF10B981))
-                                        )
-                                        Text(
-                                            text = if (uiState.maximizedWindowId != null) "窗口 ${win.id} (当前全屏独占)" else "窗口 ${win.id}",
-                                            color = if (uiState.maximizedWindowId != null) Color(0xFF38BDF8) else Color(0xFF94A3B8),
-                                            fontSize = 11.sp,
-                                            fontWeight = FontWeight.SemiBold
+                                                .background(Color(0xFF10B981))
                                         )
                                     }
 
                                     Row(
                                         verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
                                     ) {
                                         // 窗口单独刷新
                                         Icon(
@@ -672,128 +608,60 @@ fun TradingMultiViewScreen(
                                             contentDescription = "刷新",
                                             tint = Color(0xFF94A3B8),
                                             modifier = Modifier
-                                                .size(14.dp)
+                                                .size(13.dp)
                                                 .clickable { viewModel.reload(win.id) }
                                         )
 
-                                        // TV 快捷按钮 (单击直接加载 TradingView 官网/图表)
+                                        // 快捷前往
                                         Box(
                                             modifier = Modifier
                                                 .clip(RoundedCornerShape(3.dp))
-                                                .background(Color(0xFF0284C7)) // 深天蓝
+                                                .background(Color(0xFF0284C7))
                                                 .clickable {
-                                                    viewModel.navigateToUrl(win.id, "https://www.tradingview.com")
+                                                    if (inputUrl.isNotBlank()) {
+                                                        viewModel.navigateToUrl(win.id, inputUrl)
+                                                    }
+                                                    focusManager.clearFocus()
                                                 }
-                                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                                                .padding(horizontal = 5.dp, vertical = 1.dp)
                                         ) {
-                                            Text(
-                                                text = "TV",
-                                                color = Color.White,
-                                                fontSize = 10.sp,
-                                                fontWeight = FontWeight.Bold
-                                            )
-                                        }
-
-                                        // AI Studio 快捷按钮 (单击直接加载 Google AI Studio 官网)
-                                        Box(
-                                            modifier = Modifier
-                                                .clip(RoundedCornerShape(3.dp))
-                                                .background(Color(0xFF4F46E5)) // 靛蓝 / AI 质感蓝紫
-                                                .border(0.5.dp, Color(0xFF6366F1), RoundedCornerShape(3.dp))
-                                                .clickable {
-                                                    viewModel.navigateToUrl(win.id, "https://aistudio.google.com")
-                                                }
-                                                .padding(horizontal = 6.dp, vertical = 2.dp)
-                                        ) {
-                                            Text(
-                                                text = "AI Studio",
-                                                color = Color.White,
-                                                fontSize = 10.sp,
-                                                fontWeight = FontWeight.Bold
-                                            )
-                                        }
-
-                                        // GitHub 快捷按钮 (单击直接加载 GitHub 官网)
-                                        Box(
-                                            modifier = Modifier
-                                                .clip(RoundedCornerShape(3.dp))
-                                                .background(Color(0xFF334155)) // GitHub 极客深灰
-                                                .border(0.5.dp, Color(0xFF475569), RoundedCornerShape(3.dp))
-                                                .clickable {
-                                                    viewModel.navigateToUrl(win.id, "https://github.com")
-                                                }
-                                                .padding(horizontal = 6.dp, vertical = 2.dp)
-                                        ) {
-                                            Text(
-                                                text = "GitHub",
-                                                color = Color.White,
-                                                fontSize = 10.sp,
-                                                fontWeight = FontWeight.Bold
-                                            )
+                                            Text(text = "前往", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold)
                                         }
                                     }
                                 }
 
-                                // 只读锁定网址展示栏 (禁止手动打字输入，带后退/前进按钮与 🔒 锁图标，纯展示当前视窗正在加载的 URL)
+                                // 极简 URL 输入栏
                                 Box(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .height(24.dp)
                                         .clip(RoundedCornerShape(3.dp))
-                                        .background(Color(0xFF131B2A))
-                                        .border(1.dp, Color(0xFF1E293B), RoundedCornerShape(3.dp))
+                                        .background(Color(0xFF161E2E))
+                                        .border(1.dp, Color(0xFF334155), RoundedCornerShape(3.dp))
                                         .padding(horizontal = 4.dp),
                                     contentAlignment = Alignment.CenterStart
                                 ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                    ) {
-                                        // 后退按钮
-                                        Box(
-                                            modifier = Modifier
-                                                .clip(RoundedCornerShape(2.dp))
-                                                .clickable { viewModel.goBack(win.id) }
-                                                .padding(horizontal = 2.dp, vertical = 2.dp)
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.ArrowBack,
-                                                contentDescription = "后退",
-                                                tint = Color(0xFF94A3B8),
-                                                modifier = Modifier.size(12.dp)
-                                            )
-                                        }
-
-                                        // 前进按钮
-                                        Box(
-                                            modifier = Modifier
-                                                .clip(RoundedCornerShape(2.dp))
-                                                .clickable { viewModel.goForward(win.id) }
-                                                .padding(horizontal = 2.dp, vertical = 2.dp)
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.Default.ArrowForward,
-                                                contentDescription = "前进",
-                                                tint = Color(0xFF94A3B8),
-                                                modifier = Modifier.size(12.dp)
-                                            )
-                                        }
-
-                                        Icon(
-                                            imageVector = Icons.Default.Lock,
-                                            contentDescription = "只读锁定",
-                                            tint = Color(0xFF64748B),
-                                            modifier = Modifier.size(11.dp)
-                                        )
-                                        Text(
-                                            text = win.currentUrl.ifBlank { "https://www.tradingview.com" },
-                                            color = Color(0xFF94A3B8),
+                                    BasicTextField(
+                                        value = inputUrl,
+                                        onValueChange = { inputUrl = it },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        singleLine = true,
+                                        textStyle = TextStyle(
+                                            color = Color(0xFFF1F5F9),
                                             fontSize = 10.sp,
-                                            fontFamily = FontFamily.Monospace,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
+                                            fontFamily = FontFamily.Monospace
+                                        ),
+                                        cursorBrush = SolidColor(Color(0xFF38BDF8)),
+                                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go, keyboardType = KeyboardType.Uri),
+                                        keyboardActions = KeyboardActions(
+                                            onGo = {
+                                                if (inputUrl.isNotBlank()) {
+                                                    viewModel.navigateToUrl(win.id, inputUrl)
+                                                }
+                                                focusManager.clearFocus()
+                                            }
                                         )
-                                    }
+                                    )
                                 }
                             }
                         }
@@ -835,34 +703,22 @@ fun TradingMultiViewScreen(
         }
     }
 
-        // 半圆外形定义 (半径 22dp 与回到最新K线按钮一致，向左弧形凸出，平贴固定在屏幕最右侧)
-        val rightEdgeSemiCircleShape = RoundedCornerShape(
-            topStart = 22.dp,
-            bottomStart = 22.dp,
-            topEnd = 0.dp,
-            bottomEnd = 0.dp
-        )
-
-        // 5. 屏幕最右侧蓝色半圆浮动按钮：快捷移至最新K线 (只能上下移动，不能左右移动，用蓝色)
+        // 5. 屏幕右侧浮动快捷移至最新K线按钮 (Alt+Shift+Right Arrow)，支持自由拖动
         Box(
             modifier = Modifier
-                .offset { IntOffset(0, latestKlineFloatingButtonOffsetY.toInt()) }
+                .offset { IntOffset(floatingButtonOffset.x.toInt(), floatingButtonOffset.y.toInt()) }
                 .align(Alignment.CenterEnd)
-                .size(width = 24.dp, height = 44.dp)
-                .shadow(elevation = 6.dp, shape = rightEdgeSemiCircleShape)
-                .clip(rightEdgeSemiCircleShape)
-                .background(Color(0xFF0284C7)) // 蓝色
-                .border(1.dp, Color(0xFF38BDF8), rightEdgeSemiCircleShape)
-                .pointerInput(isFloatingLocked) {
-                    if (!isFloatingLocked) {
-                        detectDragGestures(
-                            onDrag = { change, dragAmount ->
-                                change.consume()
-                                latestKlineFloatingButtonOffsetY += dragAmount.y
-                            },
-                            onDragEnd = {
-                                floatingPrefs.edit().putFloat("floating_latest_kline_offset_y", latestKlineFloatingButtonOffsetY).apply()
-                            }
+                .padding(end = 12.dp)
+                .size(44.dp)
+                .clip(CircleShape)
+                .background(Color(0xFF0284C7).copy(alpha = 0.85f))
+                .border(1.5.dp, Color.White, CircleShape)
+                .pointerInput(Unit) {
+                    detectDragGestures { change, dragAmount ->
+                        change.consume()
+                        floatingButtonOffset = Offset(
+                            x = floatingButtonOffset.x + dragAmount.x,
+                            y = floatingButtonOffset.y + dragAmount.y
                         )
                     }
                 }
@@ -880,191 +736,9 @@ fun TradingMultiViewScreen(
                 imageVector = Icons.Default.FastForward,
                 contentDescription = "移至最新K线",
                 tint = Color.White,
-                modifier = Modifier
-                    .padding(start = 2.dp)
-                    .size(17.dp)
+                modifier = Modifier.size(20.dp)
             )
         }
-
-        // 6. 屏幕最右侧绿色半圆浮动按钮：鼠标触控板开关 (只能上下移动，不能左右移动)
-        Box(
-            modifier = Modifier
-                .offset { IntOffset(0, mouseFloatingButtonOffsetY.toInt()) }
-                .align(Alignment.CenterEnd)
-                .size(width = 24.dp, height = 44.dp)
-                .shadow(elevation = 6.dp, shape = rightEdgeSemiCircleShape)
-                .clip(rightEdgeSemiCircleShape)
-                .background(Color(0xFF10B981)) // 绿色
-                .border(1.dp, Color(0xFF34D399), rightEdgeSemiCircleShape)
-                .pointerInput(isFloatingLocked) {
-                    if (!isFloatingLocked) {
-                        detectDragGestures(
-                            onDrag = { change, dragAmount ->
-                                change.consume()
-                                mouseFloatingButtonOffsetY += dragAmount.y
-                            },
-                            onDragEnd = {
-                                floatingPrefs.edit().putFloat("floating_mouse_offset_y", mouseFloatingButtonOffsetY).apply()
-                            }
-                        )
-                    }
-                }
-                .clickable {
-                    viewModel.toggleTrackpad()
-                },
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                imageVector = Icons.Default.Mouse,
-                contentDescription = "虚拟触控板/光标",
-                tint = Color.White,
-                modifier = Modifier
-                    .padding(start = 2.dp)
-                    .size(15.dp)
-            )
-        }
-
-        // 7. 屏幕最右侧白色半圆浮动按钮：K线周期切换 (只能上下移动，不能左右移动)
-        Box(
-            modifier = Modifier
-                .offset { IntOffset(0, timeframeFloatingButtonOffsetY.toInt()) }
-                .align(Alignment.CenterEnd)
-                .size(width = 24.dp, height = 44.dp)
-                .shadow(elevation = 6.dp, shape = rightEdgeSemiCircleShape)
-                .clip(rightEdgeSemiCircleShape)
-                .background(Color.White) // 白色
-                .border(1.dp, Color(0xFFCBD5E1), rightEdgeSemiCircleShape)
-                .pointerInput(isFloatingLocked) {
-                    if (!isFloatingLocked) {
-                        detectDragGestures(
-                            onDrag = { change, dragAmount ->
-                                change.consume()
-                                timeframeFloatingButtonOffsetY += dragAmount.y
-                            },
-                            onDragEnd = {
-                                floatingPrefs.edit().putFloat("floating_timeframe_offset_y", timeframeFloatingButtonOffsetY).apply()
-                            }
-                        )
-                    }
-                }
-                .clickable {
-                    showTimeframeDialog = true
-                },
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                text = "T",
-                color = Color(0xFF0F172A),
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Black,
-                modifier = Modifier.padding(start = 2.dp)
-            )
-        }
-
-        // 7.5. 屏幕最右侧深黄色半圆浮动按钮：隐藏/恢复画图 (只能上下移动，不能左右移动，用深黄色)
-        Box(
-            modifier = Modifier
-                .offset { IntOffset(0, hideDrawingsFloatingButtonOffsetY.toInt()) }
-                .align(Alignment.CenterEnd)
-                .size(width = 24.dp, height = 44.dp)
-                .shadow(elevation = 6.dp, shape = rightEdgeSemiCircleShape)
-                .clip(rightEdgeSemiCircleShape)
-                .background(Color(0xFFD97706)) // 深黄色 (Amber 600)
-                .border(1.dp, Color(0xFFFBBF24), rightEdgeSemiCircleShape) // 亮黄边框
-                .pointerInput(isFloatingLocked) {
-                    if (!isFloatingLocked) {
-                        detectDragGestures(
-                            onDrag = { change, dragAmount ->
-                                change.consume()
-                                hideDrawingsFloatingButtonOffsetY += dragAmount.y
-                            },
-                            onDragEnd = {
-                                floatingPrefs.edit().putFloat("floating_hidedrawings_offset_y", hideDrawingsFloatingButtonOffsetY).apply()
-                            }
-                        )
-                    }
-                }
-                .combinedClickable(
-                    onClick = {
-                        viewModel.triggerHideDrawings(delayMs = 0L, context = context)
-                    },
-                    onLongClick = {
-                        showHideDrawingsDialog = true
-                    }
-                ),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                imageVector = Icons.Default.VisibilityOff,
-                contentDescription = "隐藏/恢复画线",
-                tint = Color.White,
-                modifier = Modifier
-                    .padding(start = 2.dp)
-                    .size(15.dp)
-            )
-        }
-
-        // 7.8. 屏幕最右侧紫色半圆浮动按钮：K线翻转 (只能上下移动，不能左右移动，紫色，“翻”字)
-        Box(
-            modifier = Modifier
-                .offset { IntOffset(0, invertFloatingButtonOffsetY.toInt()) }
-                .align(Alignment.CenterEnd)
-                .size(width = 24.dp, height = 44.dp)
-                .shadow(elevation = 6.dp, shape = rightEdgeSemiCircleShape)
-                .clip(rightEdgeSemiCircleShape)
-                .background(
-                    if (isInvertCooldownActive) Color(0xFF475569) else Color(0xFF8B5CF6) // 紫色，冷却中置灰
-                )
-                .border(
-                    1.dp,
-                    if (isInvertCooldownActive) Color(0xFF64748B) else Color(0xFFA78BFA),
-                    rightEdgeSemiCircleShape
-                )
-                .pointerInput(isFloatingLocked) {
-                    if (!isFloatingLocked) {
-                        detectDragGestures(
-                            onDrag = { change, dragAmount ->
-                                change.consume()
-                                invertFloatingButtonOffsetY += dragAmount.y
-                            },
-                            onDragEnd = {
-                                floatingPrefs.edit().putFloat("floating_invert_offset_y", invertFloatingButtonOffsetY).apply()
-                            }
-                        )
-                    }
-                }
-                .combinedClickable(
-                    onClick = {
-                        if (isInvertCooldownActive) {
-                            android.widget.Toast.makeText(context, "K线翻转按钮冷却中！剩余时间: ${cooldownText}", android.widget.Toast.LENGTH_SHORT).show()
-                        } else {
-                            viewModel.triggerInvert4Charts(delayMs = 0L, context = context)
-                        }
-                    },
-                    onLongClick = {
-                        if (isInvertCooldownActive) {
-                            android.widget.Toast.makeText(context, "K线翻转按钮冷却中！剩余时间: ${cooldownText}", android.widget.Toast.LENGTH_SHORT).show()
-                        } else {
-                            showInvertDialog = true
-                        }
-                    }
-                ),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                text = "翻",
-                color = if (isInvertCooldownActive) Color(0xFFCBD5E1) else Color.White,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(start = 2.dp)
-            )
-        }
-
-        // 8. 原生虚拟鼠标与触控板浮层
-        VirtualMouseOverlay(
-            isEnabled = uiState.isTrackpadEnabled,
-            onClose = { viewModel.toggleTrackpad() }
-        )
     }
 
     if (showSaveDialog) {
@@ -1087,7 +761,7 @@ fun TradingMultiViewScreen(
                 targetGroupForConfig = null
             },
             onConfirm = { newName, newCount ->
-                viewModel.updateGroupConfig(targetGroupForConfig!!.id, newName, newCount, context)
+                viewModel.updateGroupWindowCount(targetGroupForConfig!!.id, newCount, context)
                 showGroupConfigDialog = false
                 targetGroupForConfig = null
             }
@@ -1309,136 +983,124 @@ fun TradingMultiViewScreen(
         )
     }
 
-    if (showRestartAppDialog) {
-        AlertDialog(
-            onDismissRequest = { showRestartAppDialog = false },
-            title = {
-                Text(
-                    text = "重启应用",
-                    color = Color.White,
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Bold
-                )
-            },
-            text = {
-                Text(
-                    text = "是否确认重启应用？\n（系统将自动保存所有标签页内所有窗口的最新实时网址与设置，并重新加载）",
-                    color = Color(0xFFCBD5E1),
-                    fontSize = 13.sp
-                )
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        viewModel.saveAllTabsCurrentUrls(context)
-                        showRestartAppDialog = false
-                        val pm = context.packageManager
-                        val intent = pm.getLaunchIntentForPackage(context.packageName)?.apply {
-                            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_CLEAR_TASK)
-                        }
-                        if (intent != null) {
-                            context.startActivity(intent)
-                            Runtime.getRuntime().exit(0)
-                        }
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626))
-                ) {
-                    Text("立即重启", color = Color.White, fontWeight = FontWeight.Bold)
-                }
-            },
-            dismissButton = {
-                OutlinedButton(
-                    onClick = { showRestartAppDialog = false },
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF94A3B8))
-                ) {
-                    Text("取消")
-                }
-            },
-            containerColor = Color(0xFF1E293B)
-        )
-    }
+    editingPreset?.let { targetPreset ->
+        var tempName by remember(targetPreset) { mutableStateOf(targetPreset.name) }
+        var tempVisibleIds by remember(targetPreset) { mutableStateOf(targetPreset.visibleIds.toSet()) }
+        var errorMessage by remember { mutableStateOf<String?>(null) }
 
-    // 15分钟停留满5秒倒计时翻转不可取消弹窗
-    val showCountdown by viewModel.showInvertCountdownDialog.collectAsState()
-    val countdownSeconds by viewModel.invertCountdownSeconds.collectAsState()
-
-    if (showCountdown) {
-        Dialog(
-            onDismissRequest = {}, // 不允许点击外部或返回键取消
-            properties = DialogProperties(
-                dismissOnBackPress = false,
-                dismissOnClickOutside = false,
-                usePlatformDefaultWidth = false
-            )
-        ) {
+        Dialog(onDismissRequest = { editingPreset = null }) {
             Card(
-                colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1B4B)), // 靛蓝紫色偏警示底色
-                border = BorderStroke(2.dp, Color(0xFFEF4444)), // 亮红边框
-                shape = RoundedCornerShape(16.dp),
-                modifier = Modifier
-                    .width(360.dp)
-                    .padding(16.dp)
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A)),
+                border = BorderStroke(1.dp, Color(0xFF334155)),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.width(320.dp).padding(16.dp)
             ) {
                 Column(
-                    modifier = Modifier.padding(20.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .size(56.dp)
-                            .clip(CircleShape)
-                            .background(Color(0xFFFEF2F2)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Warning,
-                            contentDescription = "警报",
-                            tint = Color(0xFFEF4444),
-                            modifier = Modifier.size(32.dp)
-                        )
-                    }
-
                     Text(
-                        text = "🚨 前台停留超时提醒",
-                        color = Color.White,
-                        fontSize = 18.sp,
+                        text = "⚙️ 配置快捷按钮 #${targetPreset.id}",
+                        color = Color(0xFF38BDF8),
+                        fontSize = 14.sp,
                         fontWeight = FontWeight.Bold
                     )
 
-                    Text(
-                        text = "当前标签页已在前台累计停留满 15 分钟！系统即将执行自动强制 K 线翻转干预程序。",
-                        color = Color(0xFFE2E8F0),
-                        fontSize = 13.sp,
-                        textAlign = TextAlign.Center,
-                        lineHeight = 18.sp
+                    OutlinedTextField(
+                        value = tempName,
+                        onValueChange = {
+                            if (it.length <= 8) {
+                                tempName = it
+                                errorMessage = null
+                            }
+                        },
+                        label = { Text("按钮名称 (自定义标识)") },
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Color(0xFF38BDF8),
+                            unfocusedBorderColor = Color(0xFF334155),
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White
+                        ),
+                        modifier = Modifier.fillMaxWidth()
                     )
 
-                    // 倒计时特大红字圈
-                    Box(
-                        modifier = Modifier
-                            .size(72.dp)
-                            .clip(CircleShape)
-                            .background(Color(0xFFEF4444).copy(alpha = 0.2f))
-                            .border(2.dp, Color(0xFFEF4444), CircleShape),
-                        contentAlignment = Alignment.Center
+                    Text(
+                        text = "选择显示的视窗：",
+                        color = Color(0xFF94A3B8),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Text(
-                            text = countdownSeconds.toString(),
-                            color = Color(0xFFFCA5A5),
-                            fontSize = 32.sp,
-                            fontWeight = FontWeight.ExtraBold
-                        )
+                        (1..uiState.currentWindowCount).forEach { winId ->
+                            val isChecked = tempVisibleIds.contains(winId)
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(if (isChecked) Color(0xFF0284C7) else Color(0xFF1E293B))
+                                    .border(1.dp, if (isChecked) Color(0xFF38BDF8) else Color(0xFF334155), RoundedCornerShape(6.dp))
+                                    .clickable {
+                                        errorMessage = null
+                                        tempVisibleIds = if (isChecked) tempVisibleIds - winId else tempVisibleIds + winId
+                                    }
+                                    .padding(vertical = 8.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "W$winId",
+                                    color = if (isChecked) Color.White else Color(0xFF94A3B8),
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
                     }
 
-                    Text(
-                        text = "将在 $countdownSeconds 秒后自动强制翻转 K 线图\n此过程不可撤销且之后将禁用翻转按钮 10 分钟",
-                        color = Color(0xFFF87171),
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium,
-                        textAlign = TextAlign.Center,
-                        lineHeight = 16.sp
-                    )
+                    errorMessage?.let {
+                        Text(text = it, color = Color(0xFFEF4444), fontSize = 11.sp)
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        TextButton(onClick = { editingPreset = null }) {
+                            Text("取消", color = Color(0xFF94A3B8))
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Button(
+                            onClick = {
+                                if (tempVisibleIds.isEmpty()) {
+                                    errorMessage = "至少保留一个视窗显示"
+                                    return@Button
+                                }
+                                val updated = targetPreset.copy(
+                                    name = tempName.trim().ifEmpty { "预设${targetPreset.id}" },
+                                    visibleIds = tempVisibleIds.toList().sorted()
+                                )
+                                val groupPresets = (windowPresetsMap[uiState.activeGroupId] ?: defaultPresets).map {
+                                    if (it.id == updated.id) updated else it
+                                }
+                                windowPresetsMap = windowPresetsMap + (uiState.activeGroupId to groupPresets)
+                                uiState.windows.forEach { win ->
+                                    if (updated.visibleIds.contains(win.id)) {
+                                        viewModel.restoreWindow(win.id, context)
+                                    } else {
+                                        viewModel.hideWindow(win.id, context)
+                                    }
+                                }
+                                editingPreset = null
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7))
+                        ) {
+                            Text("保存并应用", color = Color.White)
+                        }
+                    }
                 }
             }
         }
@@ -1548,149 +1210,133 @@ fun TimeframeSyncDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
-        Box(
+        Card(
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF111827)),
+            border = BorderStroke(1.dp, Color(0xFF374151)),
+            shape = RoundedCornerShape(12.dp),
             modifier = Modifier
-                .fillMaxSize()
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
-                    onClick = onDismiss
-                )
-                .padding(bottom = 24.dp, end = 24.dp),
-            contentAlignment = Alignment.BottomEnd
+                .width(320.dp)
+                .padding(16.dp)
         ) {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = Color(0xFF111827)),
-                border = BorderStroke(1.5.dp, Color(0xFF374151)),
-                shape = RoundedCornerShape(14.dp),
-                modifier = Modifier
-                    .width(322.dp)
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                        onClick = {} // 阻止点击卡片内部时关闭对话框
-                    )
+            Column(
+                modifier = Modifier.padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                // 窗口目标选择按钮
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // 窗口目标选择按钮
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        (1..windowCount).forEach { winId ->
-                            val isSelected = selectedWindows.contains(winId)
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(if (isSelected) Color(0xFF1E293B) else Color(0xFF1F2937))
-                                    .border(1.5.dp, if (isSelected) Color(0xFF2563EB) else Color(0xFF374151), RoundedCornerShape(8.dp))
-                                    .clickable {
-                                        selectedWindows = if (isSelected) {
-                                            if (selectedWindows.size > 1) selectedWindows - winId else selectedWindows
-                                        } else {
-                                            selectedWindows + winId
-                                        }
-                                    }
-                                    .padding(vertical = 8.dp),
-                                horizontalArrangement = Arrangement.Center
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(16.dp)
-                                        .clip(RoundedCornerShape(4.dp))
-                                        .background(if (isSelected) Color(0xFF2563EB) else Color(0xFF4B5563))
-                                        .border(1.dp, if (isSelected) Color(0xFF2563EB) else Color(0xFF6B7280), RoundedCornerShape(4.dp)),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    if (isSelected) {
-                                        Text(
-                                            text = "✓",
-                                            color = Color.White,
-                                            fontSize = 10.sp,
-                                            fontWeight = FontWeight.Bold
-                                        )
+                    (1..windowCount).forEach { winId ->
+                        val isSelected = selectedWindows.contains(winId)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(if (isSelected) Color(0xFF1E293B) else Color(0xFF1F2937))
+                                .border(1.dp, if (isSelected) Color(0xFF2563EB) else Color(0xFF374151), RoundedCornerShape(6.dp))
+                                .clickable {
+                                    selectedWindows = if (isSelected) {
+                                        if (selectedWindows.size > 1) selectedWindows - winId else selectedWindows
+                                    } else {
+                                        selectedWindows + winId
                                     }
                                 }
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = "窗口 $winId",
-                                    color = if (isSelected) Color.White else Color(0xFF9CA3AF),
-                                    fontSize = 13.sp,
-                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
-                                )
-                            }
-                        }
-                    }
-
-                    // 快捷分钟周期行 (保持不变：3m 至 30m)
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        listOf("3m", "5m", "10m", "15m", "30m").forEach { tf ->
+                                .padding(vertical = 6.dp),
+                            horizontalArrangement = Arrangement.Center
+                        ) {
                             Box(
                                 modifier = Modifier
-                                    .weight(1f)
-                                    .height(50.dp)
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(Color(0xFF1F2937))
-                                    .border(1.dp, Color(0xFF374151), RoundedCornerShape(8.dp))
-                                    .clickable { onSelectTimeframe(tf, selectedWindows) },
+                                    .size(12.dp)
+                                    .clip(RoundedCornerShape(3.dp))
+                                    .background(if (isSelected) Color(0xFF2563EB) else Color(0xFF4B5563))
+                                    .border(1.dp, if (isSelected) Color(0xFF2563EB) else Color(0xFF6B7280), RoundedCornerShape(3.dp)),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Text(text = tf, color = Color(0xFFE2E8F0), fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                if (isSelected) {
+                                    Text(
+                                        text = "✓",
+                                        color = Color.White,
+                                        fontSize = 8.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
                             }
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "窗口 $winId",
+                                color = if (isSelected) Color.White else Color(0xFF9CA3AF),
+                                fontSize = 10.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                            )
                         }
                     }
+                }
 
-                    // 快捷小时周期行 (从右到左为 1h 到 12h，即从左到右：12h 至 1h)
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        listOf("12h", "6h", "4h", "3h", "2h", "1h").forEach { tf ->
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(50.dp)
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(Color(0xFF1F2937))
-                                    .border(1.dp, Color(0xFF374151), RoundedCornerShape(8.dp))
-                                    .clickable { onSelectTimeframe(tf, selectedWindows) },
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(text = tf, color = Color(0xFFE2E8F0), fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                            }
+                // 快捷分钟周期行
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    listOf("3m", "5m", "10m", "15m", "30m").forEach { tf ->
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(26.dp)
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(Color(0xFF1F2937))
+                                .border(0.5.dp, Color(0xFF374151), RoundedCornerShape(4.dp))
+                                .clickable { onSelectTimeframe(tf, selectedWindows) },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(text = tf, color = Color(0xFFE2E8F0), fontSize = 10.sp, fontWeight = FontWeight.Medium)
                         }
                     }
+                }
 
-                    // 快捷日线/周月周期行 (从右到左为 1D 到 1M，即从左到右：1M 至 1D)
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        listOf("1M", "1W", "3D", "2D", "1D").forEach { tf ->
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(50.dp)
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(Color(0xFF1F2937))
-                                    .border(1.dp, Color(0xFF374151), RoundedCornerShape(8.dp))
-                                    .clickable { onSelectTimeframe(tf, selectedWindows) },
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(text = tf, color = Color(0xFFE2E8F0), fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                            }
+                // 快捷小时周期行
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    listOf("1h", "2h", "3h", "4h", "6h", "12h").forEach { tf ->
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(26.dp)
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(Color(0xFF1F2937))
+                                .border(0.5.dp, Color(0xFF374151), RoundedCornerShape(4.dp))
+                                .clickable { onSelectTimeframe(tf, selectedWindows) },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(text = tf, color = Color(0xFFE2E8F0), fontSize = 10.sp, fontWeight = FontWeight.Medium)
+                        }
+                    }
+                }
+
+                // 快捷日线/周月周期行
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    listOf("1D", "2D", "3D", "1W", "1M").forEach { tf ->
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(26.dp)
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(Color(0xFF1F2937))
+                                .border(0.5.dp, Color(0xFF374151), RoundedCornerShape(4.dp))
+                                .clickable { onSelectTimeframe(tf, selectedWindows) },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(text = tf, color = Color(0xFFE2E8F0), fontSize = 10.sp, fontWeight = FontWeight.Medium)
                         }
                     }
                 }
@@ -1720,7 +1366,7 @@ fun GroupConfigDialog(
             border = BorderStroke(1.dp, Color(0xFF374151)),
             shape = RoundedCornerShape(14.dp),
             modifier = Modifier
-                .width(420.dp)
+                .width(360.dp)
                 .padding(16.dp)
         ) {
             Column(
@@ -1761,44 +1407,12 @@ fun GroupConfigDialog(
                     color = Color(0xFFE2E8F0)
                 )
 
-                // 3 个选项：2 个独立窗口 vs 3 个独立窗口 vs 4 个独立窗口
+                // 2 个选项：3 个独立窗口 vs 4 个独立窗口
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    // 2 窗口选项
-                    val is2 = selectedWindowCount == 2
-                    Column(
-                        modifier = Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(if (is2) Color(0xFF0C4A6E) else Color(0xFF1E293B))
-                            .border(
-                                1.5.dp,
-                                if (is2) Color(0xFF38BDF8) else Color(0xFF334155),
-                                RoundedCornerShape(8.dp)
-                            )
-                            .clickable {
-                                selectedWindowCount = 2
-                            }
-                            .padding(vertical = 10.dp, horizontal = 6.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        Text(
-                            text = "2 个独立窗口",
-                            fontSize = 12.sp,
-                            fontWeight = if (is2) FontWeight.Bold else FontWeight.Medium,
-                            color = if (is2) Color.White else Color(0xFFCBD5E1)
-                        )
-                        Text(
-                            text = "横向 2 联屏",
-                            fontSize = 10.sp,
-                            color = if (is2) Color(0xFFBAE6FD) else Color(0xFF64748B)
-                        )
-                    }
-
-                    // 3 窗口选项
+                    // 3 窗口选项：点击直接切换生效
                     val is3 = selectedWindowCount == 3
                     Column(
                         modifier = Modifier
@@ -1812,25 +1426,26 @@ fun GroupConfigDialog(
                             )
                             .clickable {
                                 selectedWindowCount = 3
+                                onConfirm(groupName, 3)
                             }
-                            .padding(vertical = 10.dp, horizontal = 6.dp),
+                            .padding(12.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
                         Text(
                             text = "3 个独立窗口",
-                            fontSize = 12.sp,
+                            fontSize = 13.sp,
                             fontWeight = if (is3) FontWeight.Bold else FontWeight.Medium,
                             color = if (is3) Color.White else Color(0xFFCBD5E1)
                         )
                         Text(
-                            text = "横向 3 联屏",
+                            text = "横向 3 联屏 (点击直接切换)",
                             fontSize = 10.sp,
                             color = if (is3) Color(0xFFBAE6FD) else Color(0xFF64748B)
                         )
                     }
 
-                    // 4 窗口选项
+                    // 4 窗口选项：点击直接切换生效
                     val is4 = selectedWindowCount == 4
                     Column(
                         modifier = Modifier
@@ -1844,19 +1459,20 @@ fun GroupConfigDialog(
                             )
                             .clickable {
                                 selectedWindowCount = 4
+                                onConfirm(groupName, 4)
                             }
-                            .padding(vertical = 10.dp, horizontal = 6.dp),
+                            .padding(12.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
                         Text(
                             text = "4 个独立窗口",
-                            fontSize = 12.sp,
+                            fontSize = 13.sp,
                             fontWeight = if (is4) FontWeight.Bold else FontWeight.Medium,
                             color = if (is4) Color.White else Color(0xFFCBD5E1)
                         )
                         Text(
-                            text = "横向 4 联屏",
+                            text = "横向 4 联屏 (点击直接切换)",
                             fontSize = 10.sp,
                             color = if (is4) Color(0xFFBAE6FD) else Color(0xFF64748B)
                         )
@@ -1864,66 +1480,11 @@ fun GroupConfigDialog(
                 }
 
                 Text(
-                    text = "提示：可修改标签页显示名称，选择 2 屏、3 屏或 4 屏布局后点击「保存并应用」生效。",
+                    text = "提示：点击上方「3 屏」或「4 屏」卡片直接即时切换生效，无需点击确认；若修改了标签名称可点击右下角保存。",
                     fontSize = 11.sp,
                     lineHeight = 16.sp,
                     color = Color(0xFF94A3B8)
                 )
-
-                // 15分钟前台停留自动翻转配置
-                val dialogCtx = LocalContext.current
-                var isReminderEnabled by remember(group.id) {
-                    mutableStateOf(
-                        dialogCtx.getSharedPreferences("trading_multiview_prefs", Context.MODE_PRIVATE)
-                            .getBoolean("invert_reminder_enabled_${group.id}", false)
-                    )
-                }
-
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(if (isReminderEnabled) Color(0xFF064E3B).copy(alpha = 0.6f) else Color(0xFF1E293B))
-                        .border(
-                            1.dp,
-                            if (isReminderEnabled) Color(0xFF10B981) else Color(0xFF334155),
-                            RoundedCornerShape(8.dp)
-                        )
-                        .clickable {
-                            isReminderEnabled = !isReminderEnabled
-                        }
-                        .padding(10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "⏰ 15分钟停留自动翻转K线",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = if (isReminderEnabled) Color(0xFF34D399) else Color.White
-                        )
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Text(
-                            text = "前台累计停留 15 分钟将自动弹窗 5 秒倒计时并强制翻转 K 线 (Alt+I)，之后禁用该功能 10 分钟以防频繁触发。",
-                            fontSize = 9.sp,
-                            lineHeight = 13.sp,
-                            color = if (isReminderEnabled) Color(0xFFA7F3D0) else Color(0xFF94A3B8)
-                        )
-                    }
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Box(
-                        modifier = Modifier
-                            .size(18.dp)
-                            .clip(RoundedCornerShape(4.dp))
-                            .background(if (isReminderEnabled) Color(0xFF10B981) else Color(0xFF475569)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        if (isReminderEnabled) {
-                            Text("✓", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                        }
-                    }
-                }
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -1931,21 +1492,17 @@ fun GroupConfigDialog(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     TextButton(onClick = onDismiss) {
-                        Text("取消", fontSize = 12.sp, color = Color(0xFF94A3B8))
+                        Text("关闭", fontSize = 12.sp, color = Color(0xFF94A3B8))
                     }
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Button(
-                        onClick = {
-                            dialogCtx.getSharedPreferences("trading_multiview_prefs", Context.MODE_PRIVATE)
-                                .edit()
-                                .putBoolean("invert_reminder_enabled_${group.id}", isReminderEnabled)
-                                .apply()
-                            onConfirm(groupName, selectedWindowCount)
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
-                        shape = RoundedCornerShape(6.dp)
-                    ) {
-                        Text("保存并应用", fontSize = 12.sp, color = Color.White)
+                    if (groupName.trim() != group.name.trim() && groupName.isNotBlank()) {
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Button(
+                            onClick = { onConfirm(groupName, selectedWindowCount) },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
+                            shape = RoundedCornerShape(6.dp)
+                        ) {
+                            Text("保存新名称", fontSize = 12.sp, color = Color.White)
+                        }
                     }
                 }
             }
