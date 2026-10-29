@@ -1393,6 +1393,158 @@ object PersistentWebViewPool {
         // 用户已要求删除网页内的浮动工具栏，保持看盘界面完全纯净无遮挡
     }
 
+    fun getAllActiveWebViews(): List<WebView> {
+        return (1..4).mapNotNull { getWebView(it) }
+    }
+
+    private fun findWebViewAt(screenX: Float, screenY: Float): Pair<WebView, FloatArray>? {
+        for (wv in getAllActiveWebViews()) {
+            val loc = IntArray(2)
+            wv.getLocationOnScreen(loc)
+            val left = loc[0].toFloat()
+            val top = loc[1].toFloat()
+            val right = left + wv.width
+            val bottom = top + wv.height
+            if (screenX >= left && screenX <= right && screenY >= top && screenY <= bottom) {
+                val relX = screenX - left
+                val relY = screenY - top
+                return Pair(wv, floatArrayOf(relX, relY))
+            }
+        }
+        return null
+    }
+
+    fun clearCrosshairs() {
+        val script = "(function(){ try { window.dispatchEvent(new MouseEvent('mouseleave')); document.dispatchEvent(new MouseEvent('mouseleave')); } catch(e){} })();"
+        getAllActiveWebViews().forEach { wv ->
+            wv.post { wv.evaluateJavascript(script, null) }
+        }
+    }
+
+    fun dispatchVirtualDeleteKey(absX: Float, absY: Float) {
+        val target = findWebViewAt(absX, absY)?.first ?: getWebView(1) ?: return
+        target.post {
+            val t = SystemClock.uptimeMillis()
+            target.dispatchKeyEvent(KeyEvent(t, t, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_FORWARD_DEL, 0))
+            target.dispatchKeyEvent(KeyEvent(t, t + 20, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_FORWARD_DEL, 0))
+            val js = "(function(){ try { var opts = {key:'Delete', code:'Delete', keyCode:46, which:46, bubbles:true}; document.dispatchEvent(new KeyboardEvent('keydown', opts)); document.dispatchEvent(new KeyboardEvent('keyup', opts)); } catch(e){} })();"
+            target.evaluateJavascript(js, null)
+        }
+    }
+
+    fun dispatchVirtualMouseClick(absX: Float, absY: Float, isRightClick: Boolean = false, isCtrlPressed: Boolean = false) {
+        val found = findWebViewAt(absX, absY) ?: return
+        val wv = found.first
+        val relX = found.second[0]
+        val relY = found.second[1]
+        wv.post {
+            val t = SystemClock.uptimeMillis()
+            if (isRightClick) {
+                val js = """
+                    (function(){
+                        try {
+                            var el = document.elementFromPoint($relX, $relY) || document.body;
+                            var evt = new MouseEvent('contextmenu', {
+                                clientX: $relX, clientY: $relY, screenX: $absX, screenY: $absY,
+                                button: 2, buttons: 2, bubbles: true, cancelable: true, view: window
+                            });
+                            el.dispatchEvent(evt);
+                        } catch(e){}
+                    })();
+                """.trimIndent()
+                wv.evaluateJavascript(js, null)
+            } else {
+                val down = MotionEvent.obtain(t, t, MotionEvent.ACTION_DOWN, relX, relY, 0)
+                wv.dispatchTouchEvent(down)
+                down.recycle()
+                val up = MotionEvent.obtain(t, t + 25, MotionEvent.ACTION_UP, relX, relY, 0)
+                wv.dispatchTouchEvent(up)
+                up.recycle()
+            }
+        }
+    }
+
+    fun dispatchVirtualMouseMove(absX: Float, absY: Float) {
+        val found = findWebViewAt(absX, absY) ?: return
+        val wv = found.first
+        val relX = found.second[0]
+        val relY = found.second[1]
+        wv.post {
+            val t = SystemClock.uptimeMillis()
+            val move = MotionEvent.obtain(t, t, MotionEvent.ACTION_MOVE, relX, relY, 0)
+            wv.dispatchTouchEvent(move)
+            move.recycle()
+        }
+    }
+
+    fun dispatchVirtualMouseHover(absX: Float, absY: Float) {
+        val found = findWebViewAt(absX, absY) ?: return
+        val wv = found.first
+        val relX = found.second[0]
+        val relY = found.second[1]
+        wv.post {
+            val t = SystemClock.uptimeMillis()
+            try {
+                val hover = MotionEvent.obtain(t, t, MotionEvent.ACTION_HOVER_MOVE, relX, relY, 0)
+                hover.source = android.view.InputDevice.SOURCE_MOUSE
+                wv.dispatchGenericMotionEvent(hover)
+                hover.recycle()
+            } catch (e: Exception) {}
+            val js = "(function(){ try { var el = document.elementFromPoint($relX, $relY) || document.body; el.dispatchEvent(new MouseEvent('mousemove', { clientX: $relX, clientY: $relY, bubbles: true, view: window })); } catch(e){} })();"
+            wv.evaluateJavascript(js, null)
+        }
+    }
+
+    fun dispatchVirtualMouseDown(absX: Float, absY: Float) {
+        val found = findWebViewAt(absX, absY) ?: return
+        val wv = found.first
+        val relX = found.second[0]
+        val relY = found.second[1]
+        wv.post {
+            val t = SystemClock.uptimeMillis()
+            val down = MotionEvent.obtain(t, t, MotionEvent.ACTION_DOWN, relX, relY, 0)
+            wv.dispatchTouchEvent(down)
+            down.recycle()
+        }
+    }
+
+    fun dispatchVirtualMouseUp(absX: Float, absY: Float) {
+        val found = findWebViewAt(absX, absY) ?: return
+        val wv = found.first
+        val relX = found.second[0]
+        val relY = found.second[1]
+        wv.post {
+            val t = SystemClock.uptimeMillis()
+            val up = MotionEvent.obtain(t, t, MotionEvent.ACTION_UP, relX, relY, 0)
+            wv.dispatchTouchEvent(up)
+            up.recycle()
+        }
+    }
+
+    fun dispatchVirtualMouseScroll(absX: Float, absY: Float, scrollDelta: Float) {
+        val found = findWebViewAt(absX, absY) ?: return
+        val wv = found.first
+        val relX = found.second[0]
+        val relY = found.second[1]
+        wv.post {
+            val t = SystemClock.uptimeMillis()
+            try {
+                val props = arrayOf(MotionEvent.PointerProperties().apply { id = 0; toolType = MotionEvent.TOOL_TYPE_MOUSE })
+                val coords = arrayOf(MotionEvent.PointerCoords().apply {
+                    x = relX
+                    y = relY
+                    setAxisValue(MotionEvent.AXIS_VSCROLL, scrollDelta)
+                })
+                val event = MotionEvent.obtain(t, t, MotionEvent.ACTION_SCROLL, 1, props, coords, 0, 0, 1.0f, 1.0f, 0, 0, android.view.InputDevice.SOURCE_MOUSE, 0)
+                wv.dispatchGenericMotionEvent(event)
+                event.recycle()
+            } catch (e: Exception) {}
+            val deltaY = if (scrollDelta > 0) -100 else 100
+            val js = "(function(){ try { var el = document.elementFromPoint($relX, $relY) || document.body; el.dispatchEvent(new WheelEvent('wheel', { clientX: $relX, clientY: $relY, deltaY: $deltaY, bubbles: true, view: window })); } catch(e){} })();"
+            wv.evaluateJavascript(js, null)
+        }
+    }
+
     fun destroyAll() {
         webViewMap.forEach { (_, webView) ->
             (webView.parent as? ViewGroup)?.removeView(webView)
@@ -2692,6 +2844,7 @@ fun TradingMultiViewScreen(
     var showGlobalZoomDialog by remember { mutableStateOf(false) }
     var showReorderDialog by remember { mutableStateOf(false) }
     var showLatestKlineDialog by remember { mutableStateOf(false) }
+    var showVirtualMouse by remember { mutableStateOf(false) }
     var floatingButtonOffset by remember { mutableStateOf(Offset(0f, 0f)) }
 
     // 快捷视窗组合预设 (每个标签页独立隔离保存)
@@ -3043,6 +3196,30 @@ fun TradingMultiViewScreen(
                         )
                     }
 
+                    // 5. 虚拟触控板/光标按钮
+                    Box(
+                        modifier = Modifier
+                            .size(30.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(
+                                if (showVirtualMouse) Color(0xFF0284C7)
+                                else Color(0xFF1E293B)
+                            )
+                            .border(
+                                width = 1.dp,
+                                color = if (showVirtualMouse) Color(0xFF38BDF8) else Color(0xFF334155),
+                                shape = RoundedCornerShape(6.dp)
+                            )
+                            .clickable { showVirtualMouse = !showVirtualMouse },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.NearMe,
+                            contentDescription = "虚拟触控板/鼠标光标",
+                            tint = if (showVirtualMouse) Color.White else Color(0xFF38BDF8),
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
 
                 }
 
@@ -3700,6 +3877,12 @@ fun TradingMultiViewScreen(
                 }
             }
         }
+
+        // 虚拟光标与悬浮精准触控板
+        VirtualMouseOverlay(
+            isEnabled = showVirtualMouse,
+            onClose = { showVirtualMouse = false }
+        )
     }
 }
 

@@ -96,6 +96,7 @@ fun TradingMultiViewScreen(
     var showGlobalZoomDialog by remember { mutableStateOf(false) }
     var showReorderDialog by remember { mutableStateOf(false) }
     var showLatestKlineDialog by remember { mutableStateOf(false) }
+    var showVirtualMouse by remember { mutableStateOf(false) }
     var floatingButtonOffset by remember { mutableStateOf(Offset(0f, 0f)) }
 
     // 快捷视窗组合预设 (每个标签页独立隔离保存)
@@ -447,6 +448,30 @@ fun TradingMultiViewScreen(
                         )
                     }
 
+                    // 5. 虚拟触控板/光标按钮
+                    Box(
+                        modifier = Modifier
+                            .size(30.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(
+                                if (showVirtualMouse) Color(0xFF0284C7)
+                                else Color(0xFF1E293B)
+                            )
+                            .border(
+                                width = 1.dp,
+                                color = if (showVirtualMouse) Color(0xFF38BDF8) else Color(0xFF334155),
+                                shape = RoundedCornerShape(6.dp)
+                            )
+                            .clickable { showVirtualMouse = !showVirtualMouse },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.NearMe,
+                            contentDescription = "虚拟触控板/鼠标光标",
+                            tint = if (showVirtualMouse) Color.White else Color(0xFF38BDF8),
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
 
                 }
 
@@ -1104,6 +1129,12 @@ fun TradingMultiViewScreen(
                 }
             }
         }
+
+        // 虚拟光标与悬浮精准触控板
+        VirtualMouseOverlay(
+            isEnabled = showVirtualMouse,
+            onClose = { showVirtualMouse = false }
+        )
     }
 }
 
