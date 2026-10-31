@@ -1450,29 +1450,17 @@ object PersistentWebViewPool {
                             points.push({ x: px, y: py, element: el, widget: container });
                         }
                     } else if (action.indexOf('timeframe_') === 0) {
-                        // 周期切换：只对手指激活的高亮子图生效
-                        var activeWidget = null;
-                        for (var wi = 0; wi < widgets.length; wi++) {
-                            var cls = widgets[wi].className || "";
-                            if (cls.indexOf("active") !== -1 || cls.indexOf("selected") !== -1 || widgets[wi].getAttribute("data-active") === "true") {
-                                activeWidget = widgets[wi];
-                                break;
-                            }
-                        }
-                        if (!activeWidget && widgets.length > 0) {
-                            activeWidget = widgets[0];
-                        }
-                        if (activeWidget) {
-                            var wRect = activeWidget.getBoundingClientRect();
-                            points.push({
-                                x: wRect.left + wRect.width / 2,
-                                y: wRect.top + wRect.height / 2,
-                                element: activeWidget.querySelector('canvas.interactive-graphics-layer') || 
-                                         activeWidget.querySelector('canvas') || 
-                                         activeWidget,
-                                widget: activeWidget
-                            });
-                        }
+                        // 周期切换：严格限定在当前窗口的第一个 K 线图 (widgets[0]) 上去选择输入时间周期
+                        var firstWidget = widgets.length > 0 ? widgets[0] : (document.querySelector('.layout__area--center') || document.body);
+                        var wRect = firstWidget.getBoundingClientRect();
+                        points.push({
+                            x: wRect.left + wRect.width / 2,
+                            y: wRect.top + wRect.height / 2,
+                            element: firstWidget.querySelector('canvas.interactive-graphics-layer') || 
+                                     firstWidget.querySelector('canvas') || 
+                                     firstWidget,
+                            widget: firstWidget
+                        });
                     } else {
                         // 其他动作 (如 hide 画线)：使用主画布或第一图
                         var baseEl = widgets.length > 0 ? widgets[0] : (document.querySelector('.layout__area--center') || document.body);
@@ -1539,14 +1527,50 @@ object PersistentWebViewPool {
                             } else if (action.indexOf('timeframe_') === 0) {
                                 var tfVal = action.substring(10);
 
+                                function simulateDragLeftOnChart(chartTarget, onComplete) {
+                                    try {
+                                        var canvas = (chartTarget && chartTarget.tagName === 'CANVAS') ? chartTarget : (chartTarget.querySelector('canvas.interactive-graphics-layer') || chartTarget.querySelector('canvas') || chartTarget);
+                                        var rect = canvas.getBoundingClientRect();
+                                        var startX = rect.left + rect.width / 2;
+                                        var startY = rect.top + rect.height / 2;
+                                        var endX = startX - 10; // 向左微拖 10 像素
+
+                                        var downEvt = { clientX: startX, clientY: startY, screenX: startX, screenY: startY, buttons: 1, button: 0, bubbles: true, cancelable: true, composed: true, view: window };
+                                        var moveEvt = { clientX: endX, clientY: startY, screenX: endX, screenY: startY, buttons: 1, button: 0, bubbles: true, cancelable: true, composed: true, view: window };
+                                        var upEvt = { clientX: endX, clientY: startY, screenX: endX, screenY: startY, buttons: 0, button: 0, bubbles: true, cancelable: true, composed: true, view: window };
+
+                                        canvas.dispatchEvent(new PointerEvent('pointerdown', downEvt));
+                                        canvas.dispatchEvent(new MouseEvent('mousedown', downEvt));
+
+                                        setTimeout(function() {
+                                            canvas.dispatchEvent(new PointerEvent('pointermove', moveEvt));
+                                            canvas.dispatchEvent(new MouseEvent('mousemove', moveEvt));
+
+                                            setTimeout(function() {
+                                                canvas.dispatchEvent(new PointerEvent('pointerup', upEvt));
+                                                canvas.dispatchEvent(new MouseEvent('mouseup', upEvt));
+                                                if (typeof onComplete === 'function') onComplete();
+                                            }, 50);
+                                        }, 50);
+                                    } catch(err) {
+                                        if (typeof onComplete === 'function') onComplete();
+                                    }
+                                }
+
                                 // 策略 1: 尝试 TradingView 原生 API (若已暴露)
                                 try {
                                     if (window.tvWidget && typeof window.tvWidget.chart === 'function') {
                                         window.tvWidget.chart().setResolution(tfVal);
+                                        setTimeout(function() {
+                                            simulateDragLeftOnChart(target, function() { processPoint(idx + 1); });
+                                        }, 600);
                                         return;
                                     }
                                     if (window.TradingView && typeof window.TradingView.activeChart === 'function') {
                                         window.TradingView.activeChart().setResolution(tfVal);
+                                        setTimeout(function() {
+                                            simulateDragLeftOnChart(target, function() { processPoint(idx + 1); });
+                                        }, 600);
                                         return;
                                     }
                                 } catch(e) {}
@@ -1559,7 +1583,9 @@ object PersistentWebViewPool {
                                         var v = (b.getAttribute('data-value') || b.textContent || '').trim().toLowerCase();
                                         if (v === tfVal.toLowerCase() || v === (tfVal + 'm').toLowerCase()) {
                                             b.click();
-                                            setTimeout(function() { processPoint(idx + 1); }, 400);
+                                            setTimeout(function() {
+                                                simulateDragLeftOnChart(target, function() { processPoint(idx + 1); });
+                                            }, 600);
                                             return;
                                         }
                                     }
@@ -1575,7 +1601,9 @@ object PersistentWebViewPool {
                                         inputEl.value = tfVal;
                                         inputEl.dispatchEvent(new Event('input', { bubbles: true }));
                                         inputEl.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
-                                        setTimeout(function() { processPoint(idx + 1); }, 400);
+                                        setTimeout(function() {
+                                            simulateDragLeftOnChart(target, function() { processPoint(idx + 1); });
+                                        }, 600);
                                         return;
                                     }
                                 } catch(e) {}
@@ -1626,9 +1654,12 @@ object PersistentWebViewPool {
                                             window.dispatchEvent(new KeyboardEvent('keyup', enterOpts));
                                             document.dispatchEvent(new KeyboardEvent('keyup', enterOpts));
 
+                                            // 等待 600ms 让 TradingView 渲染新周期 K 线，随后模拟向左微拖 10 像素强制同步横向比例
                                             setTimeout(function() {
-                                                processPoint(idx + 1);
-                                            }, 400);
+                                                simulateDragLeftOnChart(target, function() {
+                                                    processPoint(idx + 1);
+                                                });
+                                            }, 600);
                                         }, 70);
                                     }
                                 }

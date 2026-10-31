@@ -86,9 +86,6 @@ class MainActivity : ComponentActivity() {
         // 强制传感器横屏锁定 (Sensor Landscape，支持 180° 正反横屏倒转，禁止误切竖屏，保证 3 窗口最宽可视区)
         requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
 
-        // 保持屏幕常亮（看盘专用）
-        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-
         // 隐藏系统导航栏和状态栏，最大化横屏可视面积
         WindowCompat.setDecorFitsSystemWindows(window, false)
         val controller = WindowInsetsControllerCompat(window, window.decorView)
@@ -96,11 +93,11 @@ class MainActivity : ComponentActivity() {
         controller.systemBarsBehavior =
             WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
 
-        // 初始化常驻单例 WebView 池（与 Activity 实例解耦，绝不反复销毁）
-        PersistentWebViewPool.init(applicationContext)
-
         // 恢复持久化配置（上次输入的网址、历史分组及分辨率）
         viewModel.loadSavedGroupsFromPrefs(applicationContext)
+
+        // 初始化常驻单例 WebView 池（与 Activity 实例解耦，绝不反复销毁）
+        PersistentWebViewPool.init(applicationContext)
 
         setContent {
             TradingMultiViewTheme {
@@ -150,6 +147,8 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.*
+import androidx.webkit.WebViewCompat
+import androidx.webkit.WebViewFeature
 
 /**
  * 持久化 WebView 池
@@ -173,20 +172,22 @@ object PersistentWebViewPool {
     private val webViewMap = mutableMapOf<String, WebView>()
     private var isInitialized = false
 
+    // 跟踪上一次虚拟光标在移动悬停时所落在的 WebView Window ID
+    private var lastHoveredWindowId: Int? = null
+
     // 缓存每个视窗最近一次 resize 的防抖 Runnable 任务，杜绝动画中频繁执行 JS 导致 UI 卡顿
     private val resizeRunnableMap = java.util.concurrent.ConcurrentHashMap<String, Runnable>()
 
-    // URL 变化监听回调 (windowId, newUrl, pageTitle)
-    var onUrlChanged: ((Int, String, String) -> Unit)? = null
-    // 网页标题更新回调 (windowId, newTitle) - 独立解耦，避免价格频繁跳动触发 URL 变更重绘
-    var onTitleChanged: ((Int, String) -> Unit)? = null
+    // URL 变化监听回调 (ownerGroupId, windowId, newUrl, pageTitle)
+    var onUrlChanged: ((String, Int, String, String) -> Unit)? = null
+    // 网页标题更新回调 (ownerGroupId, windowId, newTitle) - 独立解耦，避免价格频繁跳动触发 URL 变更重绘
+    var onTitleChanged: ((String, Int, String) -> Unit)? = null
 
     fun getSavedWindowUrlForGroup(context: Context? = null, groupId: String, windowId: Int): String? {
         val ctx = context ?: appContext ?: return null
         return try {
             val prefs = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             prefs.getString("\${KEY_WINDOW_URL_PREFIX}\${groupId}_$windowId", null)?.takeIf { it.isNotBlank() }
-                ?: prefs.getString("\${KEY_WINDOW_URL_PREFIX}$windowId", null)?.takeIf { it.isNotBlank() }
         } catch (e: Exception) {
             null
         }
@@ -197,7 +198,6 @@ object PersistentWebViewPool {
         return try {
             val prefs = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             prefs.getString("\${KEY_WINDOW_TITLE_PREFIX}\${groupId}_$windowId", null)?.takeIf { it.isNotBlank() }
-                ?: prefs.getString("\${KEY_WINDOW_TITLE_PREFIX}$windowId", null)?.takeIf { it.isNotBlank() }
         } catch (e: Exception) {
             null
         }
@@ -212,6 +212,27 @@ object PersistentWebViewPool {
             if (!title.isNullOrBlank()) {
                 editor.putString("\${KEY_WINDOW_TITLE_PREFIX}\${groupId}_$windowId", title)
             }
+            editor.apply()
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    fun getSavedZoomForGroup(context: Context? = null, groupId: String): Int {
+        val ctx = context ?: appContext ?: return 100
+        return try {
+            val prefs = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            prefs.getInt("group_\${groupId}_zoom", 100).coerceIn(50, 250)
+        } catch (e: Exception) {
+            100
+        }
+    }
+
+    fun saveZoomForGroup(groupId: String, zoom: Int, context: Context? = null) {
+        val ctx = context ?: appContext ?: return
+        try {
+            val editor = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+            editor.putInt("group_\${groupId}_zoom", zoom.coerceIn(50, 250))
             editor.apply()
         } catch (e: Exception) {
             e.printStackTrace()
@@ -234,26 +255,34 @@ object PersistentWebViewPool {
         return when (groupId) {
             "preset_1" -> {
                 when (windowId) {
-                    1 -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:BTCUSDT&interval=15&theme=dark"
-                    2 -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:ETHUSDT&interval=15&theme=dark"
-                    3 -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:SOLUSDT&interval=15&theme=dark"
-                    else -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:BNBUSDT&interval=15&theme=dark"
+                    1 -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:BTCUSDT&interval=15&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1"
+                    2 -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:ETHUSDT&interval=60&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1"
+                    3 -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:SOLUSDT&interval=240&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1"
+                    else -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:DOGEUSDT&interval=15&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1"
                 }
             }
             "preset_2" -> {
                 when (windowId) {
-                    1 -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:BTCUSDT&interval=60&theme=dark"
-                    2 -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:ETHUSDT&interval=60&theme=dark"
-                    3 -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:SOLUSDT&interval=60&theme=dark"
-                    else -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:BNBUSDT&interval=60&theme=dark"
+                    1 -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:BTCUSDT&interval=15&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1"
+                    2 -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:ETHUSDT&interval=60&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1"
+                    3 -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:SOLUSDT&interval=240&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1"
+                    else -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:DOGEUSDT&interval=15&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1"
                 }
             }
             "preset_3" -> {
                 when (windowId) {
-                    1 -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:BTCUSDT&interval=240&theme=dark"
-                    2 -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:ETHUSDT&interval=240&theme=dark"
-                    3 -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:SOLUSDT&interval=240&theme=dark"
-                    else -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:BNBUSDT&interval=240&theme=dark"
+                    1 -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:BNBUSDT&interval=15&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1"
+                    2 -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:AVAXUSDT&interval=60&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1"
+                    3 -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:NEARUSDT&interval=240&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1"
+                    else -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:PEPEUSDT&interval=15&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1"
+                }
+            }
+            "preset_4" -> {
+                when (windowId) {
+                    1 -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:SUIUSDT&interval=15&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1"
+                    2 -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:APTUSDT&interval=60&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1"
+                    3 -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:LINKUSDT&interval=240&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1"
+                    else -> "https://s.tradingview.com/widgetembed/?symbol=BINANCE:RENDERUSDT&interval=15&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1"
                 }
             }
             else -> {
@@ -278,6 +307,7 @@ object PersistentWebViewPool {
     // 快捷书签推荐网站
     val PRESET_BOOKMARKS = listOf(
         BookmarkItem("TradingView", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:BTCUSDT&interval=15&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1", "📈"),
+        BookmarkItem("AI Studio", "https://aistudio.google.com", "✨"),
         BookmarkItem("Binance 现货", "https://www.binance.com/zh-CN/trade/BTC_USDT", "🟡"),
         BookmarkItem("OKX 欧易", "https://www.okx.com/zh-hans/trade-spot/btc-usdt", "⬛"),
         BookmarkItem("DexScreener", "https://dexscreener.com", "🦅"),
@@ -311,10 +341,35 @@ object PersistentWebViewPool {
     // 默认 1280px 标准桌面基准
     private var _fixedPixelWidth: Int = 1280
     val fixedPixelWidth: Int
-        get() = _fixedPixelWidth
+        get() = getSavedFixedPixelWidthForGroup(appContext, currentGroupId)
+
+    fun getSavedFixedPixelWidthForGroup(context: Context? = null, groupId: String): Int {
+        val ctx = context ?: appContext ?: return 1280
+        return try {
+            val prefs = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            prefs.getInt("group_\${groupId}_fixed_pixel_width", 1280).coerceIn(960, 1920)
+        } catch (e: Exception) {
+            1280
+        }
+    }
+
+    fun saveFixedPixelWidthForGroup(groupId: String, width: Int, context: Context? = null) {
+        val ctx = context ?: appContext ?: return
+        try {
+            val editor = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+            editor.putInt("group_\${groupId}_fixed_pixel_width", width.coerceIn(960, 1920))
+            editor.apply()
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
 
     // 默认保存当前用户设定的全局缩放比例 (默认 100%)
     var currentZoomPercent: Int = 100
+
+    // 是否禁止网页弹窗/聚焦时自动放大 (默认开启 true，严格保持桌面黄金基准视口，彻底阻断 TradingView 搜索品种/设置指标弹窗自动放大)
+    var isAutoZoomLocked: Boolean = true
+        private set
 
     // 缓存每个视窗最近一次生效的缩放系数，避免重复注入导致 WebView 重复计算布局与重新缩放
     private val appliedScaleMap = java.util.concurrent.ConcurrentHashMap<String, String>()
@@ -343,8 +398,8 @@ object PersistentWebViewPool {
      */
     fun injectDesktopViewport(
         webView: WebView,
-        targetPixelWidth: Int = fixedPixelWidth,
-        zoomPercent: Int = currentZoomPercent,
+        targetPixelWidth: Int? = null,
+        zoomPercent: Int? = null,
         force: Boolean = false
     ) {
         val windowId = when (val tag = webView.tag) {
@@ -352,6 +407,11 @@ object PersistentWebViewPool {
             is Int -> "\${currentGroupId}_$tag"
             else -> webViewMap.entries.find { it.value == webView }?.key
         }
+        val ownerGroupId = windowId?.substringBeforeLast("_") ?: currentGroupId
+
+        val actualPixelWidth = targetPixelWidth ?: getSavedFixedPixelWidthForGroup(webView.context, ownerGroupId)
+        val actualZoomPercent = zoomPercent ?: getSavedZoomForGroup(webView.context, ownerGroupId)
+
         val metrics = webView.context.resources.displayMetrics
         val density = metrics.density
         // 获取当前视窗在当前屏幕密度下的精确 CSS 像素宽度 (dp)
@@ -360,12 +420,12 @@ object PersistentWebViewPool {
         } else {
             (metrics.widthPixels / density) / 3f
         }
-        val desktopWidth = targetPixelWidth.toFloat()
-        val zoomFactor = (zoomPercent.coerceIn(50, 250)) / 100f
+        val desktopWidth = actualPixelWidth.toFloat()
+        val zoomFactor = (actualZoomPercent.coerceIn(50, 250)) / 100f
         val calculatedScale = ((widthDp / desktopWidth) * zoomFactor).coerceIn(0.10f, 3.0f)
         val scaleStr = String.format(java.util.Locale.US, "%.4f", calculatedScale)
 
-        val cacheKey = "\${targetPixelWidth}_\${scaleStr}"
+        val cacheKey = "\${actualPixelWidth}_\${scaleStr}"
         val lastScale = if (windowId != null) appliedScaleFloatMap[windowId] else null
         val scaleChanged = lastScale == null || Math.abs(calculatedScale - lastScale) >= 0.02f
         if (!force && !scaleChanged) {
@@ -381,11 +441,17 @@ object PersistentWebViewPool {
             appliedScaleFloatMap[windowId] = calculatedScale
         }
 
+        val autoZoomMeta = if (isAutoZoomLocked) {
+            "width=$actualPixelWidth, initial-scale=$scaleStr, minimum-scale=$scaleStr, maximum-scale=$scaleStr, user-scalable=no"
+        } else {
+            "width=$actualPixelWidth, initial-scale=$scaleStr, minimum-scale=0.1, maximum-scale=5.0, user-scalable=yes"
+        }
+
         val script = if (!force) {
             // 极速路径：针对窗口尺寸改变 (如隐藏窗口、切换 3/4 屏)，热更新 meta 标签并瞬间触发 window 与 iframe resize，耗时 < 1ms！
             """
             (function() {
-                var c = 'width=' + $targetPixelWidth + ', initial-scale=' + '$scaleStr' + ', minimum-scale=0.1, maximum-scale=5.0, user-scalable=yes';
+                var c = '$autoZoomMeta';
                 window.__targetViewportContent = c;
                 var m = document.querySelector('meta[name="viewport"]');
                 if (m) {
@@ -395,6 +461,45 @@ object PersistentWebViewPool {
                     n.name = 'viewport';
                     n.content = c;
                     if (document.head) document.head.appendChild(n);
+                }
+
+                // 注入/移除输入框防自动放大样式
+                var pStyle = document.getElementById('__prevent_auto_zoom_style');
+                if ($isAutoZoomLocked) {
+                    if (!pStyle) {
+                        pStyle = document.createElement('style');
+                        pStyle.id = '__prevent_auto_zoom_style';
+                        pStyle.textContent = 'input, select, textarea { font-size: 16px !important; }';
+                        if (document.head) document.head.appendChild(pStyle);
+                    }
+                } else {
+                    if (pStyle) pStyle.remove();
+                }
+
+                // 触控笔 (Stylus / Pen) 顶部下拉菜单防闪退防抖保护
+                if (!window.__stylus_stabilizer_installed) {
+                    window.__stylus_stabilizer_installed = true;
+                    var lastPenUp = 0;
+                    window.addEventListener('pointerup', function(e) {
+                        if (e.pointerType === 'pen') {
+                            lastPenUp = Date.now();
+                        }
+                    }, true);
+
+                    window.addEventListener('pointermove', function(e) {
+                        if (e.pointerType === 'pen' && Date.now() - lastPenUp < 350) {
+                            e.stopPropagation();
+                        }
+                    }, true);
+
+                    window.addEventListener('mousemove', function(e) {
+                        if (Date.now() - lastPenUp < 350) {
+                            var hasMenu = document.querySelector('[data-name="menu-inner"], .menu-wrap, [class*="menu-"], [data-role="menu"]');
+                            if (hasMenu) {
+                                e.stopPropagation();
+                            }
+                        }
+                    }, true);
                 }
 
                 // 核心提速关键：立即唤醒 TradingView 极速重排重绘，彻底消灭 4-5 秒的轮询延迟
@@ -424,11 +529,28 @@ object PersistentWebViewPool {
             // 完整路径：页面刚加载时注入完整 MutationObserver 与 PC 平台模拟标头
             """
             (function() {
-                var targetWidth = $targetPixelWidth;
+                var targetWidth = $actualPixelWidth;
                 var targetScale = '$scaleStr';
-                var targetContent = 'width=' + targetWidth + ', initial-scale=' + targetScale + ', minimum-scale=0.1, maximum-scale=5.0, user-scalable=yes';
+                var targetContent = '$autoZoomMeta';
                 window.__targetViewportContent = targetContent;
                 
+                function triggerChartResize() {
+                    try {
+                        window.dispatchEvent(new Event('resize'));
+                        window.dispatchEvent(new UIEvent('resize'));
+                        document.dispatchEvent(new Event('resize'));
+                        var iframes = document.getElementsByTagName('iframe');
+                        for (var i = 0; i < iframes.length; i++) {
+                            try {
+                                if (iframes[i].contentWindow) {
+                                    iframes[i].contentWindow.dispatchEvent(new Event('resize'));
+                                    iframes[i].contentWindow.dispatchEvent(new UIEvent('resize'));
+                                }
+                            } catch(e) {}
+                        }
+                    } catch(e) {}
+                }
+
                 function applyDesktop() {
                     try {
                         var metas = document.getElementsByTagName('meta');
@@ -447,6 +569,19 @@ object PersistentWebViewPool {
                             meta.setAttribute('name', 'viewport');
                             meta.setAttribute('content', targetContent);
                             if (document.head) document.head.appendChild(meta);
+                        }
+
+                        // 注入/移除输入框防自动放大样式
+                        var pStyle = document.getElementById('__prevent_auto_zoom_style');
+                        if ($isAutoZoomLocked) {
+                            if (!pStyle) {
+                                pStyle = document.createElement('style');
+                                pStyle.id = '__prevent_auto_zoom_style';
+                                pStyle.textContent = 'input, select, textarea { font-size: 16px !important; }';
+                                if (document.head) document.head.appendChild(pStyle);
+                            }
+                        } else {
+                            if (pStyle) pStyle.remove();
                         }
 
                         // 强效防篡改锁：通过 MutationObserver 实时监听任何单页导航 (SPA) 脚本或延迟框架对 viewport 的篡改并自动修正
@@ -474,27 +609,41 @@ object PersistentWebViewPool {
                         // 模拟 PC 平台标头，但保留真实触屏支持，确保周期切换按钮与下拉菜单流畅交互
                         if (window.navigator) {
                             try {
-                                Object.defineProperty(navigator, 'userAgentData', {
-                                    get: function() {
-                                        return {
-                                            mobile: false,
-                                            platform: 'Windows',
-                                            brands: [
-                                                { brand: 'Chromium', version: '128' },
-                                                { brand: 'Google Chrome', version: '128' },
-                                                { brand: 'Not;A=Brand', version: '24' }
-                                            ]
-                                        };
-                                    },
-                                    configurable: true
-                                });
                                 Object.defineProperty(navigator, 'platform', {
                                     get: function() { return 'Win32'; },
                                     configurable: true
                                 });
-                            } catch(e) {}
+                            } catch (e) {}
                         }
-                    } catch(e) {}
+
+                        // 触控笔 (Stylus / Pen) 顶部下拉菜单防闪退防抖保护
+                        if (!window.__stylus_stabilizer_installed) {
+                            window.__stylus_stabilizer_installed = true;
+                            var lastPenUp = 0;
+                            window.addEventListener('pointerup', function(e) {
+                                if (e.pointerType === 'pen') {
+                                    lastPenUp = Date.now();
+                                }
+                            }, true);
+
+                            window.addEventListener('pointermove', function(e) {
+                                if (e.pointerType === 'pen' && Date.now() - lastPenUp < 350) {
+                                    e.stopPropagation();
+                                }
+                            }, true);
+
+                            window.addEventListener('mousemove', function(e) {
+                                if (Date.now() - lastPenUp < 350) {
+                                    var hasMenu = document.querySelector('[data-name="menu-inner"], .menu-wrap, [class*="menu-"], [data-role="menu"]');
+                                    if (hasMenu) {
+                                        e.stopPropagation();
+                                    }
+                                }
+                            }, true);
+                        }
+
+                        triggerChartResize();
+                    } catch (e) {}
                 }
 
                 if (document.readyState === 'loading') {
@@ -502,6 +651,11 @@ object PersistentWebViewPool {
                 } else {
                     applyDesktop();
                 }
+
+                triggerChartResize();
+                requestAnimationFrame(triggerChartResize);
+                setTimeout(triggerChartResize, 25);
+                setTimeout(triggerChartResize, 80);
             })();
             """.trimIndent()
         }
@@ -510,21 +664,41 @@ object PersistentWebViewPool {
     }
 
     /**
-     * 动态热切换固定像素桌面视口基准 (960px / 1280px / 1440px / 1920px)
-     * 通过 evaluateJavascript 实时更新 DOM 视口，无需刷新页面，不中断 WebSocket 行情流
+     * 每个分组独立设置与保存的动态热切换固定像素桌面视口基准 (960px / 1280px / 1440px / 1920px)
      */
-    fun setFixedPixelWidth(newWidth: Int) {
-        _fixedPixelWidth = newWidth
-        appliedScaleMap.clear()
-        webViewMap.forEach { (_, webView) ->
-            injectDesktopViewport(webView, targetPixelWidth = newWidth, force = true)
+    fun setFixedPixelWidthForGroup(groupId: String, newWidth: Int) {
+        saveFixedPixelWidthForGroup(groupId, newWidth, appContext)
+        appliedScaleMap.keys.filter { it.startsWith("\${groupId}_") }.forEach { key ->
+            appliedScaleMap.remove(key)
+            appliedScaleFloatMap.remove(key)
+        }
+        // 仅对该分组下的 WebView 进行实时注入与更新
+        (1..4).forEach { winId ->
+            val webView = getWebViewForGroup(groupId, winId)
+            if (webView != null) {
+                injectDesktopViewport(webView, targetPixelWidth = newWidth, force = true)
+            }
         }
     }
 
     /**
-     * 锁定 / 解锁 网页整版缩放
+     * 动态热切换当前分组固定像素桌面视口基准 (兼容旧接口)
      */
-    fun setZoomLock(locked: Boolean) {
+    fun setFixedPixelWidth(newWidth: Int) {
+        setFixedPixelWidthForGroup(currentGroupId, newWidth)
+    }
+
+    /**
+     * 锁定 / 解锁 网页整版缩放与防自动放大 (彻底阻断 TradingView 搜索品种/设置指标弹窗自动放大)
+     */
+    fun setAutoZoomLocked(locked: Boolean, context: Context? = null) {
+        isAutoZoomLocked = locked
+        val ctx = context ?: appContext
+        ctx?.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            ?.edit()
+            ?.putBoolean("auto_zoom_locked", locked)
+            ?.apply()
+
         val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
         mainHandler.post {
             webViewMap.forEach { (_, webView) ->
@@ -532,36 +706,57 @@ object PersistentWebViewPool {
                     setSupportZoom(!locked)
                     builtInZoomControls = !locked
                 }
+                injectDesktopViewport(webView, force = true)
             }
         }
     }
 
     /**
-     * 循环切换下一个预设固定像素基准
+     * 锁定 / 解锁 网页整版缩放
+     */
+    fun setZoomLock(locked: Boolean) {
+        setAutoZoomLocked(locked)
+    }
+
+    /**
+     * 循环切换下一个预设固定像素基准 (针对当前分组独立生效)
      */
     fun cycleFixedPixelWidth(): Int {
         val widths = PRESET_FIXED_PIXEL_WIDTHS.map { it.width }
-        val currentIndex = widths.indexOf(fixedPixelWidth)
+        val currentWidth = getSavedFixedPixelWidthForGroup(appContext, currentGroupId)
+        val currentIndex = widths.indexOf(currentWidth)
         val nextIndex = if (currentIndex in widths.indices) (currentIndex + 1) % widths.size else 1
         val nextWidth = widths[nextIndex]
-        setFixedPixelWidth(nextWidth)
+        setFixedPixelWidthForGroup(currentGroupId, nextWidth)
         return nextWidth
     }
 
     val DESKTOP_VIEWPORT_JS: String
-        get() = """
-            (function() {
-                var m = document.querySelector('meta[name="viewport"]');
-                if (m) m.setAttribute('content', 'width=1280, initial-scale=0.33, minimum-scale=0.1, maximum-scale=5.0, user-scalable=yes');
-            })();
-        """.trimIndent()
+        get() {
+            val content = if (isAutoZoomLocked) {
+                "width=1280, initial-scale=0.33, minimum-scale=0.33, maximum-scale=0.33, user-scalable=no"
+            } else {
+                "width=1280, initial-scale=0.33, minimum-scale=0.1, maximum-scale=5.0, user-scalable=yes"
+            }
+            return """
+                (function() {
+                    var m = document.querySelector('meta[name="viewport"]');
+                    if (m) m.setAttribute('content', '$content');
+                })();
+            """.trimIndent()
+        }
 
     fun init(context: Context) {
         val appCtx = context.applicationContext
         this.appContext = appCtx
         if (isInitialized) return
         
-        // 1. 优先加载当前活跃的分组 (默认 "preset_1")，确保用户瞬间进入可用的完美工作流
+        // 1. 优先读取上次用户退出时保存的活跃分组，杜绝启动阶段把标签页2网址误灌给标签页1！
+        val prefs = appCtx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val savedActiveGroupId = prefs.getString("active_group_id", null) ?: "preset_1"
+        currentGroupId = savedActiveGroupId
+        isAutoZoomLocked = prefs.getBoolean("auto_zoom_locked", true)
+
         val primaryGroupId = currentGroupId
         listOf(1, 2, 3, 4).forEach { windowId ->
             val key = "\${primaryGroupId}_$windowId"
@@ -667,17 +862,89 @@ object PersistentWebViewPool {
         // 原生 WebSocket 与 Blink 内核自然调度，无需 JS 状态干预
     }
 
+    /**
+     * 专属定制的触控笔稳态 WebView：
+     * 精准识别 vivo 触控笔 (TOOL_TYPE_STYLUS) 的点击与抬笔生命周期，
+     * 在触控笔抬笔瞬间 (350ms 内) 拦截空中残余悬停事件 (Hover Jitter)，杜绝 TradingView 下拉菜单瞬间关闭。
+     */
+    class StylusStabilizedWebView(context: Context) : WebView(context) {
+        private var lastStylusUpTime = 0L
+
+        // 触控笔悬停离开或停顿 300ms 自动清除十字星标 Runnable
+        private val stylusDismissRunnable = Runnable {
+            val clearJs = """
+                (function() {
+                    try {
+                        var cx = -1000;
+                        var cy = -1000;
+                        var targets = Array.from(document.querySelectorAll('canvas, .chart-widget, .layout__area--center') || []);
+                        if (window.__lastHoverTarget && targets.indexOf(window.__lastHoverTarget) === -1) {
+                            targets.push(window.__lastHoverTarget);
+                        }
+                        var ePen = { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy, screenX: cx, screenY: cy, pageX: cx, pageY: cy, pointerType: 'pen', isPrimary: true, pointerId: 1, button: 0, buttons: 0 };
+                        var eMouse = { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy, screenX: cx, screenY: cy, pageX: cx, pageY: cy, button: 0, buttons: 0 };
+                        for (var i = 0; i < targets.length; i++) {
+                            try {
+                                targets[i].dispatchEvent(new PointerEvent('pointerout', ePen));
+                                targets[i].dispatchEvent(new PointerEvent('pointerleave', ePen));
+                                targets[i].dispatchEvent(new MouseEvent('mouseout', eMouse));
+                                targets[i].dispatchEvent(new MouseEvent('mouseleave', eMouse));
+                            } catch(e) {}
+                        }
+                        window.__lastHoverTarget = null;
+                    } catch(e) {}
+                })();
+            """.trimIndent()
+            evaluateJavascript(clearJs, null)
+        }
+
+        override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+            if (event.pointerCount > 0 && event.getToolType(0) == MotionEvent.TOOL_TYPE_STYLUS) {
+                val action = event.actionMasked
+                if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+                    lastStylusUpTime = SystemClock.uptimeMillis()
+                }
+            }
+            return super.dispatchTouchEvent(event)
+        }
+
+        override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
+            val action = event.actionMasked
+            if (event.pointerCount > 0 && event.getToolType(0) == MotionEvent.TOOL_TYPE_STYLUS) {
+                if (action == MotionEvent.ACTION_HOVER_MOVE || action == MotionEvent.ACTION_HOVER_ENTER) {
+                    // 每次触控笔在空中移动或进入感应区，刷新 300ms 定时器
+                    removeCallbacks(stylusDismissRunnable)
+                    postDelayed(stylusDismissRunnable, 300L)
+
+                    val elapsed = SystemClock.uptimeMillis() - lastStylusUpTime
+                    if (elapsed < 350L) {
+                        // 过滤触控笔抬笔瞬间在菜单周围产生的空中悬停抖动，防止误触发 TradingView 菜单失焦关闭
+                        return true
+                    }
+                } else if (action == MotionEvent.ACTION_HOVER_EXIT) {
+                    // 触控笔离开本视窗感应范围，立即清除十字星标
+                    removeCallbacks(stylusDismissRunnable)
+                    post(stylusDismissRunnable)
+                }
+            }
+            return super.dispatchGenericMotionEvent(event)
+        }
+    }
+
     @SuppressLint("SetJavaScriptEnabled")
     private fun createConfiguredWebView(context: Context, key: String): WebView {
+        val ownerGroupId = key.substringBeforeLast("_")
         val parts = key.split("_")
         val windowId = parts.lastOrNull()?.toIntOrNull() ?: 1
-        return WebView(context).apply {
+        return StylusStabilizedWebView(context).apply {
             id = View.generateViewId()
             tag = key
             layoutParams = ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
             )
+            isFocusable = true
+            isFocusableInTouchMode = true
 
             // 关键优化 1：彻底解决 K 线图表在数据更新更正时的周期性闪烁！
             // Android 窗口在 AndroidManifest 中已开启硬件加速，Chromium 原生通过专用 GPU 合成线程渲染 WebGL / Canvas。
@@ -717,6 +984,11 @@ object PersistentWebViewPool {
                 }
             }
 
+            // 启用 Cookie 支持与跨子域第三方 Cookie (解决飞书单点登录与TradingView跨子域会话问题)
+            val cookieManager = CookieManager.getInstance()
+            cookieManager.setAcceptCookie(true)
+            cookieManager.setAcceptThirdPartyCookies(this, true)
+
             settings.apply {
                 javaScriptEnabled = true
                 domStorageEnabled = true // 必须开启：TradingView 用户配置与 WebSocket 必要存储
@@ -724,9 +996,13 @@ object PersistentWebViewPool {
                 loadsImagesAutomatically = true
                 useWideViewPort = true
                 loadWithOverviewMode = true
-                setSupportZoom(true)
-                builtInZoomControls = true
+                setSupportZoom(!isAutoZoomLocked)
+                builtInZoomControls = !isAutoZoomLocked
                 displayZoomControls = false
+
+                // 开启多窗口支持与脚本弹窗自动允许，供 webChromeClient.onCreateWindow 拦截重定向
+                setSupportMultipleWindows(true)
+                javaScriptCanOpenWindowsAutomatically = true
 
                 // 混合内容与安全策略配置
                 mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
@@ -745,25 +1021,27 @@ object PersistentWebViewPool {
             webViewClient = object : WebViewClient() {
                 override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                     super.onPageStarted(view, url, favicon)
-                    // 页面开始加载时，注入根据当前窗口宽度计算的黄金缩放桌面视口
-                    view?.let { injectDesktopViewport(it, force = true) }
-                    if (url != null && url != lastReportedUrl) {
-                        lastReportedUrl = url
-                        saveWindowUrl(windowId, url, view?.title ?: "")
-                        onUrlChanged?.invoke(windowId, url, view?.title ?: "")
-                    }
-                }
-
-                override fun onPageFinished(view: WebView?, url: String?) {
-                    super.onPageFinished(view, url)
-                    // 页面渲染完成后再次加固注入，确保桌面宽屏自适应
+                    // 页面开始加载时，根据当前窗口宽度计算黄金缩放桌面视口
                     view?.let {
                         injectDesktopViewport(it, force = true)
                     }
                     if (url != null && url != lastReportedUrl) {
                         lastReportedUrl = url
-                        saveWindowUrl(windowId, url, view?.title ?: "")
-                        onUrlChanged?.invoke(windowId, url, view?.title ?: "")
+                        saveWindowUrlForGroup(ownerGroupId, windowId, url, view?.title ?: "", context)
+                        onUrlChanged?.invoke(ownerGroupId, windowId, url, view?.title ?: "")
+                    }
+                }
+
+                override fun onPageFinished(view: WebView?, url: String?) {
+                    super.onPageFinished(view, url)
+                    // 页面渲染完成后再次加固注入，确保宽屏自适应 100% 生效
+                    view?.let {
+                        injectDesktopViewport(it, force = true)
+                    }
+                    if (url != null && url != lastReportedUrl) {
+                        lastReportedUrl = url
+                        saveWindowUrlForGroup(ownerGroupId, windowId, url, view?.title ?: "", context)
+                        onUrlChanged?.invoke(ownerGroupId, windowId, url, view?.title ?: "")
                     }
                 }
 
@@ -771,8 +1049,8 @@ object PersistentWebViewPool {
                     super.doUpdateVisitedHistory(view, url, isReload)
                     if (url != null && url != lastReportedUrl) {
                         lastReportedUrl = url
-                        saveWindowUrl(windowId, url, view?.title ?: "")
-                        onUrlChanged?.invoke(windowId, url, view?.title ?: "")
+                        saveWindowUrlForGroup(ownerGroupId, windowId, url, view?.title ?: "", context)
+                        onUrlChanged?.invoke(ownerGroupId, windowId, url, view?.title ?: "")
                     }
                 }
 
@@ -780,18 +1058,48 @@ object PersistentWebViewPool {
                     view: WebView?,
                     request: WebResourceRequest?
                 ): Boolean {
-                    // 保持在当前视窗内跳转，拦截外部应用唤起
-                    return false
+                    val targetUri = request?.url ?: return false
+                    val scheme = targetUri.scheme?.lowercase() ?: ""
+                    if (scheme == "http" || scheme == "https") {
+                        return false // 保持在当前视窗内跳转
+                    }
+                    // 拦截外部应用唤起协议 (如 feishu://) 防止在无客户端环境下报错
+                    return true
                 }
             }
 
             webChromeClient = object : WebChromeClient() {
+                override fun onCreateWindow(
+                    view: WebView?,
+                    isDialog: Boolean,
+                    isUserGesture: Boolean,
+                    resultMsg: android.os.Message?
+                ): Boolean {
+                    // 拦截新窗口弹出 (如点击飞书“网页版”或 target="_blank")，直接在当前视窗中加载
+                    if (resultMsg == null) return false
+                    val transport = resultMsg.obj as? WebView.WebViewTransport ?: return false
+                    val tempWebView = WebView(view?.context ?: context)
+                    tempWebView.webViewClient = object : WebViewClient() {
+                        override fun shouldOverrideUrlLoading(v: WebView?, req: WebResourceRequest?): Boolean {
+                            val targetUrl = req?.url?.toString()
+                            if (!targetUrl.isNullOrBlank()) {
+                                view?.loadUrl(targetUrl)
+                            }
+                            tempWebView.destroy()
+                            return true
+                        }
+                    }
+                    transport.webView = tempWebView
+                    resultMsg.sendToTarget()
+                    return true
+                }
+
                 override fun onReceivedTitle(view: WebView?, title: String?) {
                     super.onReceivedTitle(view, title)
-                    // 关键优化 3：TradingView / Binance 每次 K 线数据更新更正（每十几秒）都会动态更新 document.title（如价格 68500 BTCUSDT）
                     // 仅通知 onTitleChanged 更新标签栏文字，坚决不触发 onUrlChanged，杜绝 Compose 全局重组与 WebView 重载闪烁！
                     if (!title.isNullOrBlank()) {
-                        onTitleChanged?.invoke(windowId, title)
+                        saveWindowUrlForGroup(ownerGroupId, windowId, url ?: "", title, context)
+                        onTitleChanged?.invoke(ownerGroupId, windowId, title)
                     }
                 }
 
@@ -817,8 +1125,9 @@ object PersistentWebViewPool {
         val webView = getWebView(windowId) ?: return
         val clampedZoom = zoomPercent.coerceIn(50, 250)
         currentZoomPercent = clampedZoom
+        saveZoomForGroup(currentGroupId, clampedZoom, appContext)
         webView.settings.textZoom = clampedZoom
-        injectDesktopViewport(webView, clampedZoom, force = true)
+        injectDesktopViewport(webView, zoomPercent = clampedZoom, force = true)
     }
 
     /**
@@ -827,8 +1136,9 @@ object PersistentWebViewPool {
     fun triggerAutoFit(windowId: Int) {
         val webView = getWebView(windowId) ?: return
         currentZoomPercent = 100
+        saveZoomForGroup(currentGroupId, 100, appContext)
         webView.settings.textZoom = 100
-        injectDesktopViewport(webView, 100, force = true)
+        injectDesktopViewport(webView, zoomPercent = 100, force = true)
     }
 
     /**
@@ -850,7 +1160,7 @@ object PersistentWebViewPool {
         }
         appliedScaleMap.remove("\${currentGroupId}_$windowId")
         if (enableDesktop) {
-            injectDesktopViewport(webView, currentZoomPercent, force = true)
+            injectDesktopViewport(webView, zoomPercent = currentZoomPercent, force = true)
         }
         webView.reload()
     }
@@ -904,15 +1214,23 @@ object PersistentWebViewPool {
      * @return true 表示确实加载了新页面；false 表示页面相同已跳过
      */
     fun loadCustomUrl(windowId: Int, url: String, forceReload: Boolean = false): Boolean {
+        return loadCustomUrlForGroup(currentGroupId, windowId, url, forceReload)
+    }
+
+    /**
+     * 针对指定分组独立加载 URL 并持久化至该分组
+     */
+    fun loadCustomUrlForGroup(groupId: String, windowId: Int, url: String, forceReload: Boolean = false): Boolean {
         val formatted = formatUrl(url)
-        val webView = getWebView(windowId) ?: return false
-        // 关键持久化：记录用户输入的网址
-        saveWindowUrl(windowId, formatted)
+        val webView = getWebViewForGroup(groupId, windowId) ?: return false
+        // 关键持久化：记录用户输入的网址到目标分组中
+        saveWindowUrlForGroup(groupId, windowId, formatted)
         val current = webView.url ?: ""
         if (!forceReload && isSameUrl(current, formatted)) {
             return false
         }
-        appliedScaleMap.remove("\${currentGroupId}_$windowId")
+        appliedScaleMap.remove("\${groupId}_$windowId")
+        appliedScaleFloatMap.remove("\${groupId}_$windowId")
         webView.loadUrl(formatted)
         return true
     }
@@ -1012,6 +1330,179 @@ object PersistentWebViewPool {
             webView.dispatchKeyEvent(KeyEvent(t, t, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER, 0))
             webView.dispatchKeyEvent(KeyEvent(t, t + 25, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER, 0))
         }, currentDelay + 100L)
+
+        // 阶段 1 (700ms)：等待 K 线数据与 Canvas 首帧重绘后，跨图点击非活跃图 B 触发全局比例广播 (彻底移除自动隐藏画图，杜绝误触)
+        handler.postDelayed({
+            val stage1Script = """
+                (function() {
+                    try {
+                        function triggerLeftClick(targetEl) {
+                            if (!targetEl) return;
+                            var r = targetEl.getBoundingClientRect();
+                            var cx = r.left + r.width / 2;
+                            var cy = r.top + r.height / 2;
+                            var evtOpts = {
+                                bubbles: true,
+                                cancelable: true,
+                                clientX: cx,
+                                clientY: cy,
+                                screenX: cx,
+                                screenY: cy,
+                                view: window,
+                                button: 0,
+                                buttons: 1,
+                                pointerType: 'mouse',
+                                isPrimary: true
+                            };
+                            try {
+                                targetEl.dispatchEvent(new PointerEvent('pointerdown', evtOpts));
+                                targetEl.dispatchEvent(new MouseEvent('mousedown', evtOpts));
+                                targetEl.dispatchEvent(new PointerEvent('pointerup', Object.assign({}, evtOpts, { buttons: 0 })));
+                                targetEl.dispatchEvent(new MouseEvent('mouseup', Object.assign({}, evtOpts, { buttons: 0 })));
+                                targetEl.dispatchEvent(new MouseEvent('click', Object.assign({}, evtOpts, { buttons: 0 })));
+                            } catch(e) {
+                                targetEl.dispatchEvent(new MouseEvent('click', evtOpts));
+                            }
+                        }
+
+                        // 【跨图焦点迁移】：坚决避开当前图 A，精确提取非图 A 候选列表中 K 线密度最大的图 B
+                        var allWidgets = Array.from(document.querySelectorAll('.chart-widget') || []);
+                        if (allWidgets.length === 0) {
+                            allWidgets = Array.from(document.querySelectorAll('[data-role="chart"]') || []);
+                        }
+                        var validWidgets = allWidgets.filter(function(w) {
+                            var r = w.getBoundingClientRect();
+                            return r.width > 50 && r.height > 50;
+                        });
+
+                        if (validWidgets.length > 1) {
+                            // 识别刚输入周期的活跃图 A
+                            var activeWidget = null;
+                            for (var wi = 0; wi < validWidgets.length; wi++) {
+                                var w = validWidgets[wi];
+                                var cName = w.className || "";
+                                if (cName.indexOf("active") !== -1 || cName.indexOf("selected") !== -1 || w.getAttribute("data-active") === "true") {
+                                    activeWidget = w;
+                                    break;
+                                }
+                            }
+                            if (!activeWidget && document.activeElement) {
+                                activeWidget = document.activeElement.closest('.chart-widget') || document.activeElement.closest('[data-role="chart"]');
+                            }
+
+                            // 坚决排除图 A，只在剩余子图中比对
+                            var otherWidgets = validWidgets.filter(function(w) {
+                                return w !== activeWidget;
+                            });
+                            if (otherWidgets.length === 0) otherWidgets = validWidgets;
+
+                            // 寻找时间轴刻度密度最大或正常的图 B
+                            var bestWidget = null;
+                            var maxDensity = -1;
+                            for (var oi = 0; oi < otherWidgets.length; oi++) {
+                                var ow = otherWidgets[oi];
+                                var axisTexts = ow.querySelectorAll('[class*="time-axis"] text, [class*="timeAxis"] text, [data-name="time-axis"] text, text');
+                                var density = axisTexts.length;
+                                if (density > maxDensity) {
+                                    maxDensity = density;
+                                    bestWidget = ow;
+                                }
+                            }
+                            if (!bestWidget) bestWidget = otherWidgets[0];
+
+                            var targetCanvas = bestWidget.querySelector('canvas.interactive-graphics-layer') || 
+                                               bestWidget.querySelector('canvas') || 
+                                               bestWidget;
+                            triggerLeftClick(targetCanvas);
+                        } else if (validWidgets.length === 1) {
+                            var singleCanvas = validWidgets[0].querySelector('canvas.interactive-graphics-layer') || 
+                                               validWidgets[0].querySelector('canvas') || 
+                                               validWidgets[0];
+                            triggerLeftClick(singleCanvas);
+                        } else {
+                            var fallbackCanvas = document.querySelector('canvas.interactive-graphics-layer') || document.querySelector('canvas');
+                            if (fallbackCanvas) triggerLeftClick(fallbackCanvas);
+                        }
+                    } catch(e) {}
+                })();
+            """.trimIndent()
+            webView.evaluateJavascript(stage1Script, null)
+        }, currentDelay + 700L)
+
+        // 阶段 2 (2000ms 看护巡检)：等待 2 秒确认所有子图 WebSocket 行情与 Canvas 渲染完毕，若不同窗口比例差异显著，精准补点密度紧凑的正常窗口
+        handler.postDelayed({
+            val stage2Script = """
+                (function() {
+                    try {
+                        function triggerLeftClick(targetEl) {
+                            if (!targetEl) return;
+                            var r = targetEl.getBoundingClientRect();
+                            var cx = r.left + r.width / 2;
+                            var cy = r.top + r.height / 2;
+                            var evtOpts = {
+                                bubbles: true,
+                                cancelable: true,
+                                clientX: cx,
+                                clientY: cy,
+                                screenX: cx,
+                                screenY: cy,
+                                view: window,
+                                button: 0,
+                                buttons: 1,
+                                pointerType: 'mouse',
+                                isPrimary: true
+                            };
+                            try {
+                                targetEl.dispatchEvent(new PointerEvent('pointerdown', evtOpts));
+                                targetEl.dispatchEvent(new MouseEvent('mousedown', evtOpts));
+                                targetEl.dispatchEvent(new PointerEvent('pointerup', Object.assign({}, evtOpts, { buttons: 0 })));
+                                targetEl.dispatchEvent(new MouseEvent('mouseup', Object.assign({}, evtOpts, { buttons: 0 })));
+                                targetEl.dispatchEvent(new MouseEvent('click', Object.assign({}, evtOpts, { buttons: 0 })));
+                            } catch(e) {
+                                targetEl.dispatchEvent(new MouseEvent('click', evtOpts));
+                            }
+                        }
+
+                        var allWidgets = Array.from(document.querySelectorAll('.chart-widget') || []);
+                        if (allWidgets.length === 0) {
+                            allWidgets = Array.from(document.querySelectorAll('[data-role="chart"]') || []);
+                        }
+                        var validWidgets = allWidgets.filter(function(w) {
+                            var r = w.getBoundingClientRect();
+                            return r.width > 50 && r.height > 50;
+                        });
+
+                        if (validWidgets.length > 1) {
+                            // 统计每个窗口的时间轴刻度标签数与宽度，计算密度 (刻度数 / 宽度)
+                            var widgetStats = validWidgets.map(function(w) {
+                                var r = w.getBoundingClientRect();
+                                var axisTexts = w.querySelectorAll('[class*="time-axis"] text, [class*="timeAxis"] text, [data-name="time-axis"] text, text');
+                                var count = axisTexts.length;
+                                var density = count / (r.width || 1);
+                                return { widget: w, count: count, density: density, width: r.width };
+                            });
+
+                            var maxItem = widgetStats[0];
+                            var minItem = widgetStats[0];
+                            for (var i = 1; i < widgetStats.length; i++) {
+                                if (widgetStats[i].density > maxItem.density) maxItem = widgetStats[i];
+                                if (widgetStats[i].density < minItem.density) minItem = widgetStats[i];
+                            }
+
+                            // 若最高密度比最低密度高出 35% 以上或刻度标签数相差 >= 3，说明存在比例过大的异常窗口
+                            var ratio = (minItem.density > 0) ? (maxItem.density / minItem.density) : 2.0;
+                            if (ratio > 1.35 || (maxItem.count - minItem.count >= 3)) {
+                                var targetCanvas = maxItem.widget.querySelector('canvas.interactive-graphics-layer') || 
+                                                   maxItem.widget.querySelector('canvas') || 
+                                                   maxItem.widget;
+                                triggerLeftClick(targetCanvas);
+                            }
+                        }
+                    } catch(e) {}
+                })();
+            """.trimIndent()
+            webView.evaluateJavascript(stage2Script, null)
+        }, currentDelay + 2000L)
     }
 
     private fun buildActionExecutionScript(action: String, customDelayMs: Long = 0L): String {
@@ -1106,8 +1597,7 @@ object PersistentWebViewPool {
                                      firstWidget,
                             widget: firstWidget
                         });
-                    }
- else {
+                    } else {
                         // 其他动作 (如 hide 画线)：使用主画布或第一图
                         var baseEl = widgets.length > 0 ? widgets[0] : (document.querySelector('.layout__area--center') || document.body);
                         var bRect = baseEl.getBoundingClientRect();
@@ -1172,18 +1662,6 @@ object PersistentWebViewPool {
                                 return;
                             } else if (action.indexOf('timeframe_') === 0) {
                                 var tfVal = action.substring(10);
-
-                                // 策略 1: 尝试 TradingView 原生 API (若已暴露)
-                                try {
-                                    if (window.tvWidget && typeof window.tvWidget.chart === 'function') {
-                                        window.tvWidget.chart().setResolution(tfVal);
-                                        return;
-                                    }
-                                    if (window.TradingView && typeof window.TradingView.activeChart === 'function') {
-                                        window.TradingView.activeChart().setResolution(tfVal);
-                                        return;
-                                    }
-                                } catch(e) {}
 
                                 function simulateDragLeftOnChart(chartTarget, onComplete) {
                                     try {
@@ -1393,6 +1871,561 @@ object PersistentWebViewPool {
         // 用户已要求删除网页内的浮动工具栏，保持看盘界面完全纯净无遮挡
     }
 
+    // =========================================================================
+    // 原生虚拟鼠标 / 触控板事件派发引擎 (Virtual Mouse Dispatch Engine)
+    // 直接向处于光标下方的 TradingView WebView 派发真实 MotionEvent (TOOL_TYPE_MOUSE)
+    // 完美触发 TradingView 官方十字光标交叉悬停 (Crosshair Hover)、OHLC 数值浮层与滚轮缩放
+    // =========================================================================
+
+    /**
+     * 根据屏幕全局绝对坐标 (screenX, screenY)，定位当前处于其下方的活跃视窗 (windowId, WebView)
+     */
+    fun findWebViewAtScreenPoint(screenX: Float, screenY: Float): Pair<Int, WebView>? {
+        val loc = IntArray(2)
+        for (windowId in 1..4) {
+            val wv = getWebView(windowId) ?: continue
+            if (!wv.isShown || wv.width <= 0 || wv.height <= 0) continue
+            wv.getLocationOnScreen(loc)
+            val vx = loc[0].toFloat()
+            val vy = loc[1].toFloat()
+            val vw = wv.width.toFloat()
+            val vh = wv.height.toFloat()
+            if (screenX >= vx && screenX <= vx + vw && screenY >= vy && screenY <= vy + vh) {
+                return Pair(windowId, wv)
+            }
+        }
+        return null
+    }
+
+    /**
+     * 辅助构造标准鼠标/触控笔输入事件 (包含 PointerProperties 与 buttonState)
+     */
+    private fun createMouseEvent(
+        action: Int,
+        downTime: Long,
+        eventTime: Long,
+        x: Float,
+        y: Float,
+        buttonState: Int = 0,
+        toolType: Int = MotionEvent.TOOL_TYPE_MOUSE,
+        source: Int = android.view.InputDevice.SOURCE_MOUSE
+    ): MotionEvent {
+        val props = arrayOf(MotionEvent.PointerProperties().apply {
+            id = 0
+            this.toolType = toolType
+        })
+        val coords = arrayOf(MotionEvent.PointerCoords().apply {
+            this.x = x
+            this.y = y
+        })
+        return MotionEvent.obtain(
+            downTime, eventTime,
+            action,
+            1, props, coords,
+            0, buttonState, 1.0f, 1.0f, 0, 0,
+            source, 0
+        )
+    }
+
+    /**
+     * 清理所有或指定视窗外的十字星标，使其移出屏幕并派发 hover exit
+     */
+    fun clearCrosshairs(exceptWindowId: Int? = null) {
+        val now = SystemClock.uptimeMillis()
+        if (exceptWindowId == null) {
+            lastHoveredWindowId = null
+        }
+        val js = """
+            (function() {
+                try {
+                    var cx = -1000;
+                    var cy = -1000;
+                    var targets = [
+                        window.__lastHoverTarget,
+                        document.querySelector('canvas.interactive-graphics-layer'),
+                        document.querySelector('canvas'),
+                        document.body
+                    ];
+                    var eInit = { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy, screenX: cx, screenY: cy, pageX: cx, pageY: cy, pointerType: 'mouse', isPrimary: true, pointerId: 1, button: 0, buttons: 0 };
+                    var ePen = { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy, screenX: cx, screenY: cy, pageX: cx, pageY: cy, pointerType: 'pen', isPrimary: true, pointerId: 1, button: 0, buttons: 0 };
+                    for (var i = 0; i < targets.length; i++) {
+                        var target = targets[i];
+                        if (target) {
+                            try {
+                                target.dispatchEvent(new PointerEvent('pointerout', eInit));
+                                target.dispatchEvent(new MouseEvent('mouseout', eInit));
+                                target.dispatchEvent(new PointerEvent('pointerleave', eInit));
+                                target.dispatchEvent(new MouseEvent('mouseleave', eInit));
+                                target.dispatchEvent(new PointerEvent('pointerout', ePen));
+                                target.dispatchEvent(new PointerEvent('pointerleave', ePen));
+                            } catch(e) {}
+                        }
+                    }
+                    window.__lastHoverTarget = null;
+                } catch(e) {}
+            })();
+        """.trimIndent()
+
+        for (windowId in 1..4) {
+            if (windowId == exceptWindowId) continue
+            val wv = getWebView(windowId) ?: continue
+            if (!wv.isShown) continue
+            wv.post {
+                try {
+                    // 发送虚拟光标 ACTION_HOVER_EXIT 事件至负坐标，通知 WebView 光标彻底离开视窗 (绝不派发触控笔事件以免引发递归)
+                    val exitEvent = createMouseEvent(
+                        action = MotionEvent.ACTION_HOVER_EXIT,
+                        downTime = now,
+                        eventTime = now,
+                        x = -1000f,
+                        y = -1000f,
+                        buttonState = 0
+                    )
+                    wv.dispatchGenericMotionEvent(exitEvent)
+                    exitEvent.recycle()
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+                wv.evaluateJavascript(js, null)
+            }
+        }
+    }
+
+    /**
+     * 模拟真实鼠标移动悬停 (ACTION_HOVER_MOVE)，触发 TradingView 的原生十字光标 (Crosshair) 与 OHLC 数值浮层
+     */
+    fun dispatchVirtualMouseHover(screenX: Float, screenY: Float): Boolean {
+        val target = findWebViewAtScreenPoint(screenX, screenY)
+        if (target == null) {
+            if (lastHoveredWindowId != null) {
+                clearCrosshairs()
+                lastHoveredWindowId = null
+            }
+            return false
+        }
+
+        val currentWindowId = target.first
+        val isNewWindow = currentWindowId != lastHoveredWindowId
+        if (isNewWindow) {
+            clearCrosshairs(exceptWindowId = currentWindowId)
+            lastHoveredWindowId = currentWindowId
+        }
+
+        val wv = target.second
+        val loc = IntArray(2)
+        wv.getLocationOnScreen(loc)
+        val localX = screenX - loc[0]
+        val localY = screenY - loc[1]
+        val now = SystemClock.uptimeMillis()
+
+        if (isNewWindow) {
+            if (!wv.isFocused) {
+                wv.requestFocus()
+            }
+            val enterEvent = createMouseEvent(
+                action = MotionEvent.ACTION_HOVER_ENTER,
+                downTime = now,
+                eventTime = now,
+                x = localX,
+                y = localY,
+                buttonState = 0
+            )
+            wv.dispatchGenericMotionEvent(enterEvent)
+            enterEvent.recycle()
+        }
+
+        val event = createMouseEvent(
+            action = MotionEvent.ACTION_HOVER_MOVE,
+            downTime = now,
+            eventTime = now,
+            x = localX,
+            y = localY,
+            buttonState = 0
+        )
+        val res = wv.dispatchGenericMotionEvent(event)
+        event.recycle()
+
+        val wvW = wv.width.toFloat().coerceAtLeast(1f)
+        val wvH = wv.height.toFloat().coerceAtLeast(1f)
+        val js = """
+            (function() {
+                try {
+                    var rx = Math.max(0, Math.min(1, $localX / $wvW));
+                    var ry = Math.max(0, Math.min(1, $localY / $wvH));
+                    var cx = rx * window.innerWidth;
+                    var cy = ry * window.innerHeight;
+
+                    // 1. 精准获取当前坐标下的核心目标元素 (不给所有 Canvas 群发以防坐标错乱冲撞导致十字准星被隐藏)
+                    var el = document.elementFromPoint(cx, cy);
+                    if (el && el.tagName === 'IFRAME') {
+                        try {
+                            var idoc = el.contentDocument || (el.contentWindow && el.contentWindow.document);
+                            if (idoc) {
+                                var irect = el.getBoundingClientRect();
+                                var icx = cx - irect.left;
+                                var icy = cy - irect.top;
+                                var iEl = idoc.elementFromPoint(icx, icy);
+                                if (iEl) el = iEl;
+                            }
+                        } catch(e) {}
+                    }
+                    if (!el) {
+                        el = document.querySelector('canvas.interactive-graphics-layer') || document.querySelector('canvas') || document.body;
+                    }
+
+                    var opts = {
+                        bubbles: true,
+                        cancelable: true,
+                        view: window,
+                        clientX: cx,
+                        clientY: cy,
+                        screenX: cx,
+                        screenY: cy,
+                        pageX: cx,
+                        pageY: cy,
+                        button: 0,
+                        buttons: 0,
+                        pointerId: 1,
+                        pointerType: 'mouse',
+                        isPrimary: true
+                    };
+
+                    if (window.__lastHoverTarget !== el) {
+                        if (window.__lastHoverTarget) {
+                            try {
+                                window.__lastHoverTarget.dispatchEvent(new PointerEvent('pointerout', opts));
+                                window.__lastHoverTarget.dispatchEvent(new MouseEvent('mouseout', opts));
+                            } catch(e) {}
+                        }
+                        window.__lastHoverTarget = el;
+                        el.dispatchEvent(new PointerEvent('pointerover', opts));
+                        el.dispatchEvent(new MouseEvent('mouseover', opts));
+                        el.dispatchEvent(new PointerEvent('pointerenter', opts));
+                        el.dispatchEvent(new MouseEvent('mouseenter', opts));
+                    }
+
+                    el.dispatchEvent(new PointerEvent('pointermove', opts));
+                    el.dispatchEvent(new MouseEvent('mousemove', opts));
+                } catch(e) {}
+            })();
+        """.trimIndent()
+        wv.post { wv.evaluateJavascript(js, null) }
+        return res
+    }
+
+    /**
+     * 模拟真实鼠标单击 (左键或右键)
+     * 精准派发原子级单次点击事件序列，杜绝双击或二次触控事件导致 TradingView 顶部下拉菜单闪现即关
+     */
+    fun dispatchVirtualMouseClick(screenX: Float, screenY: Float, isRightClick: Boolean = false): Boolean {
+        val target = findWebViewAtScreenPoint(screenX, screenY) ?: return false
+        val wv = target.second
+        val loc = IntArray(2)
+        wv.getLocationOnScreen(loc)
+        val localX = screenX - loc[0]
+        val localY = screenY - loc[1]
+        val wvW = wv.width.toFloat().coerceAtLeast(1f)
+        val wvH = wv.height.toFloat().coerceAtLeast(1f)
+
+        if (!wv.isFocused) {
+            wv.requestFocus()
+        }
+
+        // DOM / Canvas 级合成事件派发 (精准定位网页、内嵌 iframe 与 TradingView 图表)
+        val js = """
+            (function() {
+                try {
+                    var rx = Math.max(0, Math.min(1, $localX / $wvW));
+                    var ry = Math.max(0, Math.min(1, $localY / $wvH));
+                    var cx = rx * window.innerWidth;
+                    var cy = ry * window.innerHeight;
+                    var el = document.elementFromPoint(cx, cy);
+                    if (el && el.tagName === 'IFRAME') {
+                        try {
+                            var idoc = el.contentDocument || (el.contentWindow && el.contentWindow.document);
+                            if (idoc) {
+                                var irect = el.getBoundingClientRect();
+                                var icx = cx - irect.left;
+                                var icy = cy - irect.top;
+                                var iEl = idoc.elementFromPoint(icx, icy);
+                                if (iEl) el = iEl;
+                            }
+                        } catch(e) {}
+                    }
+                    if (!el) el = document.body;
+                    var isR = $isRightClick;
+                    if (isR) {
+                        var pDown = new PointerEvent('pointerdown', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, button: 2, buttons: 2, pointerType: 'mouse' });
+                        var mDown = new MouseEvent('mousedown', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, button: 2, buttons: 2 });
+                        var cMenu = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, button: 2, buttons: 2 });
+                        var pUp = new PointerEvent('pointerup', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, button: 2, buttons: 0, pointerType: 'mouse' });
+                        var mUp = new MouseEvent('mouseup', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, button: 2, buttons: 0 });
+                        el.dispatchEvent(pDown);
+                        el.dispatchEvent(mDown);
+                        el.dispatchEvent(cMenu);
+                        el.dispatchEvent(pUp);
+                        el.dispatchEvent(mUp);
+                    } else {
+                        var pDown = new PointerEvent('pointerdown', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, button: 0, buttons: 1, pointerType: 'mouse', isPrimary: true });
+                        var mDown = new MouseEvent('mousedown', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, button: 0, buttons: 1 });
+                        var pUp = new PointerEvent('pointerup', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, button: 0, buttons: 0, pointerType: 'mouse', isPrimary: true });
+                        var mUp = new MouseEvent('mouseup', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, button: 0, buttons: 0 });
+                        var clk = new MouseEvent('click', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, button: 0, buttons: 0 });
+                        el.dispatchEvent(pDown);
+                        el.dispatchEvent(mDown);
+                        el.dispatchEvent(pUp);
+                        el.dispatchEvent(mUp);
+                        el.dispatchEvent(clk);
+                        if (typeof el.focus === 'function') {
+                            el.focus();
+                        }
+                    }
+                } catch(e) {}
+            })();
+        """.trimIndent()
+        wv.post { wv.evaluateJavascript(js, null) }
+        return true
+    }
+
+    /**
+     * 模拟真实鼠标按下 (用于拖拽画线、拖动图表或移动锚点)
+     */
+    fun dispatchVirtualMouseDown(screenX: Float, screenY: Float): Boolean {
+        val target = findWebViewAtScreenPoint(screenX, screenY) ?: return false
+        val wv = target.second
+        val loc = IntArray(2)
+        wv.getLocationOnScreen(loc)
+        val localX = screenX - loc[0]
+        val localY = screenY - loc[1]
+        val wvW = wv.width.toFloat().coerceAtLeast(1f)
+        val wvH = wv.height.toFloat().coerceAtLeast(1f)
+
+        val js = """
+            (function() {
+                try {
+                    var rx = Math.max(0, Math.min(1, $localX / $wvW));
+                    var ry = Math.max(0, Math.min(1, $localY / $wvH));
+                    var cx = rx * window.innerWidth;
+                    var cy = ry * window.innerHeight;
+                    var el = document.elementFromPoint(cx, cy) || document.body;
+                    var pDown = new PointerEvent('pointerdown', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, button: 0, buttons: 1, pointerType: 'mouse', isPrimary: true });
+                    var mDown = new MouseEvent('mousedown', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, button: 0, buttons: 1 });
+                    el.dispatchEvent(pDown);
+                    el.dispatchEvent(mDown);
+                } catch(e) {}
+            })();
+        """.trimIndent()
+        wv.post { wv.evaluateJavascript(js, null) }
+
+        val now = SystemClock.uptimeMillis()
+        val downEvent = MotionEvent.obtain(
+            now, now,
+            MotionEvent.ACTION_DOWN,
+            localX, localY,
+            0
+        )
+        val res = wv.dispatchTouchEvent(downEvent)
+        downEvent.recycle()
+        return res
+    }
+
+    /**
+     * 模拟真实鼠标拖动移动
+     */
+    fun dispatchVirtualMouseMove(screenX: Float, screenY: Float): Boolean {
+        val target = findWebViewAtScreenPoint(screenX, screenY)
+        if (target == null) {
+            if (lastHoveredWindowId != null) {
+                clearCrosshairs()
+                lastHoveredWindowId = null
+            }
+            return false
+        }
+
+        val currentWindowId = target.first
+        if (currentWindowId != lastHoveredWindowId) {
+            clearCrosshairs(exceptWindowId = currentWindowId)
+            lastHoveredWindowId = currentWindowId
+        }
+
+        val wv = target.second
+        val loc = IntArray(2)
+        wv.getLocationOnScreen(loc)
+        val localX = screenX - loc[0]
+        val localY = screenY - loc[1]
+        val wvW = wv.width.toFloat().coerceAtLeast(1f)
+        val wvH = wv.height.toFloat().coerceAtLeast(1f)
+
+        val js = """
+            (function() {
+                try {
+                    var rx = Math.max(0, Math.min(1, $localX / $wvW));
+                    var ry = Math.max(0, Math.min(1, $localY / $wvH));
+                    var cx = rx * window.innerWidth;
+                    var cy = ry * window.innerHeight;
+                    var el = document.elementFromPoint(cx, cy) || document.body;
+                    var pMove = new PointerEvent('pointermove', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, button: 0, buttons: 1, pointerType: 'mouse', isPrimary: true });
+                    var mMove = new MouseEvent('mousemove', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, button: 0, buttons: 1 });
+                    el.dispatchEvent(pMove);
+                    el.dispatchEvent(mMove);
+                } catch(e) {}
+            })();
+        """.trimIndent()
+        wv.post { wv.evaluateJavascript(js, null) }
+
+        val now = SystemClock.uptimeMillis()
+        val moveEvent = MotionEvent.obtain(
+            now, now,
+            MotionEvent.ACTION_MOVE,
+            localX, localY,
+            0
+        )
+        val res = wv.dispatchTouchEvent(moveEvent)
+        moveEvent.recycle()
+        return res
+    }
+
+    /**
+     * 模拟真实鼠标抬起
+     */
+    fun dispatchVirtualMouseUp(screenX: Float, screenY: Float): Boolean {
+        val target = findWebViewAtScreenPoint(screenX, screenY) ?: return false
+        val wv = target.second
+        val loc = IntArray(2)
+        wv.getLocationOnScreen(loc)
+        val localX = screenX - loc[0]
+        val localY = screenY - loc[1]
+        val wvW = wv.width.toFloat().coerceAtLeast(1f)
+        val wvH = wv.height.toFloat().coerceAtLeast(1f)
+
+        val js = """
+            (function() {
+                try {
+                    var rx = Math.max(0, Math.min(1, $localX / $wvW));
+                    var ry = Math.max(0, Math.min(1, $localY / $wvH));
+                    var cx = rx * window.innerWidth;
+                    var cy = ry * window.innerHeight;
+                    var el = document.elementFromPoint(cx, cy) || document.body;
+                    var pUp = new PointerEvent('pointerup', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, button: 0, buttons: 0, pointerType: 'mouse', isPrimary: true });
+                    var mUp = new MouseEvent('mouseup', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, button: 0, buttons: 0 });
+                    el.dispatchEvent(pUp);
+                    el.dispatchEvent(mUp);
+                } catch(e) {}
+            })();
+        """.trimIndent()
+        wv.post { wv.evaluateJavascript(js, null) }
+
+        val now = SystemClock.uptimeMillis()
+        val upEvent = MotionEvent.obtain(
+            now, now,
+            MotionEvent.ACTION_UP,
+            localX, localY,
+            0
+        )
+        val res = wv.dispatchTouchEvent(upEvent)
+        upEvent.recycle()
+        return res
+    }
+
+    /**
+     * 模拟真实鼠标滚轮滑动 (ACTION_SCROLL)，TradingView 原生响应缩放或平移 K 线
+     * @param scrollDeltaY 正数向上滚 (放大)，负数向下滚 (缩小)
+     */
+    fun dispatchVirtualMouseScroll(screenX: Float, screenY: Float, scrollDeltaY: Float): Boolean {
+        val target = findWebViewAtScreenPoint(screenX, screenY) ?: return false
+        val wv = target.second
+        val loc = IntArray(2)
+        wv.getLocationOnScreen(loc)
+        val localX = screenX - loc[0]
+        val localY = screenY - loc[1]
+        val wvW = wv.width.toFloat().coerceAtLeast(1f)
+        val wvH = wv.height.toFloat().coerceAtLeast(1f)
+
+        // 1. JS WheelEvent 派发 (驱动 TradingView 图表缩放)
+        val js = """
+            (function() {
+                try {
+                    var rx = Math.max(0, Math.min(1, $localX / $wvW));
+                    var ry = Math.max(0, Math.min(1, $localY / $wvH));
+                    var cx = rx * window.innerWidth;
+                    var cy = ry * window.innerHeight;
+                    var el = document.elementFromPoint(cx, cy) || document.body;
+                    var wEvt = new WheelEvent('wheel', {
+                        bubbles: true,
+                        cancelable: true,
+                        clientX: cx,
+                        clientY: cy,
+                        deltaY: -($scrollDeltaY * 120),
+                        deltaMode: 0
+                    });
+                    el.dispatchEvent(wEvt);
+                } catch(e) {}
+            })();
+        """.trimIndent()
+        wv.post { wv.evaluateJavascript(js, null) }
+
+        // 2. 原生 GenericMotionEvent
+        val now = SystemClock.uptimeMillis()
+        val props = arrayOf(MotionEvent.PointerProperties().apply {
+            id = 0
+            toolType = MotionEvent.TOOL_TYPE_MOUSE
+        })
+        val coords = arrayOf(MotionEvent.PointerCoords().apply {
+            x = localX
+            y = localY
+            setAxisValue(MotionEvent.AXIS_VSCROLL, scrollDeltaY)
+        })
+        val event = MotionEvent.obtain(
+            now, now,
+            MotionEvent.ACTION_SCROLL,
+            1, props, coords,
+            0, 0, 1.0f, 1.0f, 0, 0,
+            android.view.InputDevice.SOURCE_MOUSE, 0
+        )
+        val res = wv.dispatchGenericMotionEvent(event)
+        event.recycle()
+        return res
+    }
+
+    /**
+     * 模拟键盘快捷键 Delete / Backspace，用于删除当前选中的 TradingView 画线或指标
+     */
+    fun dispatchVirtualDeleteKey(screenX: Float, screenY: Float): Boolean {
+        val target = findWebViewAtScreenPoint(screenX, screenY) ?: return false
+        val wv = target.second
+
+        // 1. DOM 级派发 Delete 与 Backspace 键盘事件
+        val js = """
+            (function() {
+                try {
+                    var targetEl = document.activeElement || document.body;
+                    var delOpts = { key: 'Delete', code: 'Delete', keyCode: 46, which: 46, bubbles: true, cancelable: true, view: window };
+                    targetEl.dispatchEvent(new KeyboardEvent('keydown', delOpts));
+                    targetEl.dispatchEvent(new KeyboardEvent('keyup', delOpts));
+                    
+                    var bsOpts = { key: 'Backspace', code: 'Backspace', keyCode: 8, which: 8, bubbles: true, cancelable: true, view: window };
+                    targetEl.dispatchEvent(new KeyboardEvent('keydown', bsOpts));
+                    targetEl.dispatchEvent(new KeyboardEvent('keyup', bsOpts));
+                } catch(e) {}
+            })();
+        """.trimIndent()
+        wv.post { wv.evaluateJavascript(js, null) }
+
+        // 2. 原生 WebView 派发按键事件
+        val now = SystemClock.uptimeMillis()
+        val delDown = KeyEvent(now, now, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_FORWARD_DEL, 0)
+        val delUp = KeyEvent(now, now, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_FORWARD_DEL, 0)
+        wv.dispatchKeyEvent(delDown)
+        wv.dispatchKeyEvent(delUp)
+
+        val bsDown = KeyEvent(now, now, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DEL, 0)
+        val bsUp = KeyEvent(now, now, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DEL, 0)
+        wv.dispatchKeyEvent(bsDown)
+        wv.dispatchKeyEvent(bsUp)
+
+        return true
+    }
+
     fun destroyAll() {
         webViewMap.forEach { (_, webView) ->
             (webView.parent as? ViewGroup)?.removeView(webView)
@@ -1414,7 +2447,9 @@ object PersistentWebViewPool {
 import android.content.Context
 import android.webkit.WebView
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
 import com.trading.multiview.webview.PersistentWebViewPool
+import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -1434,8 +2469,10 @@ data class TabGroup(
     val name: String,
     val isPreset: Boolean = false,
     val description: String = "",
-    val windowCount: Int = 3, // 每个标签页独立设置：3 或 4 个独立窗口
-    val items: List<TabGroupItem>
+    val windowCount: Int = 3, // 每个标签页独立设置：2、3 或 4 个独立窗口
+    val zoomPercent: Int = 100, // 每个标签页独立记忆保存的缩放比例 (50% ~ 250%)
+    val items: List<TabGroupItem>,
+    val maximizedWindowId: Int? = null // 每个标签页独立记忆各自的最大化窗口
 )
 
 val DEFAULT_TAB_GROUPS = listOf(
@@ -1443,13 +2480,13 @@ val DEFAULT_TAB_GROUPS = listOf(
         id = "preset_1",
         name = "1",
         isPreset = false,
-        description = "分组 1 (TradingView 官方行情)",
+        description = "分组 1 (主流看盘 BTC/ETH/SOL/DOGE)",
         windowCount = 3,
         items = listOf(
-            TabGroupItem("TradingView 1", "BTCUSDT", "https://www.tradingview.com", "15m"),
-            TabGroupItem("TradingView 2", "ETHUSDT", "https://www.tradingview.com", "60m"),
-            TabGroupItem("TradingView 3", "SOLUSDT", "https://www.tradingview.com", "240m"),
-            TabGroupItem("TradingView 4", "DOGEUSDT", "https://www.tradingview.com", "15m")
+            TabGroupItem("BTC/USDT 15M", "BTCUSDT", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:BTCUSDT&interval=15&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1", "15m"),
+            TabGroupItem("ETH/USDT 1H", "ETHUSDT", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:ETHUSDT&interval=60&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1", "60m"),
+            TabGroupItem("SOL/USDT 4H", "SOLUSDT", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:SOLUSDT&interval=240&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1", "240m"),
+            TabGroupItem("DOGE/USDT 15M", "DOGEUSDT", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:DOGEUSDT&interval=15&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1", "15m")
         )
     ),
     TabGroup(
@@ -1509,14 +2546,14 @@ data class WindowState(
 
 fun createInitialWindows(): List<WindowState> {
     val defaults = listOf(
-        Triple(1, "TradingView 1" to "BTCUSDT", "https://www.tradingview.com"),
-        Triple(2, "TradingView 2" to "ETHUSDT", "https://www.tradingview.com"),
-        Triple(3, "TradingView 3" to "SOLUSDT", "https://www.tradingview.com"),
-        Triple(4, "TradingView 4" to "DOGEUSDT", "https://www.tradingview.com")
+        Triple(1, "BTC/USDT 15M" to "BTCUSDT", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:BTCUSDT&interval=15&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1"),
+        Triple(2, "ETH/USDT 1H" to "ETHUSDT", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:ETHUSDT&interval=60&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1"),
+        Triple(3, "SOL/USDT 4H" to "SOLUSDT", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:SOLUSDT&interval=240&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1"),
+        Triple(4, "DOGE/USDT 15M" to "DOGEUSDT", "https://s.tradingview.com/widgetembed/?symbol=BINANCE:DOGEUSDT&interval=15&theme=dark&hide_side_toolbar=0&withdateranges=1&allow_symbol_change=1&save_image=1&details=1")
     )
     return defaults.map { (id, titleSymbol, defaultUrl) ->
-        val savedUrl = PersistentWebViewPool.getSavedWindowUrl(null, id)
-        val savedTitle = PersistentWebViewPool.getSavedWindowTitle(null, id)
+        val savedUrl = PersistentWebViewPool.getSavedWindowUrlForGroup(null, "preset_1", id)
+        val savedTitle = PersistentWebViewPool.getSavedWindowTitleForGroup(null, "preset_1", id)
         WindowState(
             id = id,
             title = if (!savedTitle.isNullOrBlank()) savedTitle else titleSymbol.first,
@@ -1534,7 +2571,9 @@ data class MultiViewUiState(
     val globalZoomPercent: Int = 100,
     val isGlobalUrlCollapsed: Boolean = true,
     val fixedPixelWidth: Int = 1280, // 固定像素桌面视口基准 (默认 1280px 标准 PC)
-    val isMagnetActive: Boolean = false // 磁力吸附切换状态
+    val isMagnetActive: Boolean = false, // 磁力吸附切换状态
+    val isTrackpadEnabled: Boolean = false, // 虚拟触控板/鼠标面板开关
+    val isAutoZoomLocked: Boolean = true // 是否禁止网页弹窗/聚焦时自动放大 (默认开启，锁定当前基准比例)
 ) {
     // 当前标签页集合对象
     val currentGroup: TabGroup?
@@ -1583,8 +2622,29 @@ class TradingViewModel : ViewModel() {
     private val _uiState = MutableStateFlow(MultiViewUiState())
     val uiState: StateFlow<MultiViewUiState> = _uiState.asStateFlow()
 
+    // 存储每个分组的累计前台停留时间（毫秒）
+    private val _groupStayTimeMap = MutableStateFlow<Map<String, Long>>(emptyMap())
+    val groupStayTimeMap: StateFlow<Map<String, Long>> = _groupStayTimeMap.asStateFlow()
+
+    // 翻转 K 线冷却时间倒计时（毫秒），10分钟内禁用该按键
+    private val _invertCooldownRemainingMs = MutableStateFlow(0L)
+    val invertCooldownRemainingMs: StateFlow<Long> = _invertCooldownRemainingMs.asStateFlow()
+
+    // 倒计时弹窗显隐
+    private val _showInvertCountdownDialog = MutableStateFlow(false)
+    val showInvertCountdownDialog: StateFlow<Boolean> = _showInvertCountdownDialog.asStateFlow()
+
+    // 弹窗倒计时秒数 (5秒倒计时)
+    private val _invertCountdownSeconds = MutableStateFlow(5)
+    val invertCountdownSeconds: StateFlow<Int> = _invertCountdownSeconds.asStateFlow()
+
+    // 处于倒计时中的分组 ID
+    private var countingGroupId: String? = null
+
     private val handler = android.os.Handler(android.os.Looper.getMainLooper())
     private var autoHideRunnable: Runnable? = null
+    // 恢复本地存储状态保护锁，防止启动时 WebView 回调反向冲洗本地 SharedPreferences
+    private var isRestoringSavedState = false
 
     companion object {
         private const val PREFS_NAME = "trading_multiview_prefs"
@@ -1598,12 +2658,80 @@ class TradingViewModel : ViewModel() {
 
     init {
         // 挂载 WebView 实时 URL 变更监听，保证视窗地址栏与 WebView 浏览状态精准同步
-        PersistentWebViewPool.onUrlChanged = { windowId, url, pageTitle ->
-            updateWindowUrl(windowId, url, if (pageTitle.isNotBlank()) pageTitle else null)
+        PersistentWebViewPool.onUrlChanged = { ownerGroupId, windowId, url, pageTitle ->
+            if (!isRestoringSavedState) {
+                updateWindowUrl(ownerGroupId, windowId, url, if (pageTitle.isNotBlank()) pageTitle else null)
+            }
         }
         // 挂载网页标题变更监听（如 TradingView 跳价更正，仅更新标签栏文字，不触碰 URL）
-        PersistentWebViewPool.onTitleChanged = { windowId, pageTitle ->
-            updateWindowTitle(windowId, pageTitle)
+        PersistentWebViewPool.onTitleChanged = { ownerGroupId, windowId, pageTitle ->
+            updateWindowTitle(ownerGroupId, windowId, pageTitle)
+        }
+
+        // 同步防自动放大状态
+        _uiState.update { it.copy(isAutoZoomLocked = PersistentWebViewPool.isAutoZoomLocked) }
+
+        // 开启 15分钟前台停留检测与自动翻转后台轮询
+        startBackgroundStayTimer()
+    }
+
+    private fun startBackgroundStayTimer() {
+        viewModelScope.launch {
+            while (isActive) {
+                delay(1000L)
+                val activeId = _uiState.value.activeGroupId
+                val ctx = PersistentWebViewPool.appContext
+
+                // 1. 处理 K线翻转 10分钟冷却计时
+                if (_invertCooldownRemainingMs.value > 0) {
+                    _invertCooldownRemainingMs.update { (it - 1000L).coerceAtLeast(0L) }
+                }
+
+                // 2. 如果正在展示倒计时弹窗，不增加前台时间，而在此处倒数
+                if (_showInvertCountdownDialog.value) {
+                    if (_invertCountdownSeconds.value > 1) {
+                        _invertCountdownSeconds.update { it - 1 }
+                    } else {
+                        _showInvertCountdownDialog.value = false
+                        countingGroupId?.let { gId ->
+                            // 倒计时结束，强行触发翻转 K线按钮 (Alt+I)
+                            triggerInvert4Charts(targets = null, delayMs = 0L, context = ctx)
+                            // 强行开启 10分钟 (600,000ms) 禁用翻转冷却
+                            _invertCooldownRemainingMs.value = 600_000L
+                            // 重置当前分组停留计数，开启下一个 15 分钟循环
+                            _groupStayTimeMap.update { currentMap ->
+                                val updated = currentMap.toMutableMap()
+                                updated[gId] = 0L
+                                updated
+                            }
+                        }
+                        countingGroupId = null
+                    }
+                    continue
+                }
+
+                // 3. 累计前台停留时间 (包含切换走再切换回来的累加情况)
+                if (ctx != null) {
+                    val prefs = ctx.getSharedPreferences("trading_multiview_prefs", Context.MODE_PRIVATE)
+                    val isReminderEnabled = prefs.getBoolean("invert_reminder_enabled_$activeId", false)
+                    if (isReminderEnabled) {
+                        _groupStayTimeMap.update { currentMap ->
+                            val updated = currentMap.toMutableMap()
+                            val prevTime = updated[activeId] ?: 0L
+                            val nextTime = prevTime + 1000L
+                            updated[activeId] = nextTime
+
+                            // 15分钟 = 15 * 60 * 1000 = 900,000 毫秒
+                            if (nextTime >= 900_000L) {
+                                _invertCountdownSeconds.value = 5
+                                _showInvertCountdownDialog.value = true
+                                countingGroupId = activeId
+                            }
+                            updated
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -1618,10 +2746,11 @@ class TradingViewModel : ViewModel() {
 
         val currentWindows = _uiState.value.windows
 
-        // 1. 将当前标签集合中各视窗被用户修改后的实时 URL、标题和代码保存下来
+        // 1. 将当前标签集合中各视窗被用户修改后的实时 URL、标题和代码保存下来，以及当前标签页独立记忆的最大化窗口
         val updatedGroups = _uiState.value.groups.map { group ->
             if (group.id == currentActiveId) {
                 group.copy(
+                    maximizedWindowId = _uiState.value.maximizedWindowId,
                     items = group.items.mapIndexed { index, item ->
                         val win = currentWindows.getOrNull(index)
                         if (win != null && win.currentUrl.isNotBlank()) {
@@ -1642,8 +2771,18 @@ class TradingViewModel : ViewModel() {
         val targetGroup = updatedGroups.find { it.id == groupId } ?: return
         val targetWindowCount = targetGroup.windowCount
 
+        // 读取目标标签页独立保存的缩放比例并应用
+        val targetGroupZoom = PersistentWebViewPool.getSavedZoomForGroup(context, groupId)
+        PersistentWebViewPool.currentZoomPercent = targetGroupZoom
+
+        // 读取目标标签页独立保存的固定像素基准并应用
+        val targetPixelWidth = PersistentWebViewPool.getSavedFixedPixelWidthForGroup(context, groupId)
+        PersistentWebViewPool.setFixedPixelWidthForGroup(groupId, targetPixelWidth)
+
         // 方案 A: 从 SharedPreferences 中读取该标签页每个窗口之前是否被用户隐藏
         val prefs = context?.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
+        val targetMaximizedId = targetGroup.maximizedWindowId
 
         _uiState.update { state ->
             val updatedWindows = state.windows.mapIndexed { index, win ->
@@ -1662,13 +2801,18 @@ class TradingViewModel : ViewModel() {
                     title = PersistentWebViewPool.getSavedWindowTitleForGroup(null, groupId, windowId) ?: targetItem.title,
                     symbol = targetItem.symbol,
                     currentUrl = targetUrl,
-                    isHidden = isHidden
+                    isHidden = isHidden,
+                    isMaximized = (windowId == targetMaximizedId),
+                    zoomPercent = targetGroupZoom
                 )
             }
             state.copy(
                 groups = updatedGroups,
                 windows = updatedWindows,
-                activeGroupId = groupId
+                maximizedWindowId = targetMaximizedId,
+                activeGroupId = groupId,
+                globalZoomPercent = targetGroupZoom,
+                fixedPixelWidth = targetPixelWidth
             )
         }
 
@@ -1680,8 +2824,9 @@ class TradingViewModel : ViewModel() {
             PersistentWebViewPool.setWindowActive(winId, active)
         }
 
-        // 重新请求并触发当前活跃的所有窗口进行 resize 适配物理尺寸，消除拉合卡顿
+        // 重新请求并触发当前活跃的所有窗口进行 resize 适配物理尺寸与应用当前标签页缩放比例
         (1..targetWindowCount).forEach { winId ->
+            PersistentWebViewPool.setZoom(winId, targetGroupZoom)
             PersistentWebViewPool.triggerImmediateResize(winId)
         }
 
@@ -1690,16 +2835,22 @@ class TradingViewModel : ViewModel() {
     }
 
     /**
-     * 3 个窗口网页同时全局缩放调节 (设置 textZoom 或 initialScale，提供快捷 +/- 缩放调整)
+     * 当前标签页 3/4 个窗口网页独立全局缩放调节 (独立持久化至当前标签页)
      */
     fun setGlobalZoom(zoomPercent: Int) {
         val clamped = zoomPercent.coerceIn(50, 250)
+        val activeGroupId = _uiState.value.activeGroupId
+        PersistentWebViewPool.saveZoomForGroup(activeGroupId, clamped)
         val count = _uiState.value.currentWindowCount
         (1..count).forEach { windowId ->
             PersistentWebViewPool.setZoom(windowId, clamped)
         }
         _uiState.update { state ->
+            val updatedGroups = state.groups.map { g ->
+                if (g.id == activeGroupId) g.copy(zoomPercent = clamped) else g
+            }
             state.copy(
+                groups = updatedGroups,
                 globalZoomPercent = clamped,
                 windows = state.windows.map { it.copy(zoomPercent = clamped) }
             )
@@ -1717,11 +2868,20 @@ class TradingViewModel : ViewModel() {
     }
 
     fun resetGlobalZoom() {
+        val activeGroupId = _uiState.value.activeGroupId
+        PersistentWebViewPool.saveZoomForGroup(activeGroupId, 100)
         setGlobalZoom(100)
         val count = _uiState.value.currentWindowCount
         (1..count).forEach { windowId ->
             PersistentWebViewPool.triggerAutoFit(windowId)
         }
+    }
+
+    /**
+     * 切换虚拟触控板/光标面板显示状态
+     */
+    fun toggleTrackpad() {
+        _uiState.update { it.copy(isTrackpadEnabled = !it.isTrackpadEnabled) }
     }
 
     /**
@@ -1779,6 +2939,59 @@ class TradingViewModel : ViewModel() {
     }
 
     /**
+     * 一键保存当前所有标签页内所有窗口的当前真实网址与配置 (单击顶栏保存按钮触发)
+     */
+    fun saveAllTabsCurrentUrls(context: Context): Int {
+        val currentActiveId = _uiState.value.activeGroupId
+        val currentWindows = _uiState.value.windows
+        var savedCount = 0
+
+        // 1. 同步更新当前活动分组的网址数据与后台各分组的实时网址
+        val updatedGroups = _uiState.value.groups.map { group ->
+            if (group.id == currentActiveId) {
+                group.copy(
+                    items = group.items.mapIndexed { index, item ->
+                        val win = currentWindows.getOrNull(index)
+                        if (win != null && win.currentUrl.isNotBlank()) {
+                            savedCount++
+                            PersistentWebViewPool.saveWindowUrlForGroup(group.id, index + 1, win.currentUrl, win.title, context)
+                            item.copy(
+                                url = win.currentUrl,
+                                title = win.title,
+                                symbol = win.symbol
+                            )
+                        } else item
+                    }
+                )
+            } else {
+                // 对于非活跃分组，如果有后台常驻 WebView，优先获取其实时 URL 并持久化
+                group.copy(
+                    items = group.items.mapIndexed { index, item ->
+                        val winId = index + 1
+                        val wv = PersistentWebViewPool.getWebViewForGroup(group.id, winId)
+                        val liveUrl = wv?.url?.takeIf { it.isNotBlank() }
+                        val liveTitle = wv?.title?.takeIf { it.isNotBlank() }
+                        val finalUrl = liveUrl ?: item.url
+                        val finalTitle = liveTitle ?: item.title
+                        if (finalUrl.isNotBlank()) {
+                            savedCount++
+                            PersistentWebViewPool.saveWindowUrlForGroup(group.id, winId, finalUrl, finalTitle, context)
+                        }
+                        item.copy(
+                            url = finalUrl,
+                            title = finalTitle
+                        )
+                    }
+                )
+            }
+        }
+
+        _uiState.update { it.copy(groups = updatedGroups) }
+        persistAllGroupsToPrefs(updatedGroups, activeGroupId = currentActiveId, context = context)
+        return updatedGroups.size
+    }
+
+    /**
      * 从 SharedPreferences 恢复用户上次使用的所有配置：
      * 1. 3个视窗实际输入的最后网址 (最高优先级，保证退出重进不丢失用户输入)
      * 2. 用户最后停留的分组 (activeGroupId)
@@ -1786,6 +2999,7 @@ class TradingViewModel : ViewModel() {
      * 4. 固定像素视口基准 (960px / 1280px / 1440px / 1920px)
      */
     fun loadSavedGroupsFromPrefs(context: Context) {
+        isRestoringSavedState = true
         try {
             val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
@@ -1800,13 +3014,14 @@ class TradingViewModel : ViewModel() {
                 loadedGroups.firstOrNull()?.id ?: "preset_1"
             }
 
-            // 3. 读取并恢复 3 个视窗的真实网址与标题 (最高优先级：直接读取用户在窗口中输入的 saved_window_url_X)
+            // 核心修复：立即同步单例池的当前组 ID，杜绝把标签页2网址误灌给标签页1！
+            PersistentWebViewPool.currentGroupId = validActiveGroupId
+
+            // 3. 读取并恢复 3/4 个视窗的真实网址与标题 (最高优先级：直接读取用户在窗口中输入的 saved_window_url_X)
             val targetGroup = loadedGroups.find { it.id == validActiveGroupId }
             val currentWindows = _uiState.value.windows.map { win ->
                 val savedUrl = prefs.getString("\${KEY_WINDOW_URL_PREFIX}\${validActiveGroupId}_\${win.id}", null)?.takeIf { it.isNotBlank() }
-                    ?: prefs.getString("\${KEY_WINDOW_URL_PREFIX}\${win.id}", null)?.takeIf { it.isNotBlank() }
                 val savedTitle = prefs.getString("\${KEY_WINDOW_TITLE_PREFIX}\${validActiveGroupId}_\${win.id}", null)?.takeIf { it.isNotBlank() }
-                    ?: prefs.getString("\${KEY_WINDOW_TITLE_PREFIX}\${win.id}", null)
                 val groupItem = targetGroup?.items?.getOrNull(win.id - 1)
 
                 val targetUrl = savedUrl ?: groupItem?.url?.takeIf { it.isNotBlank() } ?: win.currentUrl
@@ -1817,12 +3032,12 @@ class TradingViewModel : ViewModel() {
                 val isHiddenKey = "group_\${validActiveGroupId}_window_\${win.id}_hidden"
                 val isHidden = prefs.getBoolean(isHiddenKey, false)
 
-                // 确保已挂载的底层常驻 WebView 加载目标真实网址
-                val webView = PersistentWebViewPool.getWebView(win.id)
+                // 确保已挂载的底层常驻 WebView 加载目标真实网址，严格隔离指定分组
+                val webView = PersistentWebViewPool.getWebViewForGroup(validActiveGroupId, win.id)
                 if (webView != null) {
                     val currentLoaded = webView.url ?: ""
                     if (!PersistentWebViewPool.isSameUrl(currentLoaded, targetUrl)) {
-                        PersistentWebViewPool.loadCustomUrl(win.id, targetUrl)
+                        PersistentWebViewPool.loadCustomUrlForGroup(validActiveGroupId, win.id, targetUrl)
                     }
                 }
 
@@ -1839,20 +3054,30 @@ class TradingViewModel : ViewModel() {
                 )
             }
 
-            // 4. 读取并恢复固定像素基准
-            val savedPixelWidth = prefs.getInt(KEY_FIXED_PIXEL_WIDTH, 1280)
-            PersistentWebViewPool.setFixedPixelWidth(savedPixelWidth)
+            // 4. 读取并恢复当前活跃标签页的专属固定像素基准与缩放比例
+            val savedPixelWidth = prefs.getInt("group_\${validActiveGroupId}_fixed_pixel_width", 1280)
+            PersistentWebViewPool.setFixedPixelWidthForGroup(validActiveGroupId, savedPixelWidth)
+            val savedGroupZoom = PersistentWebViewPool.getSavedZoomForGroup(context, validActiveGroupId)
+            PersistentWebViewPool.currentZoomPercent = savedGroupZoom
+            (1..4).forEach { winId ->
+                PersistentWebViewPool.setZoom(winId, savedGroupZoom)
+            }
 
+            val activeMaximizedId = targetGroup?.maximizedWindowId
             _uiState.update { state ->
                 state.copy(
                     groups = loadedGroups,
-                    windows = currentWindows,
+                    windows = currentWindows.map { it.copy(zoomPercent = savedGroupZoom, isMaximized = (it.id == activeMaximizedId)) },
+                    maximizedWindowId = activeMaximizedId,
                     activeGroupId = validActiveGroupId,
+                    globalZoomPercent = savedGroupZoom,
                     fixedPixelWidth = savedPixelWidth
                 )
             }
         } catch (e: Exception) {
             e.printStackTrace()
+        } finally {
+            isRestoringSavedState = false
         }
     }
 
@@ -1884,7 +3109,9 @@ class TradingViewModel : ViewModel() {
                 val name = obj.getString("name")
                 val isPreset = obj.optBoolean("isPreset", false)
                 val desc = obj.optString("description", "")
-                val windowCount = obj.optInt("windowCount", 3).coerceIn(3, 4)
+                val windowCount = obj.optInt("windowCount", 3).coerceIn(2, 4)
+                val zoomPercent = obj.optInt("zoomPercent", 100).coerceIn(50, 250)
+                val maximizedWindowId = if (obj.has("maximizedWindowId") && !obj.isNull("maximizedWindowId")) obj.getInt("maximizedWindowId") else null
                 val itemsArray = obj.getJSONArray("items")
                 val items = mutableListOf<TabGroupItem>()
                 for (j in 0 until itemsArray.length()) {
@@ -1905,7 +3132,9 @@ class TradingViewModel : ViewModel() {
                         isPreset = isPreset,
                         description = desc,
                         windowCount = windowCount,
-                        items = items
+                        zoomPercent = zoomPercent,
+                        items = items,
+                        maximizedWindowId = maximizedWindowId
                     )
                 )
             }
@@ -1916,18 +3145,18 @@ class TradingViewModel : ViewModel() {
     }
 
     /**
-     * 动态热切换固定像素基准 (960px / 1280px / 1440px / 1920px) 并持久化
-     * 通过 evaluateJavascript 实时注入与热更新 DOM 视口，无需刷新页面，不中断 WebSocket 行情流！
+     * 动态热切换固定像素基准并对当前标签页独立持久化保存
      */
     fun setFixedPixelWidth(width: Int, context: Context? = null) {
-        PersistentWebViewPool.setFixedPixelWidth(width)
+        val activeGroupId = _uiState.value.activeGroupId
+        PersistentWebViewPool.setFixedPixelWidthForGroup(activeGroupId, width)
         _uiState.update { it.copy(fixedPixelWidth = width) }
         val ctx = context ?: PersistentWebViewPool.appContext
         if (ctx != null) {
             try {
                 ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                     .edit()
-                    .putInt(KEY_FIXED_PIXEL_WIDTH, width)
+                    .putInt("group_\${activeGroupId}_fixed_pixel_width", width)
                     .apply()
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -1936,9 +3165,10 @@ class TradingViewModel : ViewModel() {
     }
 
     /**
-     * 顶部栏快捷胶囊循环切换分辨率基准并持久化
+     * 顶部栏快捷胶囊循环切换当前标签页的分辨率基准并独立持久化保存
      */
     fun cycleFixedPixelWidth(context: Context? = null) {
+        val activeGroupId = _uiState.value.activeGroupId
         val nextWidth = PersistentWebViewPool.cycleFixedPixelWidth()
         _uiState.update { it.copy(fixedPixelWidth = nextWidth) }
         val ctx = context ?: PersistentWebViewPool.appContext
@@ -1946,7 +3176,7 @@ class TradingViewModel : ViewModel() {
             try {
                 ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                     .edit()
-                    .putInt(KEY_FIXED_PIXEL_WIDTH, nextWidth)
+                    .putInt("group_\${activeGroupId}_fixed_pixel_width", nextWidth)
                     .apply()
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -1981,6 +3211,10 @@ class TradingViewModel : ViewModel() {
                     put("isPreset", group.isPreset)
                     put("description", group.description)
                     put("windowCount", group.windowCount)
+                    put("zoomPercent", group.zoomPercent)
+                    if (group.maximizedWindowId != null) {
+                        put("maximizedWindowId", group.maximizedWindowId)
+                    }
                     val itemsArr = JSONArray()
                     group.items.forEach { item ->
                         val itemObj = JSONObject().apply {
@@ -2056,15 +3290,36 @@ class TradingViewModel : ViewModel() {
     }
 
     /**
-     * 每个标签页集合独立配置窗口数量 (3 或 4 个独立窗口，横向 3 联屏或横向 4 联屏)
+     * 一站式更新分组配置 (同时更新分组名称与独立视窗数量)
+     */
+    fun updateGroupConfig(groupId: String, newName: String, count: Int, context: Context? = null) {
+        val trimmed = newName.trim().ifEmpty { "未命名" }
+        val safeCount = count.coerceIn(2, 4)
+        _uiState.update { state ->
+            val updated = state.groups.map { g ->
+                if (g.id == groupId) g.copy(name = trimmed, windowCount = safeCount) else g
+            }
+            if (groupId == state.activeGroupId) {
+                PersistentWebViewPool.setWindowActive(3, safeCount >= 3)
+                PersistentWebViewPool.setWindowActive(4, safeCount >= 4)
+            }
+            persistAllGroupsToPrefs(updated, activeGroupId = state.activeGroupId, context = context)
+            state.copy(groups = updated)
+        }
+        PersistentWebViewPool.triggerImmediateResize()
+    }
+
+    /**
+     * 每个标签页集合独立配置窗口数量 (2、3 或 4 个独立窗口，横向 2 联屏、横向 3 联屏或横向 4 联屏)
      */
     fun updateGroupWindowCount(groupId: String, count: Int, context: Context? = null) {
-        val safeCount = count.coerceIn(3, 4)
+        val safeCount = count.coerceIn(2, 4)
         _uiState.update { state ->
             val updated = state.groups.map { g ->
                 if (g.id == groupId) g.copy(windowCount = safeCount) else g
             }
             if (groupId == state.activeGroupId) {
+                PersistentWebViewPool.setWindowActive(3, safeCount >= 3)
                 PersistentWebViewPool.setWindowActive(4, safeCount >= 4)
             }
             persistAllGroupsToPrefs(updated, activeGroupId = state.activeGroupId, context = context)
@@ -2145,6 +3400,18 @@ class TradingViewModel : ViewModel() {
     }
 
     /**
+     * 切换禁止网页自动放大 / 视口锁定状态 (彻底阻断 TradingView 搜索品种/设置指标弹窗自动放大)
+     */
+    fun toggleAutoZoomLock(context: Context) {
+        val current = _uiState.value.isAutoZoomLocked
+        val next = !current
+        _uiState.update { it.copy(isAutoZoomLocked = next) }
+        PersistentWebViewPool.setAutoZoomLocked(next, context)
+        val msg = if (next) "已开启禁止自动放大 (输入/弹窗保持原比例)" else "已关闭锁定 (允许网页自由放大)"
+        android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
+    }
+
+    /**
      * 切换视窗桌面模式 (PC Chrome UA 与宽视口) / 移动模式
      */
     fun toggleDesktopMode(windowId: Int) {
@@ -2168,7 +3435,14 @@ class TradingViewModel : ViewModel() {
             val isCurrentlyMaximized = state.maximizedWindowId == windowId
             val newMaximizedId = if (isCurrentlyMaximized) null else windowId
 
+            val updatedGroups = state.groups.map { grp ->
+                if (grp.id == state.activeGroupId) {
+                    grp.copy(maximizedWindowId = newMaximizedId)
+                } else grp
+            }
+
             state.copy(
+                groups = updatedGroups,
                 maximizedWindowId = newMaximizedId,
                 windows = state.windows.map { win ->
                     if (win.id == windowId) {
@@ -2194,6 +3468,12 @@ class TradingViewModel : ViewModel() {
             PersistentWebViewPool.setWindowActive(windowId, false)
             val newMaximizedId = if (state.maximizedWindowId == windowId) null else state.maximizedWindowId
 
+            val updatedGroups = state.groups.map { grp ->
+                if (grp.id == state.activeGroupId) {
+                    grp.copy(maximizedWindowId = newMaximizedId)
+                } else grp
+            }
+
             // 持久化当前标签组中该窗口的隐藏状态为 true
             context?.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 ?.edit()
@@ -2201,6 +3481,7 @@ class TradingViewModel : ViewModel() {
                 ?.apply()
 
             state.copy(
+                groups = updatedGroups,
                 maximizedWindowId = newMaximizedId,
                 windows = state.windows.map { win ->
                     if (win.id == windowId) {
@@ -2251,7 +3532,13 @@ class TradingViewModel : ViewModel() {
 
         (1..count).forEach { PersistentWebViewPool.setWindowActive(it, true) }
         _uiState.update { state ->
+            val updatedGroups = state.groups.map { grp ->
+                if (grp.id == state.activeGroupId) {
+                    grp.copy(maximizedWindowId = null)
+                } else grp
+            }
             state.copy(
+                groups = updatedGroups,
                 maximizedWindowId = null,
                 windows = state.windows.map { it.copy(isHidden = false, isMaximized = false) }
             )
@@ -2260,45 +3547,50 @@ class TradingViewModel : ViewModel() {
     }
 
     /**
-     * 更新指定视窗 URL，并同步更新至当前活动标签集合，确保随时记忆用户输入的网址
+     * 更新指定分组指定视窗 URL，并同步更新至目标标签集合，确保随时记忆用户输入的网址，绝不跨标签覆盖
      */
-    fun updateWindowUrl(windowId: Int, newUrl: String, title: String? = null) {
-        val currentWin = _uiState.value.windows.find { it.id == windowId }
-        if (currentWin != null && currentWin.currentUrl == newUrl && (title == null || currentWin.title == title)) {
+    fun updateWindowUrl(groupId: String, windowId: Int, newUrl: String, title: String? = null) {
+        val state = _uiState.value
+        val group = state.groups.find { it.id == groupId }
+        val item = group?.items?.getOrNull(windowId - 1)
+        if (item != null && item.url == newUrl && (title == null || item.title == title)) {
             return
         }
 
-        // 关键持久化：一旦窗口 URL 改变，立即持久化保存该窗口真实网址与标题
-        PersistentWebViewPool.saveWindowUrl(windowId, newUrl, title)
+        // 关键持久化：精确持久化到目标分组中，彻底杜绝串台覆盖
+        PersistentWebViewPool.saveWindowUrlForGroup(groupId, windowId, newUrl, title)
 
-        _uiState.update { state ->
-            val updatedWindows = state.windows.map { win ->
-                if (win.id == windowId) {
-                    win.copy(
-                        currentUrl = newUrl,
-                        title = title ?: win.title
-                    )
-                } else win
-            }
-
-            // 同步实时记忆到当前活动分组中
-            val activeId = state.activeGroupId
-            val updatedGroups = state.groups.map { group ->
-                if (group.id == activeId) {
-                    group.copy(
-                        items = group.items.mapIndexed { index, item ->
+        _uiState.update { current ->
+            val updatedGroups = current.groups.map { g ->
+                if (g.id == groupId) {
+                    g.copy(
+                        items = g.items.mapIndexed { index, itm ->
                             if (index == windowId - 1) {
-                                item.copy(
+                                itm.copy(
                                     url = newUrl,
-                                    title = title ?: item.title
+                                    title = title ?: itm.title
                                 )
-                            } else item
+                            } else itm
                         }
                     )
-                } else group
+                } else g
             }
 
-            state.copy(
+            // 只有当接收到事件的分组与当前屏幕活跃标签页一致时，才更新可见视窗 windows
+            val updatedWindows = if (current.activeGroupId == groupId) {
+                current.windows.map { win ->
+                    if (win.id == windowId) {
+                        win.copy(
+                            currentUrl = newUrl,
+                            title = title ?: win.title
+                        )
+                    } else win
+                }
+            } else {
+                current.windows
+            }
+
+            current.copy(
                 windows = updatedWindows,
                 groups = updatedGroups
             )
@@ -2309,19 +3601,47 @@ class TradingViewModel : ViewModel() {
     }
 
     /**
+     * 更新当前活动分组的视窗 URL（供 UI 手动输入网址或重载触发）
+     */
+    fun updateWindowUrl(windowId: Int, newUrl: String, title: String? = null) {
+        updateWindowUrl(_uiState.value.activeGroupId, windowId, newUrl, title)
+    }
+
+    /**
      * 仅更新窗口标题 (如 TradingView 行情跳价更正，不触碰 URL，不触发导航)
      */
-    fun updateWindowTitle(windowId: Int, title: String) {
+    fun updateWindowTitle(groupId: String, windowId: Int, title: String) {
         val currentWin = _uiState.value.windows.find { it.id == windowId }
-        if (currentWin == null || currentWin.title == title) return
-        PersistentWebViewPool.saveWindowUrl(windowId, currentWin.currentUrl, title)
-        _uiState.update { state ->
-            state.copy(
-                windows = state.windows.map { win ->
+        val group = _uiState.value.groups.find { it.id == groupId }
+        val item = group?.items?.getOrNull(windowId - 1)
+        if (item != null && item.title == title) return
+
+        val currentUrl = item?.url ?: currentWin?.currentUrl ?: ""
+        PersistentWebViewPool.saveWindowUrlForGroup(groupId, windowId, currentUrl, title)
+
+        _uiState.update { current ->
+            val updatedGroups = current.groups.map { g ->
+                if (g.id == groupId) {
+                    g.copy(
+                        items = g.items.mapIndexed { index, itm ->
+                            if (index == windowId - 1) itm.copy(title = title) else itm
+                        }
+                    )
+                } else g
+            }
+            val updatedWindows = if (current.activeGroupId == groupId) {
+                current.windows.map { win ->
                     if (win.id == windowId) win.copy(title = title) else win
                 }
-            )
+            } else {
+                current.windows
+            }
+            current.copy(windows = updatedWindows, groups = updatedGroups)
         }
+    }
+
+    fun updateWindowTitle(windowId: Int, title: String) {
+        updateWindowTitle(_uiState.value.activeGroupId, windowId, title)
     }
 
     /**
@@ -2392,6 +3712,14 @@ class TradingViewModel : ViewModel() {
      * 全部视窗同步：翻转K线图 - 单图/默认
      */
     fun triggerInvertChart(context: Context? = null) {
+        if (_invertCooldownRemainingMs.value > 0) {
+            context?.let {
+                val remainingSeconds = (_invertCooldownRemainingMs.value + 999) / 1000
+                val text = "K线翻转按钮冷却中！剩余时间: \${remainingSeconds / 60}分\${remainingSeconds % 60}秒"
+                android.widget.Toast.makeText(it, text, android.widget.Toast.LENGTH_SHORT).show()
+            }
+            return
+        }
         PersistentWebViewPool.dispatchTradingViewAction("invert", customDelayMs = 0L)
         context?.let {
             android.widget.Toast.makeText(it, "已同步向全部窗口触发: 翻转K线图 (Alt+I)", android.widget.Toast.LENGTH_SHORT).show()
@@ -2402,6 +3730,14 @@ class TradingViewModel : ViewModel() {
      * 4图布局翻转 K 线图 (Alt+I)：默认对当前标签页内 3/4 个窗口都生效，单击直接执行，延迟默认 0ms
      */
     fun triggerInvert4Charts(targets: Set<Int>? = null, delayMs: Long = 0L, context: Context? = null) {
+        if (_invertCooldownRemainingMs.value > 0) {
+            context?.let {
+                val remainingSeconds = (_invertCooldownRemainingMs.value + 999) / 1000
+                val text = "K线翻转按钮冷却中！剩余时间: \${remainingSeconds / 60}分\${remainingSeconds % 60}秒"
+                android.widget.Toast.makeText(it, text, android.widget.Toast.LENGTH_SHORT).show()
+            }
+            return
+        }
         val count = _uiState.value.currentWindowCount
         val validTargets = (targets ?: (1..count).toSet()).filter { it in 1..count }.toSet().ifEmpty { (1..count).toSet() }
         PersistentWebViewPool.dispatchTradingViewAction("invert4", validTargets, customDelayMs = delayMs)
@@ -2416,6 +3752,14 @@ class TradingViewModel : ViewModel() {
      * 全部视窗同步：8图布局翻转 K 线图 (双排 8 图依次激活并翻转)
      */
     fun triggerInvert8Charts(context: Context? = null) {
+        if (_invertCooldownRemainingMs.value > 0) {
+            context?.let {
+                val remainingSeconds = (_invertCooldownRemainingMs.value + 999) / 1000
+                val text = "K线翻转按钮冷却中！剩余时间: \${remainingSeconds / 60}分\${remainingSeconds % 60}秒"
+                android.widget.Toast.makeText(it, text, android.widget.Toast.LENGTH_SHORT).show()
+            }
+            return
+        }
         PersistentWebViewPool.dispatchTradingViewAction("invert8")
         context?.let {
             android.widget.Toast.makeText(it, "已同步触发 8 图布局依次翻转 K 线 (Alt+I)", android.widget.Toast.LENGTH_SHORT).show()
@@ -2452,6 +3796,14 @@ class TradingViewModel : ViewModel() {
     }
 
     fun triggerSingleInvert(windowId: Int, context: Context? = null) {
+        if (_invertCooldownRemainingMs.value > 0) {
+            context?.let {
+                val remainingSeconds = (_invertCooldownRemainingMs.value + 999) / 1000
+                val text = "K线翻转按钮冷却中！剩余时间: \${remainingSeconds / 60}分\${remainingSeconds % 60}秒"
+                android.widget.Toast.makeText(it, text, android.widget.Toast.LENGTH_SHORT).show()
+            }
+            return
+        }
         PersistentWebViewPool.dispatchSingleTradingViewAction(windowId, "invert4")
         context?.let {
             android.widget.Toast.makeText(it, "已向窗口 $windowId 单独触发: 从上往下4个 K 线图的翻转 (Alt+I)", android.widget.Toast.LENGTH_SHORT).show()
@@ -2505,6 +3857,7 @@ class TradingViewModel : ViewModel() {
         }
 
         _uiState.update { state ->
+            val activeId = state.activeGroupId
             val updatedWindows = state.windows.map { win ->
                 if (win.id in selectedWindowIds) {
                     var updatedUrl = win.currentUrl
@@ -2520,7 +3873,7 @@ class TradingViewModel : ViewModel() {
                         // ignore
                     }
                     
-                    PersistentWebViewPool.saveWindowUrl(win.id, updatedUrl, win.title)
+                    PersistentWebViewPool.saveWindowUrlForGroup(activeId, win.id, updatedUrl, win.title)
 
                     win.copy(
                         timeframe = tf,
@@ -2531,7 +3884,6 @@ class TradingViewModel : ViewModel() {
                 }
             }
 
-            val activeId = state.activeGroupId
             val updatedGroups = state.groups.map { group ->
                 if (group.id == activeId) {
                     group.copy(
@@ -2609,6 +3961,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.lazy.LazyColumn
@@ -2630,6 +3983,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -2682,17 +4036,13 @@ fun TradingMultiViewScreen(
     val uiState by viewModel.uiState.collectAsState()
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
+    val floatingPrefs = remember(context) { context.getSharedPreferences(PersistentWebViewPool.PREFS_NAME, Context.MODE_PRIVATE) }
     var showSaveDialog by remember { mutableStateOf(false) }
     var showGroupConfigDialog by remember { mutableStateOf(false) }
     var targetGroupForConfig by remember { mutableStateOf<TabGroup?>(null) }
     var showTimeframeDialog by remember { mutableStateOf(false) }
     var showInvertDialog by remember { mutableStateOf(false) }
     var showHideDrawingsDialog by remember { mutableStateOf(false) }
-    var showMagnetDialog by remember { mutableStateOf(false) }
-    var showGlobalZoomDialog by remember { mutableStateOf(false) }
-    var showReorderDialog by remember { mutableStateOf(false) }
-    var showLatestKlineDialog by remember { mutableStateOf(false) }
-    var floatingButtonOffset by remember { mutableStateOf(Offset(0f, 0f)) }
 
     // 快捷视窗组合预设 (每个标签页独立隔离保存)
     val defaultPresets = remember {
@@ -2703,10 +4053,91 @@ fun TradingMultiViewScreen(
         )
     }
     var windowPresetsMap by remember {
-        mutableStateOf<Map<String, List<WindowPresetData>>>(emptyMap())
+        val savedJson = floatingPrefs.getString("tab_window_presets_map", null)
+        val loadedMap = mutableMapOf<String, List<WindowPresetData>>()
+        if (!savedJson.isNullOrEmpty()) {
+            try {
+                val jsonArray = org.json.JSONArray(savedJson)
+                for (i in 0 until jsonArray.length()) {
+                    val obj = jsonArray.getJSONObject(i)
+                    val groupId = obj.getString("groupId")
+                    val presetsArray = obj.getJSONArray("presets")
+                    val presetList = mutableListOf<WindowPresetData>()
+                    for (j in 0 until presetsArray.length()) {
+                        val pObj = presetsArray.getJSONObject(j)
+                        val id = pObj.getInt("id")
+                        val name = pObj.getString("name")
+                        val visibleIdsArray = pObj.getJSONArray("visibleIds")
+                        val visibleIds = (0 until visibleIdsArray.length()).map { visibleIdsArray.getInt(it) }
+                        presetList.add(WindowPresetData(id, name, visibleIds))
+                    }
+                    loadedMap[groupId] = presetList
+                }
+            } catch (e: Exception) {}
+        }
+        mutableStateOf<Map<String, List<WindowPresetData>>>(loadedMap)
     }
     val currentTabPresets = windowPresetsMap[uiState.activeGroupId] ?: defaultPresets
     var editingPreset by remember { mutableStateOf<WindowPresetData?>(null) }
+
+    LaunchedEffect(windowPresetsMap) {
+        if (windowPresetsMap.isNotEmpty()) {
+            try {
+                val jsonArray = org.json.JSONArray()
+                windowPresetsMap.forEach { (groupId, presets) ->
+                    val obj = org.json.JSONObject()
+                    obj.put("groupId", groupId)
+                    val pArray = org.json.JSONArray()
+                    presets.forEach { p ->
+                        val pObj = org.json.JSONObject()
+                        pObj.put("id", p.id)
+                        pObj.put("name", p.name)
+                        val vArray = org.json.JSONArray()
+                        p.visibleIds.forEach { vArray.put(it) }
+                        pObj.put("visibleIds", vArray)
+                        pArray.put(pObj)
+                    }
+                    obj.put("presets", pArray)
+                    jsonArray.put(obj)
+                }
+                floatingPrefs.edit().putString("tab_window_presets_map", jsonArray.toString()).apply()
+            } catch (e: Exception) {}
+        }
+    }
+    var showMagnetDialog by remember { mutableStateOf(false) }
+    var showGlobalZoomDialog by remember { mutableStateOf(false) }
+    var showReorderDialog by remember { mutableStateOf(false) }
+    var showLatestKlineDialog by remember { mutableStateOf(false) }
+    var latestKlineFloatingButtonOffsetY by remember {
+        mutableStateOf(floatingPrefs.getFloat("floating_latest_kline_offset_y", 0f))
+    }
+    var mouseFloatingButtonOffsetY by remember {
+        mutableStateOf(floatingPrefs.getFloat("floating_mouse_offset_y", -56f))
+    }
+    var timeframeFloatingButtonOffsetY by remember {
+        mutableStateOf(floatingPrefs.getFloat("floating_timeframe_offset_y", 56f))
+    }
+    var hideDrawingsFloatingButtonOffsetY by remember {
+        mutableStateOf(floatingPrefs.getFloat("floating_hidedrawings_offset_y", 112f))
+    }
+    var invertFloatingButtonOffsetY by remember {
+        mutableStateOf(floatingPrefs.getFloat("floating_invert_offset_y", -112f))
+    }
+    var isFloatingLocked by remember {
+        mutableStateOf(floatingPrefs.getBoolean("floating_locked", false))
+    }
+    var showRestartAppDialog by remember { mutableStateOf(false) }
+
+    val invertCooldownMs by viewModel.invertCooldownRemainingMs.collectAsState()
+    val isInvertCooldownActive = invertCooldownMs > 0
+    val cooldownSecondsTotal = (invertCooldownMs + 999) / 1000
+    val cooldownMin = cooldownSecondsTotal / 60
+    val cooldownSec = cooldownSecondsTotal % 60
+    val cooldownText = if (cooldownMin > 0) {
+        String.format(java.util.Locale.US, "%d:%02d", cooldownMin, cooldownSec)
+    } else {
+        "\${cooldownSec}s"
+    }
 
     // 初始化时加载本地存储的自定义分组
     LaunchedEffect(Unit) {
@@ -2744,6 +4175,13 @@ fun TradingMultiViewScreen(
                 ) {
                     uiState.groups.forEach { group ->
                         val isActive = uiState.activeGroupId == group.id
+                        val charCount = group.name.length
+                        val tabFontSize = when {
+                            charCount <= 2 -> 12.sp
+                            charCount <= 4 -> 11.sp
+                            charCount <= 6 -> 10.sp
+                            else -> 9.sp
+                        }
                         Box(
                             modifier = Modifier
                                 .height(30.dp)
@@ -2762,15 +4200,17 @@ fun TradingMultiViewScreen(
                                         showGroupConfigDialog = true
                                     }
                                 )
-                                .padding(horizontal = 8.dp),
+                                .padding(horizontal = if (charCount > 4) 6.dp else 8.dp),
                             contentAlignment = Alignment.Center
                         ) {
-                                Text(
-                                    text = group.name,
-                                    color = if (isActive) Color.White else Color(0xFFE2E8F0),
-                                    fontSize = 12.sp,
-                                    fontWeight = if (isActive) FontWeight.Bold else FontWeight.Medium
-                                )
+                            Text(
+                                text = group.name,
+                                color = if (isActive) Color.White else Color(0xFFE2E8F0),
+                                fontSize = tabFontSize,
+                                fontWeight = if (isActive) FontWeight.Bold else FontWeight.Medium,
+                                maxLines = 1,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                            )
                         }
                     }
 
@@ -2792,6 +4232,53 @@ fun TradingMultiViewScreen(
                             contentDescription = "保存为新分组",
                             tint = Color(0xFF34D399),
                             modifier = Modifier.size(16.dp)
+                        )
+                    }
+
+                    // 锁死/解锁右边浮动按钮 (相同大小 30.dp)
+                    Box(
+                        modifier = Modifier
+                            .size(30.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(if (isFloatingLocked) Color(0xFF1E1B4B) else Color(0xFF1E293B))
+                            .border(1.dp, if (isFloatingLocked) Color(0xFF6366F1) else Color(0xFF475569), RoundedCornerShape(6.dp))
+                            .clickable {
+                                isFloatingLocked = !isFloatingLocked
+                                floatingPrefs.edit().putBoolean("floating_locked", isFloatingLocked).apply()
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = if (isFloatingLocked) Icons.Default.Lock else Icons.Default.LockOpen,
+                            contentDescription = if (isFloatingLocked) "解锁右侧浮动按钮" else "锁定右侧浮动按钮",
+                            tint = if (isFloatingLocked) Color(0xFF818CF8) else Color(0xFF94A3B8),
+                            modifier = Modifier.size(14.dp)
+                        )
+                    }
+
+                    // 保存当前所有标签页内所有窗口当前网址按钮 (单击保存，长按弹出重启app弹窗)
+                    Box(
+                        modifier = Modifier
+                            .size(30.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(Color(0xFF1E293B))
+                            .border(1.dp, Color(0xFF475569), RoundedCornerShape(6.dp))
+                            .combinedClickable(
+                                onClick = {
+                                    val count = viewModel.saveAllTabsCurrentUrls(context)
+                                    android.widget.Toast.makeText(context, "已成功保存全部标签页所有窗口当前网址", android.widget.Toast.LENGTH_SHORT).show()
+                                },
+                                onLongClick = {
+                                    showRestartAppDialog = true
+                                }
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Save,
+                            contentDescription = "保存所有标签页网址 (长按重启应用)",
+                            tint = Color(0xFF38BDF8),
+                            modifier = Modifier.size(15.dp)
                         )
                     }
                 }
@@ -2872,9 +4359,65 @@ fun TradingMultiViewScreen(
                             }
                         }
                     }
+
+                    // 全局缩放按钮：紧跟在第四个最大化和隐藏窗口按钮后面 (长度改大1.5倍：45dp x 30dp)
+                    Box(
+                        modifier = Modifier
+                            .size(width = 45.dp, height = 30.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(
+                                if (showGlobalZoomDialog) Color(0xFF0284C7)
+                                else Color(0xFF1E293B)
+                            )
+                            .border(
+                                width = 1.dp,
+                                color = if (showGlobalZoomDialog) Color(0xFF38BDF8) else Color(0xFF334155),
+                                shape = RoundedCornerShape(6.dp)
+                            )
+                            .combinedClickable(
+                                onClick = { viewModel.cycleFixedPixelWidth(context) },
+                                onLongClick = { showGlobalZoomDialog = true }
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Computer,
+                            contentDescription = "全局缩放与桌面基准像素",
+                            tint = if (showGlobalZoomDialog) Color.White else Color(0xFF38BDF8),
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+
+                    // 禁止网页自动放大按钮：紧跟在全局缩放按钮后面 (45dp x 30dp)
+                    // 用于彻底阻断 TradingView 搜索品种、选择周期、打开指标设置弹窗时的自动放大
+                    Box(
+                        modifier = Modifier
+                            .size(width = 45.dp, height = 30.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(
+                                if (uiState.isAutoZoomLocked) Color(0xFF065F46)
+                                else Color(0xFF1E293B)
+                            )
+                            .border(
+                                width = 1.dp,
+                                color = if (uiState.isAutoZoomLocked) Color(0xFF10B981) else Color(0xFF334155),
+                                shape = RoundedCornerShape(6.dp)
+                            )
+                            .clickable { viewModel.toggleAutoZoomLock(context) },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = if (uiState.isAutoZoomLocked) Icons.Default.Lock else Icons.Default.LockOpen,
+                            contentDescription = if (uiState.isAutoZoomLocked) "已开启禁止自动放大 (输入/弹窗保持原比例)" else "已关闭锁定 (允许自由放大)",
+                            tint = if (uiState.isAutoZoomLocked) Color(0xFF34D399) else Color(0xFF94A3B8),
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
                 }
 
-                // 新增：3个自定义视窗快捷预设按钮组 (单击秒切，长按自定义名称和选择显示视窗)
+                Spacer(modifier = Modifier.width(6.dp))
+
+                // 快捷视窗组合预设按钮组 (每个标签页独立保存 3 个预设)
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
@@ -2926,158 +4469,15 @@ fun TradingMultiViewScreen(
 
                 Spacer(modifier = Modifier.width(6.dp))
 
-                // ================= 油猴快捷 3 视窗动作组 (隐藏画线 · 磁力吸附 · 翻转K线 · 全局缩放 · 缩放锁定) =================
+                // 全局控制区 (全局刷新 + 网址配置 + 屏幕旋转，长度改大1.5倍：45dp x 30dp)
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    // T. 周期选择 (T字按钮)
+                    // 全局一键刷新按钮：45dp x 30dp 方形，圆角 6dp
                     Box(
                         modifier = Modifier
-                            .size(30.dp)
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(
-                                if (showTimeframeDialog) Color(0xFF0284C7)
-                                else Color(0xFF1E293B)
-                            )
-                            .border(
-                                width = 1.dp,
-                                color = if (showTimeframeDialog) Color(0xFF38BDF8) else Color(0xFF334155),
-                                shape = RoundedCornerShape(6.dp)
-                            )
-                            .clickable { showTimeframeDialog = true },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = "T",
-                            color = if (showTimeframeDialog) Color.White else Color(0xFF38BDF8),
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-
-                    // 1. 隐藏/恢复画线 (Ctrl+Alt+H)：单击直接执行(0ms延迟)，长按弹出选择窗口
-                    Box(
-                        modifier = Modifier
-                            .size(30.dp)
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(
-                                if (showHideDrawingsDialog) Color(0xFF0284C7)
-                                else Color(0xFF1E293B)
-                            )
-                            .border(
-                                width = 1.dp,
-                                color = if (showHideDrawingsDialog) Color(0xFF38BDF8) else Color(0xFF334155),
-                                shape = RoundedCornerShape(6.dp)
-                            )
-                            .combinedClickable(
-                                onClick = { viewModel.triggerHideDrawings(delayMs = 0L, context = context) },
-                                onLongClick = { showHideDrawingsDialog = true }
-                            ),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.VisibilityOff,
-                            contentDescription = "隐藏/恢复画线",
-                            tint = if (showHideDrawingsDialog) Color.White else Color(0xFF38BDF8),
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
-
-                    // 2. 磁力吸附切换 (Magnet / Ctrl)：内部显示“磁吸”汉字，单击直接执行(0ms延迟)，长按弹出选择窗口
-                    val activeMagnetWin = uiState.windows.find { it.isMagnetActive }
-                    val isAnyMagnetActive = activeMagnetWin != null
-                    Box(
-                        modifier = Modifier
-                            .size(30.dp)
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(
-                                if (showMagnetDialog) Color(0xFFE11D48)
-                                else if (isAnyMagnetActive) Color(0xFFE11D48).copy(alpha = 0.35f)
-                                else Color(0xFF1E293B)
-                            )
-                            .border(
-                                width = 1.dp,
-                                color = if (showMagnetDialog) Color.White else if (isAnyMagnetActive) Color(0xFFFB7185) else Color(0xFF334155),
-                                shape = RoundedCornerShape(6.dp)
-                            )
-                            .combinedClickable(
-                                onClick = { viewModel.triggerToggleMagnet(delayMs = 0L, context = context) },
-                                onLongClick = { showMagnetDialog = true }
-                            ),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = "磁吸",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = if (showMagnetDialog) Color.White else if (isAnyMagnetActive) Color(0xFFFB7185) else Color(0xFFCBD5E1)
-                        )
-                    }
-
-                    // 4. 全局缩放按钮：单击循环切换固定分辨率基准，长按弹出全局缩放与分辨率选择对话框
-                    Box(
-                        modifier = Modifier
-                            .size(30.dp)
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(
-                                if (showGlobalZoomDialog) Color(0xFF0284C7)
-                                else Color(0xFF1E293B)
-                            )
-                            .border(
-                                width = 1.dp,
-                                color = if (showGlobalZoomDialog) Color(0xFF38BDF8) else Color(0xFF334155),
-                                shape = RoundedCornerShape(6.dp)
-                            )
-                            .combinedClickable(
-                                onClick = { viewModel.cycleFixedPixelWidth(context) },
-                                onLongClick = { showGlobalZoomDialog = true }
-                            ),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Computer,
-                            contentDescription = "全局缩放与桌面基准像素",
-                            tint = if (showGlobalZoomDialog) Color.White else Color(0xFF38BDF8),
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
-
-
-                }
-
-                Spacer(modifier = Modifier.width(6.dp))
-
-                // 右侧：全局控制区 (全局刷新 + 网址配置 + 屏幕旋转，全部统一 30dp 高度)
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    // 版本与更新时间 (放在刷新按钮之前)
-                    Column(
-                        horizontalAlignment = Alignment.End,
-                        verticalArrangement = Arrangement.Center,
-                        modifier = Modifier.padding(end = 4.dp)
-                    ) {
-                        Text(
-                            text = "v2.6.0",
-                            color = Color(0xFF64748B),
-                            fontSize = 9.sp,
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = "2026-09-21 14:30",
-                            color = Color(0xFF475569),
-                            fontSize = 8.sp,
-                            fontFamily = FontFamily.Monospace
-                        )
-                    }
-
-                    // 全局一键刷新按钮：标准 30dp x 30dp 方形，圆角 6dp
-                    Box(
-                        modifier = Modifier
-                            .size(30.dp)
+                            .size(width = 45.dp, height = 30.dp)
                             .clip(RoundedCornerShape(6.dp))
                             .background(Color(0xFF1E293B))
                             .border(1.dp, Color(0xFF334155), RoundedCornerShape(6.dp))
@@ -3092,11 +4492,11 @@ fun TradingMultiViewScreen(
                         )
                     }
 
-                    // 网址配置 (地址栏展开) 按钮：移到刷新和旋转中间
+                    // 网址快捷导航与只读栏展开按钮：45dp x 30dp
                     val isUrlBarExpanded = !uiState.isGlobalUrlCollapsed
                     Box(
                         modifier = Modifier
-                            .size(30.dp)
+                            .size(width = 45.dp, height = 30.dp)
                             .clip(RoundedCornerShape(6.dp))
                             .background(if (isUrlBarExpanded) Color(0xFF075985) else Color(0xFF1E293B))
                             .border(
@@ -3108,17 +4508,17 @@ fun TradingMultiViewScreen(
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
-                            imageVector = if (isUrlBarExpanded) Icons.Default.ExpandLess else Icons.Default.Settings,
-                            contentDescription = "配置网址",
+                            imageVector = if (isUrlBarExpanded) Icons.Default.ExpandLess else Icons.Default.Language,
+                            contentDescription = "网址与快捷导航",
                             tint = if (isUrlBarExpanded) Color.White else Color(0xFF38BDF8),
                             modifier = Modifier.size(15.dp)
                         )
                     }
 
-                    // 屏幕旋转按钮：标准 30dp x 30dp 方形，圆角 6dp
+                    // 屏幕旋转按钮：45dp x 30dp 方形，圆角 6dp
                     Box(
                         modifier = Modifier
-                            .size(30.dp)
+                            .size(width = 45.dp, height = 30.dp)
                             .clip(RoundedCornerShape(6.dp))
                             .background(Color(0xFF1E293B))
                             .border(1.dp, Color(0xFF334155), RoundedCornerShape(6.dp))
@@ -3141,6 +4541,106 @@ fun TradingMultiViewScreen(
                         )
                     }
                 }
+
+                Spacer(modifier = Modifier.width(6.dp))
+
+                // 油猴快捷 2 视窗动作组 (磁力吸附 · 翻转K线，长度改为现有的2倍: 60.dp x 30.dp)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    // 2. 磁力吸附切换 (Magnet / Ctrl)：单击直接执行(0ms延迟)，长按弹出选择窗口，长度 60dp
+                    val activeMagnetWin = uiState.windows.find { it.isMagnetActive }
+                    val isAnyMagnetActive = activeMagnetWin != null
+                    Box(
+                        modifier = Modifier
+                            .width(60.dp)
+                            .height(30.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(
+                                if (showMagnetDialog) Color(0xFFE11D48)
+                                else if (isAnyMagnetActive) Color(0xFFE11D48).copy(alpha = 0.35f)
+                                else Color(0xFF1E293B)
+                            )
+                            .border(
+                                width = 1.dp,
+                                color = if (showMagnetDialog) Color.White else if (isAnyMagnetActive) Color(0xFFFB7185) else Color(0xFF334155),
+                                shape = RoundedCornerShape(6.dp)
+                            )
+                            .combinedClickable(
+                                onClick = { viewModel.triggerToggleMagnet(delayMs = 0L, context = context) },
+                                onLongClick = { showMagnetDialog = true }
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "磁吸",
+                            color = if (showMagnetDialog) Color.White else if (isAnyMagnetActive) Color(0xFFFB7185) else Color(0xFFCBD5E1),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    // 3. 4图翻转 K线 (Alt+I)：默认0ms延迟，单击直接对全部3/4个窗口执行翻转，长按弹出选择窗口，长度 60dp
+
+                    Box(
+                        modifier = Modifier
+                            .width(60.dp)
+                            .height(30.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(
+                                when {
+                                    isInvertCooldownActive -> Color(0xFF1E293B).copy(alpha = 0.5f)
+                                    showInvertDialog -> Color(0xFF059669)
+                                    else -> Color(0xFF1E293B)
+                                }
+                            )
+                            .border(
+                                width = 1.dp,
+                                color = when {
+                                    isInvertCooldownActive -> Color(0xFF374151).copy(alpha = 0.5f)
+                                    showInvertDialog -> Color(0xFF34D399)
+                                    else -> Color(0xFF334155)
+                                },
+                                shape = RoundedCornerShape(6.dp)
+                            )
+                            .combinedClickable(
+                                onClick = {
+                                    if (isInvertCooldownActive) {
+                                        android.widget.Toast.makeText(context, "K线翻转按钮冷却中！剩余时间: \${cooldownText}", android.widget.Toast.LENGTH_SHORT).show()
+                                    } else {
+                                        viewModel.triggerInvert4Charts(delayMs = 0L, context = context)
+                                    }
+                                },
+                                onLongClick = {
+                                    if (isInvertCooldownActive) {
+                                        android.widget.Toast.makeText(context, "K线翻转按钮冷却中！剩余时间: \${cooldownText}", android.widget.Toast.LENGTH_SHORT).show()
+                                    } else {
+                                        showInvertDialog = true
+                                    }
+                                }
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (isInvertCooldownActive) {
+                            Text(
+                                text = cooldownText,
+                                color = Color(0xFFEF4444),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = FontFamily.Monospace
+                            )
+                        } else {
+                            Text(
+                                text = "4",
+                                color = if (showInvertDialog) Color.White else Color(0xFF34D399),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = FontFamily.Monospace
+                            )
+                        }
+                    }
+                }
             }
         }
 
@@ -3161,13 +4661,38 @@ fun TradingMultiViewScreen(
                         .padding(horizontal = 8.dp, vertical = 6.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    // 1. 各窗口详细网址配置行 (当前标签页活跃视窗)
+                    // 状态提示：地址栏已锁定
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Lock,
+                            contentDescription = null,
+                            tint = Color(0xFF10B981),
+                            modifier = Modifier.size(13.dp)
+                        )
+                        Text(
+                            text = "地址栏已锁定（禁止输入，仅限使用各视窗快捷按钮）",
+                            color = Color(0xFF94A3B8),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+
+                    // 1. 各窗口详细网址与快捷操作 (若当前有窗口最大化，仅独占展示该最大化窗口；否则展示当前标签页所有活跃视窗)
+                    val displayedWindows = if (uiState.maximizedWindowId != null) {
+                        uiState.activeWindowsForGroup.filter { it.id == uiState.maximizedWindowId }
+                    } else {
+                        uiState.activeWindowsForGroup
+                    }
+
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        uiState.activeWindowsForGroup.forEach { win ->
-                            var inputUrl by remember(win.currentUrl) { mutableStateOf(win.currentUrl) }
+                        displayedWindows.forEach { win ->
                             Column(
                                 modifier = Modifier
                                     .weight(1f)
@@ -3190,13 +4715,19 @@ fun TradingMultiViewScreen(
                                             modifier = Modifier
                                                 .size(6.dp)
                                                 .clip(CircleShape)
-                                                .background(Color(0xFF10B981))
+                                                .background(if (uiState.maximizedWindowId != null) Color(0xFF38BDF8) else Color(0xFF10B981))
+                                        )
+                                        Text(
+                                            text = if (uiState.maximizedWindowId != null) "窗口 \${win.id} (当前全屏独占)" else "窗口 \${win.id}",
+                                            color = if (uiState.maximizedWindowId != null) Color(0xFF38BDF8) else Color(0xFF94A3B8),
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.SemiBold
                                         )
                                     }
 
                                     Row(
                                         verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        horizontalArrangement = Arrangement.spacedBy(5.dp)
                                     ) {
                                         // 窗口单独刷新
                                         Icon(
@@ -3204,60 +4735,128 @@ fun TradingMultiViewScreen(
                                             contentDescription = "刷新",
                                             tint = Color(0xFF94A3B8),
                                             modifier = Modifier
-                                                .size(13.dp)
+                                                .size(14.dp)
                                                 .clickable { viewModel.reload(win.id) }
                                         )
 
-                                        // 快捷前往
+                                        // TV 快捷按钮 (单击直接加载 TradingView 官网/图表)
                                         Box(
                                             modifier = Modifier
                                                 .clip(RoundedCornerShape(3.dp))
-                                                .background(Color(0xFF0284C7))
+                                                .background(Color(0xFF0284C7)) // 深天蓝
                                                 .clickable {
-                                                    if (inputUrl.isNotBlank()) {
-                                                        viewModel.navigateToUrl(win.id, inputUrl)
-                                                    }
-                                                    focusManager.clearFocus()
+                                                    viewModel.navigateToUrl(win.id, "https://www.tradingview.com")
                                                 }
-                                                .padding(horizontal = 5.dp, vertical = 1.dp)
+                                                .padding(horizontal = 6.dp, vertical = 2.dp)
                                         ) {
-                                            Text(text = "前往", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                                            Text(
+                                                text = "TV",
+                                                color = Color.White,
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+
+                                        // AI Studio 快捷按钮 (单击直接加载 Google AI Studio 官网)
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(3.dp))
+                                                .background(Color(0xFF4F46E5)) // 靛蓝 / AI 质感蓝紫
+                                                .border(0.5.dp, Color(0xFF6366F1), RoundedCornerShape(3.dp))
+                                                .clickable {
+                                                    viewModel.navigateToUrl(win.id, "https://aistudio.google.com")
+                                                }
+                                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                                        ) {
+                                            Text(
+                                                text = "AI Studio",
+                                                color = Color.White,
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+
+                                        // GitHub 快捷按钮 (单击直接加载 GitHub 官网)
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(3.dp))
+                                                .background(Color(0xFF334155)) // GitHub 极客深灰
+                                                .border(0.5.dp, Color(0xFF475569), RoundedCornerShape(3.dp))
+                                                .clickable {
+                                                    viewModel.navigateToUrl(win.id, "https://github.com")
+                                                }
+                                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                                        ) {
+                                            Text(
+                                                text = "GitHub",
+                                                color = Color.White,
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
                                         }
                                     }
                                 }
 
-                                // 极简 URL 输入栏
+                                // 只读锁定网址展示栏 (禁止手动打字输入，带后退/前进按钮与 🔒 锁图标，纯展示当前视窗正在加载的 URL)
                                 Box(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .height(24.dp)
                                         .clip(RoundedCornerShape(3.dp))
-                                        .background(Color(0xFF161E2E))
-                                        .border(1.dp, Color(0xFF334155), RoundedCornerShape(3.dp))
+                                        .background(Color(0xFF131B2A))
+                                        .border(1.dp, Color(0xFF1E293B), RoundedCornerShape(3.dp))
                                         .padding(horizontal = 4.dp),
                                     contentAlignment = Alignment.CenterStart
                                 ) {
-                                    BasicTextField(
-                                        value = inputUrl,
-                                        onValueChange = { inputUrl = it },
-                                        modifier = Modifier.fillMaxWidth(),
-                                        singleLine = true,
-                                        textStyle = TextStyle(
-                                            color = Color(0xFFF1F5F9),
-                                            fontSize = 10.sp,
-                                            fontFamily = FontFamily.Monospace
-                                        ),
-                                        cursorBrush = SolidColor(Color(0xFF38BDF8)),
-                                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go, keyboardType = KeyboardType.Uri),
-                                        keyboardActions = KeyboardActions(
-                                            onGo = {
-                                                if (inputUrl.isNotBlank()) {
-                                                    viewModel.navigateToUrl(win.id, inputUrl)
-                                                }
-                                                focusManager.clearFocus()
-                                            }
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        // 后退按钮
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(2.dp))
+                                                .clickable { viewModel.goBack(win.id) }
+                                                .padding(horizontal = 2.dp, vertical = 2.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.ArrowBack,
+                                                contentDescription = "后退",
+                                                tint = Color(0xFF94A3B8),
+                                                modifier = Modifier.size(12.dp)
+                                            )
+                                        }
+
+                                        // 前进按钮
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(2.dp))
+                                                .clickable { viewModel.goForward(win.id) }
+                                                .padding(horizontal = 2.dp, vertical = 2.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.ArrowForward,
+                                                contentDescription = "前进",
+                                                tint = Color(0xFF94A3B8),
+                                                modifier = Modifier.size(12.dp)
+                                            )
+                                        }
+
+                                        Icon(
+                                            imageVector = Icons.Default.Lock,
+                                            contentDescription = "只读锁定",
+                                            tint = Color(0xFF64748B),
+                                            modifier = Modifier.size(11.dp)
                                         )
-                                    )
+                                        Text(
+                                            text = win.currentUrl.ifBlank { "https://www.tradingview.com" },
+                                            color = Color(0xFF94A3B8),
+                                            fontSize = 10.sp,
+                                            fontFamily = FontFamily.Monospace,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -3299,22 +4898,34 @@ fun TradingMultiViewScreen(
         }
     }
 
-        // 5. 屏幕右侧浮动快捷移至最新K线按钮 (Alt+Shift+Right Arrow)，支持自由拖动
+        // 半圆外形定义 (半径 22dp 与回到最新K线按钮一致，向左弧形凸出，平贴固定在屏幕最右侧)
+        val rightEdgeSemiCircleShape = RoundedCornerShape(
+            topStart = 22.dp,
+            bottomStart = 22.dp,
+            topEnd = 0.dp,
+            bottomEnd = 0.dp
+        )
+
+        // 5. 屏幕最右侧蓝色半圆浮动按钮：快捷移至最新K线 (只能上下移动，不能左右移动，用蓝色)
         Box(
             modifier = Modifier
-                .offset { IntOffset(floatingButtonOffset.x.toInt(), floatingButtonOffset.y.toInt()) }
+                .offset { IntOffset(0, latestKlineFloatingButtonOffsetY.toInt()) }
                 .align(Alignment.CenterEnd)
-                .padding(end = 12.dp)
-                .size(44.dp)
-                .clip(CircleShape)
-                .background(Color(0xFF0284C7).copy(alpha = 0.85f))
-                .border(1.5.dp, Color.White, CircleShape)
-                .pointerInput(Unit) {
-                    detectDragGestures { change, dragAmount ->
-                        change.consume()
-                        floatingButtonOffset = Offset(
-                            x = floatingButtonOffset.x + dragAmount.x,
-                            y = floatingButtonOffset.y + dragAmount.y
+                .size(width = 24.dp, height = 44.dp)
+                .shadow(elevation = 6.dp, shape = rightEdgeSemiCircleShape)
+                .clip(rightEdgeSemiCircleShape)
+                .background(Color(0xFF0284C7)) // 蓝色
+                .border(1.dp, Color(0xFF38BDF8), rightEdgeSemiCircleShape)
+                .pointerInput(isFloatingLocked) {
+                    if (!isFloatingLocked) {
+                        detectDragGestures(
+                            onDrag = { change, dragAmount ->
+                                change.consume()
+                                latestKlineFloatingButtonOffsetY += dragAmount.y
+                            },
+                            onDragEnd = {
+                                floatingPrefs.edit().putFloat("floating_latest_kline_offset_y", latestKlineFloatingButtonOffsetY).apply()
+                            }
                         )
                     }
                 }
@@ -3332,9 +4943,191 @@ fun TradingMultiViewScreen(
                 imageVector = Icons.Default.FastForward,
                 contentDescription = "移至最新K线",
                 tint = Color.White,
-                modifier = Modifier.size(20.dp)
+                modifier = Modifier
+                    .padding(start = 2.dp)
+                    .size(17.dp)
             )
         }
+
+        // 6. 屏幕最右侧绿色半圆浮动按钮：鼠标触控板开关 (只能上下移动，不能左右移动)
+        Box(
+            modifier = Modifier
+                .offset { IntOffset(0, mouseFloatingButtonOffsetY.toInt()) }
+                .align(Alignment.CenterEnd)
+                .size(width = 24.dp, height = 44.dp)
+                .shadow(elevation = 6.dp, shape = rightEdgeSemiCircleShape)
+                .clip(rightEdgeSemiCircleShape)
+                .background(Color(0xFF10B981)) // 绿色
+                .border(1.dp, Color(0xFF34D399), rightEdgeSemiCircleShape)
+                .pointerInput(isFloatingLocked) {
+                    if (!isFloatingLocked) {
+                        detectDragGestures(
+                            onDrag = { change, dragAmount ->
+                                change.consume()
+                                mouseFloatingButtonOffsetY += dragAmount.y
+                            },
+                            onDragEnd = {
+                                floatingPrefs.edit().putFloat("floating_mouse_offset_y", mouseFloatingButtonOffsetY).apply()
+                            }
+                        )
+                    }
+                }
+                .clickable {
+                    viewModel.toggleTrackpad()
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = Icons.Default.Mouse,
+                contentDescription = "虚拟触控板/光标",
+                tint = Color.White,
+                modifier = Modifier
+                    .padding(start = 2.dp)
+                    .size(15.dp)
+            )
+        }
+
+        // 7. 屏幕最右侧白色半圆浮动按钮：K线周期切换 (只能上下移动，不能左右移动)
+        Box(
+            modifier = Modifier
+                .offset { IntOffset(0, timeframeFloatingButtonOffsetY.toInt()) }
+                .align(Alignment.CenterEnd)
+                .size(width = 24.dp, height = 44.dp)
+                .shadow(elevation = 6.dp, shape = rightEdgeSemiCircleShape)
+                .clip(rightEdgeSemiCircleShape)
+                .background(Color.White) // 白色
+                .border(1.dp, Color(0xFFCBD5E1), rightEdgeSemiCircleShape)
+                .pointerInput(isFloatingLocked) {
+                    if (!isFloatingLocked) {
+                        detectDragGestures(
+                            onDrag = { change, dragAmount ->
+                                change.consume()
+                                timeframeFloatingButtonOffsetY += dragAmount.y
+                            },
+                            onDragEnd = {
+                                floatingPrefs.edit().putFloat("floating_timeframe_offset_y", timeframeFloatingButtonOffsetY).apply()
+                            }
+                        )
+                    }
+                }
+                .clickable {
+                    showTimeframeDialog = true
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = "T",
+                color = Color(0xFF0F172A),
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Black,
+                modifier = Modifier.padding(start = 2.dp)
+            )
+        }
+
+        // 7.5. 屏幕最右侧深黄色半圆浮动按钮：隐藏/恢复画图 (只能上下移动，不能左右移动，用深黄色)
+        Box(
+            modifier = Modifier
+                .offset { IntOffset(0, hideDrawingsFloatingButtonOffsetY.toInt()) }
+                .align(Alignment.CenterEnd)
+                .size(width = 24.dp, height = 44.dp)
+                .shadow(elevation = 6.dp, shape = rightEdgeSemiCircleShape)
+                .clip(rightEdgeSemiCircleShape)
+                .background(Color(0xFFD97706)) // 深黄色 (Amber 600)
+                .border(1.dp, Color(0xFFFBBF24), rightEdgeSemiCircleShape) // 亮黄边框
+                .pointerInput(isFloatingLocked) {
+                    if (!isFloatingLocked) {
+                        detectDragGestures(
+                            onDrag = { change, dragAmount ->
+                                change.consume()
+                                hideDrawingsFloatingButtonOffsetY += dragAmount.y
+                            },
+                            onDragEnd = {
+                                floatingPrefs.edit().putFloat("floating_hidedrawings_offset_y", hideDrawingsFloatingButtonOffsetY).apply()
+                            }
+                        )
+                    }
+                }
+                .combinedClickable(
+                    onClick = {
+                        viewModel.triggerHideDrawings(delayMs = 0L, context = context)
+                    },
+                    onLongClick = {
+                        showHideDrawingsDialog = true
+                    }
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = Icons.Default.VisibilityOff,
+                contentDescription = "隐藏/恢复画线",
+                tint = Color.White,
+                modifier = Modifier
+                    .padding(start = 2.dp)
+                    .size(15.dp)
+            )
+        }
+
+        // 7.8. 屏幕最右侧紫色半圆浮动按钮：K线翻转 (只能上下移动，不能左右移动，紫色，“翻”字)
+        Box(
+            modifier = Modifier
+                .offset { IntOffset(0, invertFloatingButtonOffsetY.toInt()) }
+                .align(Alignment.CenterEnd)
+                .size(width = 24.dp, height = 44.dp)
+                .shadow(elevation = 6.dp, shape = rightEdgeSemiCircleShape)
+                .clip(rightEdgeSemiCircleShape)
+                .background(
+                    if (isInvertCooldownActive) Color(0xFF475569) else Color(0xFF8B5CF6) // 紫色，冷却中置灰
+                )
+                .border(
+                    1.dp,
+                    if (isInvertCooldownActive) Color(0xFF64748B) else Color(0xFFA78BFA),
+                    rightEdgeSemiCircleShape
+                )
+                .pointerInput(isFloatingLocked) {
+                    if (!isFloatingLocked) {
+                        detectDragGestures(
+                            onDrag = { change, dragAmount ->
+                                change.consume()
+                                invertFloatingButtonOffsetY += dragAmount.y
+                            },
+                            onDragEnd = {
+                                floatingPrefs.edit().putFloat("floating_invert_offset_y", invertFloatingButtonOffsetY).apply()
+                            }
+                        )
+                    }
+                }
+                .combinedClickable(
+                    onClick = {
+                        if (isInvertCooldownActive) {
+                            android.widget.Toast.makeText(context, "K线翻转按钮冷却中！剩余时间: \${cooldownText}", android.widget.Toast.LENGTH_SHORT).show()
+                        } else {
+                            viewModel.triggerInvert4Charts(delayMs = 0L, context = context)
+                        }
+                    },
+                    onLongClick = {
+                        if (isInvertCooldownActive) {
+                            android.widget.Toast.makeText(context, "K线翻转按钮冷却中！剩余时间: \${cooldownText}", android.widget.Toast.LENGTH_SHORT).show()
+                        } else {
+                            showInvertDialog = true
+                        }
+                    }
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = "翻",
+                color = if (isInvertCooldownActive) Color(0xFFCBD5E1) else Color.White,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(start = 2.dp)
+            )
+        }
+
+        // 8. 原生虚拟鼠标与触控板浮层
+        VirtualMouseOverlay(
+            isEnabled = uiState.isTrackpadEnabled,
+            onClose = { viewModel.toggleTrackpad() }
+        )
     }
 
     if (showSaveDialog) {
@@ -3357,7 +5150,7 @@ fun TradingMultiViewScreen(
                 targetGroupForConfig = null
             },
             onConfirm = { newName, newCount ->
-                viewModel.updateGroupWindowCount(targetGroupForConfig!!.id, newCount, context)
+                viewModel.updateGroupConfig(targetGroupForConfig!!.id, newName, newCount, context)
                 showGroupConfigDialog = false
                 targetGroupForConfig = null
             }
@@ -3431,6 +5224,127 @@ fun TradingMultiViewScreen(
                 viewModel.resetGlobalZoom()
             }
         )
+    }
+
+    if (editingPreset != null) {
+        val targetPreset = editingPreset!!
+        var tempName by remember(targetPreset) { mutableStateOf(targetPreset.name) }
+        var tempVisibleIds by remember(targetPreset) { mutableStateOf(targetPreset.visibleIds.toSet()) }
+        var errorMessage by remember { mutableStateOf<String?>(null) }
+
+        Dialog(onDismissRequest = { editingPreset = null }) {
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = Color(0xFF0B132B),
+                border = BorderStroke(1.dp, Color(0xFF1E293B)),
+                modifier = Modifier
+                    .width(320.dp)
+                    .padding(16.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        text = "配置快捷预设 \${targetPreset.id}",
+                        color = Color.White,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+
+                    OutlinedTextField(
+                        value = tempName,
+                        onValueChange = { tempName = it },
+                        label = { Text("预设名称", color = Color(0xFF94A3B8)) },
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedBorderColor = Color(0xFF38BDF8),
+                            unfocusedBorderColor = Color(0xFF334155)
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Text(
+                        text = "选择显示的视窗：",
+                        color = Color(0xFF94A3B8),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        (1..uiState.currentWindowCount).forEach { winId ->
+                            val isChecked = tempVisibleIds.contains(winId)
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(if (isChecked) Color(0xFF0284C7) else Color(0xFF1E293B))
+                                    .border(1.dp, if (isChecked) Color(0xFF38BDF8) else Color(0xFF334155), RoundedCornerShape(6.dp))
+                                    .clickable {
+                                        errorMessage = null
+                                        tempVisibleIds = if (isChecked) tempVisibleIds - winId else tempVisibleIds + winId
+                                    }
+                                    .padding(vertical = 8.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "W$winId",
+                                    color = if (isChecked) Color.White else Color(0xFF94A3B8),
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+
+                    errorMessage?.let {
+                        Text(text = it, color = Color(0xFFEF4444), fontSize = 11.sp)
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        TextButton(onClick = { editingPreset = null }) {
+                            Text("取消", color = Color(0xFF94A3B8))
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Button(
+                            onClick = {
+                                if (tempVisibleIds.isEmpty()) {
+                                    errorMessage = "至少保留一个视窗显示"
+                                    return@Button
+                                }
+                                val updated = targetPreset.copy(
+                                    name = tempName.trim().ifEmpty { "预设\${targetPreset.id}" },
+                                    visibleIds = tempVisibleIds.toList().sorted()
+                                )
+                                val groupPresets = (windowPresetsMap[uiState.activeGroupId] ?: defaultPresets).map {
+                                    if (it.id == updated.id) updated else it
+                                }
+                                windowPresetsMap = windowPresetsMap + (uiState.activeGroupId to groupPresets)
+                                uiState.windows.forEach { win ->
+                                    if (updated.visibleIds.contains(win.id)) {
+                                        viewModel.restoreWindow(win.id, context)
+                                    } else {
+                                        viewModel.hideWindow(win.id, context)
+                                    }
+                                }
+                                editingPreset = null
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7))
+                        ) {
+                            Text("保存并应用", color = Color.White)
+                        }
+                    }
+                }
+            }
+        }
     }
 
     if (showReorderDialog) {
@@ -3579,124 +5493,136 @@ fun TradingMultiViewScreen(
         )
     }
 
-    editingPreset?.let { targetPreset ->
-        var tempName by remember(targetPreset) { mutableStateOf(targetPreset.name) }
-        var tempVisibleIds by remember(targetPreset) { mutableStateOf(targetPreset.visibleIds.toSet()) }
-        var errorMessage by remember { mutableStateOf<String?>(null) }
+    if (showRestartAppDialog) {
+        AlertDialog(
+            onDismissRequest = { showRestartAppDialog = false },
+            title = {
+                Text(
+                    text = "重启应用",
+                    color = Color.White,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Text(
+                    text = "是否确认重启应用？\\n（系统将自动保存所有标签页内所有窗口的最新实时网址与设置，并重新加载）",
+                    color = Color(0xFFCBD5E1),
+                    fontSize = 13.sp
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.saveAllTabsCurrentUrls(context)
+                        showRestartAppDialog = false
+                        val pm = context.packageManager
+                        val intent = pm.getLaunchIntentForPackage(context.packageName)?.apply {
+                            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_CLEAR_TASK)
+                        }
+                        if (intent != null) {
+                            context.startActivity(intent)
+                            Runtime.getRuntime().exit(0)
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626))
+                ) {
+                    Text("立即重启", color = Color.White, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                OutlinedButton(
+                    onClick = { showRestartAppDialog = false },
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF94A3B8))
+                ) {
+                    Text("取消")
+                }
+            },
+            containerColor = Color(0xFF1E293B)
+        )
+    }
 
-        Dialog(onDismissRequest = { editingPreset = null }) {
+    // 15分钟停留满5秒倒计时翻转不可取消弹窗
+    val showCountdown by viewModel.showInvertCountdownDialog.collectAsState()
+    val countdownSeconds by viewModel.invertCountdownSeconds.collectAsState()
+
+    if (showCountdown) {
+        Dialog(
+            onDismissRequest = {}, // 不允许点击外部或返回键取消
+            properties = DialogProperties(
+                dismissOnBackPress = false,
+                dismissOnClickOutside = false,
+                usePlatformDefaultWidth = false
+            )
+        ) {
             Card(
-                colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A)),
-                border = BorderStroke(1.dp, Color(0xFF334155)),
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.width(320.dp).padding(16.dp)
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1B4B)), // 靛蓝紫色偏警示底色
+                border = BorderStroke(2.dp, Color(0xFFEF4444)), // 亮红边框
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier
+                    .width(360.dp)
+                    .padding(16.dp)
             ) {
                 Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                    modifier = Modifier.padding(20.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
+                    Box(
+                        modifier = Modifier
+                            .size(56.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFFFEF2F2)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Warning,
+                            contentDescription = "警报",
+                            tint = Color(0xFFEF4444),
+                            modifier = Modifier.size(32.dp)
+                        )
+                    }
+
                     Text(
-                        text = "⚙️ 配置快捷按钮 #\${targetPreset.id}",
-                        color = Color(0xFF38BDF8),
-                        fontSize = 14.sp,
+                        text = "🚨 前台停留超时提醒",
+                        color = Color.White,
+                        fontSize = 18.sp,
                         fontWeight = FontWeight.Bold
                     )
 
-                    OutlinedTextField(
-                        value = tempName,
-                        onValueChange = {
-                            if (it.length <= 8) {
-                                tempName = it
-                                errorMessage = null
-                            }
-                        },
-                        label = { Text("按钮名称 (自定义标识)") },
-                        singleLine = true,
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = Color(0xFF38BDF8),
-                            unfocusedBorderColor = Color(0xFF334155),
-                            focusedTextColor = Color.White,
-                            unfocusedTextColor = Color.White
-                        ),
-                        modifier = Modifier.fillMaxWidth()
+                    Text(
+                        text = "当前标签页已在前台累计停留满 15 分钟！系统即将执行自动强制 K 线翻转干预程序。",
+                        color = Color(0xFFE2E8F0),
+                        fontSize = 13.sp,
+                        textAlign = TextAlign.Center,
+                        lineHeight = 18.sp
                     )
+
+                    // 倒计时特大红字圈
+                    Box(
+                        modifier = Modifier
+                            .size(72.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFFEF4444).copy(alpha = 0.2f))
+                            .border(2.dp, Color(0xFFEF4444), CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = countdownSeconds.toString(),
+                            color = Color(0xFFFCA5A5),
+                            fontSize = 32.sp,
+                            fontWeight = FontWeight.ExtraBold
+                        )
+                    }
 
                     Text(
-                        text = "选择显示的视窗：",
-                        color = Color(0xFF94A3B8),
+                        text = "将在 $countdownSeconds 秒后自动强制翻转 K 线图\\n此过程不可撤销且之后将禁用翻转按钮 10 分钟",
+                        color = Color(0xFFF87171),
                         fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold
+                        fontWeight = FontWeight.Medium,
+                        textAlign = TextAlign.Center,
+                        lineHeight = 16.sp
                     )
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        (1..uiState.currentWindowCount).forEach { winId ->
-                            val isChecked = tempVisibleIds.contains(winId)
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .background(if (isChecked) Color(0xFF0284C7) else Color(0xFF1E293B))
-                                    .border(1.dp, if (isChecked) Color(0xFF38BDF8) else Color(0xFF334155), RoundedCornerShape(6.dp))
-                                    .clickable {
-                                        errorMessage = null
-                                        tempVisibleIds = if (isChecked) tempVisibleIds - winId else tempVisibleIds + winId
-                                    }
-                                    .padding(vertical = 8.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = "W$winId",
-                                    color = if (isChecked) Color.White else Color(0xFF94A3B8),
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                        }
-                    }
-
-                    errorMessage?.let {
-                        Text(text = it, color = Color(0xFFEF4444), fontSize = 11.sp)
-                    }
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.End
-                    ) {
-                        TextButton(onClick = { editingPreset = null }) {
-                            Text("取消", color = Color(0xFF94A3B8))
-                        }
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Button(
-                            onClick = {
-                                if (tempVisibleIds.isEmpty()) {
-                                    errorMessage = "至少保留一个视窗显示"
-                                    return@Button
-                                }
-                                val updated = targetPreset.copy(
-                                    name = tempName.trim().ifEmpty { "预设\${targetPreset.id}" },
-                                    visibleIds = tempVisibleIds.toList().sorted()
-                                )
-                                val groupPresets = (windowPresetsMap[uiState.activeGroupId] ?: defaultPresets).map {
-                                    if (it.id == updated.id) updated else it
-                                }
-                                windowPresetsMap = windowPresetsMap + (uiState.activeGroupId to groupPresets)
-                                uiState.windows.forEach { win ->
-                                    if (updated.visibleIds.contains(win.id)) {
-                                        viewModel.restoreWindow(win.id, context)
-                                    } else {
-                                        viewModel.hideWindow(win.id, context)
-                                    }
-                                }
-                                editingPreset = null
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7))
-                        ) {
-                            Text("保存并应用", color = Color.White)
-                        }
-                    }
                 }
             }
         }
@@ -3806,133 +5732,149 @@ fun TimeframeSyncDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
-        Card(
-            colors = CardDefaults.cardColors(containerColor = Color(0xFF111827)),
-            border = BorderStroke(1.dp, Color(0xFF374151)),
-            shape = RoundedCornerShape(12.dp),
+        Box(
             modifier = Modifier
-                .width(320.dp)
-                .padding(16.dp)
+                .fillMaxSize()
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = onDismiss
+                )
+                .padding(bottom = 24.dp, end = 24.dp),
+            contentAlignment = Alignment.BottomEnd
         ) {
-            Column(
-                modifier = Modifier.padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+            Card(
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF111827)),
+                border = BorderStroke(1.5.dp, Color(0xFF374151)),
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier
+                    .width(322.dp)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = {} // 阻止点击卡片内部时关闭对话框
+                    )
             ) {
-                // 窗口目标选择按钮
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    (1..windowCount).forEach { winId ->
-                        val isSelected = selectedWindows.contains(winId)
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .weight(1f)
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(if (isSelected) Color(0xFF1E293B) else Color(0xFF1F2937))
-                                .border(1.dp, if (isSelected) Color(0xFF2563EB) else Color(0xFF374151), RoundedCornerShape(6.dp))
-                                .clickable {
-                                    selectedWindows = if (isSelected) {
-                                        if (selectedWindows.size > 1) selectedWindows - winId else selectedWindows
-                                    } else {
-                                        selectedWindows + winId
+                    // 窗口目标选择按钮
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        (1..windowCount).forEach { winId ->
+                            val isSelected = selectedWindows.contains(winId)
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(if (isSelected) Color(0xFF1E293B) else Color(0xFF1F2937))
+                                    .border(1.5.dp, if (isSelected) Color(0xFF2563EB) else Color(0xFF374151), RoundedCornerShape(8.dp))
+                                    .clickable {
+                                        selectedWindows = if (isSelected) {
+                                            if (selectedWindows.size > 1) selectedWindows - winId else selectedWindows
+                                        } else {
+                                            selectedWindows + winId
+                                        }
+                                    }
+                                    .padding(vertical = 8.dp),
+                                horizontalArrangement = Arrangement.Center
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(16.dp)
+                                        .clip(RoundedCornerShape(4.dp))
+                                        .background(if (isSelected) Color(0xFF2563EB) else Color(0xFF4B5563))
+                                        .border(1.dp, if (isSelected) Color(0xFF2563EB) else Color(0xFF6B7280), RoundedCornerShape(4.dp)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    if (isSelected) {
+                                        Text(
+                                            text = "✓",
+                                            color = Color.White,
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
                                     }
                                 }
-                                .padding(vertical = 6.dp),
-                            horizontalArrangement = Arrangement.Center
-                        ) {
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "窗口 $winId",
+                                    color = if (isSelected) Color.White else Color(0xFF9CA3AF),
+                                    fontSize = 13.sp,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                                )
+                            }
+                        }
+                    }
+
+                    // 快捷分钟周期行 (保持不变：3m 至 30m)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        listOf("3m", "5m", "10m", "15m", "30m").forEach { tf ->
                             Box(
                                 modifier = Modifier
-                                    .size(12.dp)
-                                    .clip(RoundedCornerShape(3.dp))
-                                    .background(if (isSelected) Color(0xFF2563EB) else Color(0xFF4B5563))
-                                    .border(1.dp, if (isSelected) Color(0xFF2563EB) else Color(0xFF6B7280), RoundedCornerShape(3.dp)),
+                                    .weight(1f)
+                                    .height(50.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(Color(0xFF1F2937))
+                                    .border(1.dp, Color(0xFF374151), RoundedCornerShape(8.dp))
+                                    .clickable { onSelectTimeframe(tf, selectedWindows) },
                                 contentAlignment = Alignment.Center
                             ) {
-                                if (isSelected) {
-                                    Text(
-                                        text = "✓",
-                                        color = Color.White,
-                                        fontSize = 8.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                }
+                                Text(text = tf, color = Color(0xFFE2E8F0), fontSize = 14.sp, fontWeight = FontWeight.Bold)
                             }
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = "窗口 $winId",
-                                color = if (isSelected) Color.White else Color(0xFF9CA3AF),
-                                fontSize = 10.sp,
-                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
-                            )
                         }
                     }
-                }
 
-                // 快捷分钟周期行
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    listOf("3m", "5m", "10m", "15m", "30m").forEach { tf ->
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(26.dp)
-                                .clip(RoundedCornerShape(4.dp))
-                                .background(Color(0xFF1F2937))
-                                .border(0.5.dp, Color(0xFF374151), RoundedCornerShape(4.dp))
-                                .clickable { onSelectTimeframe(tf, selectedWindows) },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(text = tf, color = Color(0xFFE2E8F0), fontSize = 10.sp, fontWeight = FontWeight.Medium)
+                    // 快捷小时周期行 (从右到左为 1h 到 12h，即从左到右：12h 至 1h)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        listOf("12h", "6h", "4h", "3h", "2h", "1h").forEach { tf ->
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(50.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(Color(0xFF1F2937))
+                                    .border(1.dp, Color(0xFF374151), RoundedCornerShape(8.dp))
+                                    .clickable { onSelectTimeframe(tf, selectedWindows) },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(text = tf, color = Color(0xFFE2E8F0), fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                            }
                         }
                     }
-                }
 
-                // 快捷小时周期行
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    listOf("1h", "2h", "3h", "4h", "6h", "12h").forEach { tf ->
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(26.dp)
-                                .clip(RoundedCornerShape(4.dp))
-                                .background(Color(0xFF1F2937))
-                                .border(0.5.dp, Color(0xFF374151), RoundedCornerShape(4.dp))
-                                .clickable { onSelectTimeframe(tf, selectedWindows) },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(text = tf, color = Color(0xFFE2E8F0), fontSize = 10.sp, fontWeight = FontWeight.Medium)
-                        }
-                    }
-                }
-
-                // 快捷日线/周月周期行
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    listOf("1D", "2D", "3D", "1W", "1M").forEach { tf ->
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(26.dp)
-                                .clip(RoundedCornerShape(4.dp))
-                                .background(Color(0xFF1F2937))
-                                .border(0.5.dp, Color(0xFF374151), RoundedCornerShape(4.dp))
-                                .clickable { onSelectTimeframe(tf, selectedWindows) },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(text = tf, color = Color(0xFFE2E8F0), fontSize = 10.sp, fontWeight = FontWeight.Medium)
+                    // 快捷日线/周月周期行 (从右到左为 1D 到 1M，即从左到右：1M 至 1D)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        listOf("1M", "1W", "3D", "2D", "1D").forEach { tf ->
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(50.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(Color(0xFF1F2937))
+                                    .border(1.dp, Color(0xFF374151), RoundedCornerShape(8.dp))
+                                    .clickable { onSelectTimeframe(tf, selectedWindows) },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(text = tf, color = Color(0xFFE2E8F0), fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                            }
                         }
                     }
                 }
@@ -3962,7 +5904,7 @@ fun GroupConfigDialog(
             border = BorderStroke(1.dp, Color(0xFF374151)),
             shape = RoundedCornerShape(14.dp),
             modifier = Modifier
-                .width(360.dp)
+                .width(420.dp)
                 .padding(16.dp)
         ) {
             Column(
@@ -4003,12 +5945,44 @@ fun GroupConfigDialog(
                     color = Color(0xFFE2E8F0)
                 )
 
-                // 2 个选项：3 个独立窗口 vs 4 个独立窗口
+                // 3 个选项：2 个独立窗口 vs 3 个独立窗口 vs 4 个独立窗口
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    // 3 窗口选项：点击直接切换生效
+                    // 2 窗口选项
+                    val is2 = selectedWindowCount == 2
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (is2) Color(0xFF0C4A6E) else Color(0xFF1E293B))
+                            .border(
+                                1.5.dp,
+                                if (is2) Color(0xFF38BDF8) else Color(0xFF334155),
+                                RoundedCornerShape(8.dp)
+                            )
+                            .clickable {
+                                selectedWindowCount = 2
+                            }
+                            .padding(vertical = 10.dp, horizontal = 6.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            text = "2 个独立窗口",
+                            fontSize = 12.sp,
+                            fontWeight = if (is2) FontWeight.Bold else FontWeight.Medium,
+                            color = if (is2) Color.White else Color(0xFFCBD5E1)
+                        )
+                        Text(
+                            text = "横向 2 联屏",
+                            fontSize = 10.sp,
+                            color = if (is2) Color(0xFFBAE6FD) else Color(0xFF64748B)
+                        )
+                    }
+
+                    // 3 窗口选项
                     val is3 = selectedWindowCount == 3
                     Column(
                         modifier = Modifier
@@ -4022,26 +5996,25 @@ fun GroupConfigDialog(
                             )
                             .clickable {
                                 selectedWindowCount = 3
-                                onConfirm(groupName, 3)
                             }
-                            .padding(12.dp),
+                            .padding(vertical = 10.dp, horizontal = 6.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
                         Text(
                             text = "3 个独立窗口",
-                            fontSize = 13.sp,
+                            fontSize = 12.sp,
                             fontWeight = if (is3) FontWeight.Bold else FontWeight.Medium,
                             color = if (is3) Color.White else Color(0xFFCBD5E1)
                         )
                         Text(
-                            text = "横向 3 联屏 (点击直接切换)",
+                            text = "横向 3 联屏",
                             fontSize = 10.sp,
                             color = if (is3) Color(0xFFBAE6FD) else Color(0xFF64748B)
                         )
                     }
 
-                    // 4 窗口选项：点击直接切换生效
+                    // 4 窗口选项
                     val is4 = selectedWindowCount == 4
                     Column(
                         modifier = Modifier
@@ -4055,20 +6028,19 @@ fun GroupConfigDialog(
                             )
                             .clickable {
                                 selectedWindowCount = 4
-                                onConfirm(groupName, 4)
                             }
-                            .padding(12.dp),
+                            .padding(vertical = 10.dp, horizontal = 6.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
                         Text(
                             text = "4 个独立窗口",
-                            fontSize = 13.sp,
+                            fontSize = 12.sp,
                             fontWeight = if (is4) FontWeight.Bold else FontWeight.Medium,
                             color = if (is4) Color.White else Color(0xFFCBD5E1)
                         )
                         Text(
-                            text = "横向 4 联屏 (点击直接切换)",
+                            text = "横向 4 联屏",
                             fontSize = 10.sp,
                             color = if (is4) Color(0xFFBAE6FD) else Color(0xFF64748B)
                         )
@@ -4076,11 +6048,66 @@ fun GroupConfigDialog(
                 }
 
                 Text(
-                    text = "提示：点击上方「3 屏」或「4 屏」卡片直接即时切换生效，无需点击确认；若修改了标签名称可点击右下角保存。",
+                    text = "提示：可修改标签页显示名称，选择 2 屏、3 屏或 4 屏布局后点击「保存并应用」生效。",
                     fontSize = 11.sp,
                     lineHeight = 16.sp,
                     color = Color(0xFF94A3B8)
                 )
+
+                // 15分钟前台停留自动翻转配置
+                val dialogCtx = LocalContext.current
+                var isReminderEnabled by remember(group.id) {
+                    mutableStateOf(
+                        dialogCtx.getSharedPreferences("trading_multiview_prefs", Context.MODE_PRIVATE)
+                            .getBoolean("invert_reminder_enabled_\${group.id}", false)
+                    )
+                }
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(if (isReminderEnabled) Color(0xFF064E3B).copy(alpha = 0.6f) else Color(0xFF1E293B))
+                        .border(
+                            1.dp,
+                            if (isReminderEnabled) Color(0xFF10B981) else Color(0xFF334155),
+                            RoundedCornerShape(8.dp)
+                        )
+                        .clickable {
+                            isReminderEnabled = !isReminderEnabled
+                        }
+                        .padding(10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "⏰ 15分钟停留自动翻转K线",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (isReminderEnabled) Color(0xFF34D399) else Color.White
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = "前台累计停留 15 分钟将自动弹窗 5 秒倒计时并强制翻转 K 线 (Alt+I)，之后禁用该功能 10 分钟以防频繁触发。",
+                            fontSize = 9.sp,
+                            lineHeight = 13.sp,
+                            color = if (isReminderEnabled) Color(0xFFA7F3D0) else Color(0xFF94A3B8)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Box(
+                        modifier = Modifier
+                            .size(18.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(if (isReminderEnabled) Color(0xFF10B981) else Color(0xFF475569)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (isReminderEnabled) {
+                            Text("✓", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -4088,17 +6115,21 @@ fun GroupConfigDialog(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     TextButton(onClick = onDismiss) {
-                        Text("关闭", fontSize = 12.sp, color = Color(0xFF94A3B8))
+                        Text("取消", fontSize = 12.sp, color = Color(0xFF94A3B8))
                     }
-                    if (groupName.trim() != group.name.trim() && groupName.isNotBlank()) {
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Button(
-                            onClick = { onConfirm(groupName, selectedWindowCount) },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
-                            shape = RoundedCornerShape(6.dp)
-                        ) {
-                            Text("保存新名称", fontSize = 12.sp, color = Color.White)
-                        }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(
+                        onClick = {
+                            dialogCtx.getSharedPreferences("trading_multiview_prefs", Context.MODE_PRIVATE)
+                                .edit()
+                                .putBoolean("invert_reminder_enabled_\${group.id}", isReminderEnabled)
+                                .apply()
+                            onConfirm(groupName, selectedWindowCount)
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
+                        shape = RoundedCornerShape(6.dp)
+                    ) {
+                        Text("保存并应用", fontSize = 12.sp, color = Color.White)
                     }
                 }
             }
@@ -5082,6 +7113,649 @@ fun GlobalZoomSelectDialog(
         }
     }
 }`
+  },
+  {
+    path: "app/src/main/java/com/trading/multiview/ui/VirtualMouseTrackpad.kt",
+    language: "kotlin",
+    description: "原生虚拟鼠标与触控板浮层：支持左键、右键、拖拽平移、滚轮缩放与十字星光标调度",
+    content: `package com.trading.multiview.ui
+
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.trading.multiview.webview.PersistentWebViewPool
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
+
+/**
+ * 原生虚拟光标与悬浮触控板 (Virtual Mouse & Precision Trackpad)
+ * 专为 TradingView 多视窗优化：
+ * 1. 触控板滑动驱动真实 ACTION_HOVER_MOVE，完美激活 TradingView 十字光标与 OHLC；
+ * 2. 触控板轻点触发左键单击，长按 500ms 触发右键上下文菜单；
+ * 3. 独立左键、右键、按住画线/平移、滚轮无级缩放与 Del 快捷键删除画线/指标；
+ * 4. 悬浮面板支持自由拖拽移动至任意角落。
+ */
+@Composable
+fun BoxScope.VirtualMouseOverlay(
+    isEnabled: Boolean,
+    onClose: () -> Unit
+) {
+    // 监听并且在触控板开关状态关闭/组件销毁时，完美清理所有视窗的十字星标
+    DisposableEffect(isEnabled) {
+        onDispose {
+            PersistentWebViewPool.clearCrosshairs()
+        }
+    }
+
+    if (!isEnabled) return
+
+    val configuration = LocalConfiguration.current
+    val density = LocalDensity.current
+    val composeView = LocalView.current
+
+    val screenWidthPx = with(density) { configuration.screenWidthDp.dp.toPx() }
+    val screenHeightPx = with(density) { configuration.screenHeightDp.dp.toPx() }
+
+    // 辅助获取光标在整个物理屏幕上的绝对屏幕坐标 (与 WebView.getLocationOnScreen 100% 绝对对齐)
+    fun getAbsScreenPos(offset: Offset): Pair<Float, Float> {
+        val loc = IntArray(2)
+        composeView.getLocationOnScreen(loc)
+        return Pair(loc[0].toFloat() + offset.x, loc[1].toFloat() + offset.y)
+    }
+
+    // 光标全局屏幕绝对物理坐标 (默认居中偏上)
+    var cursorPosition by remember {
+        mutableStateOf(Offset(screenWidthPx / 2f, screenHeightPx / 2f))
+    }
+
+    val shiftLeftPx = with(density) { -50.dp.toPx() }
+    // 触控板面板在屏幕上的相对偏移 (默认往左边移动50dp)
+    var panelOffset by remember(shiftLeftPx) {
+        mutableStateOf(Offset(shiftLeftPx, 0f))
+    }
+
+    // 触控板灵敏度倍率 (只保留 0.5x 和 2.0x)
+    var sensitivity by remember { mutableStateOf(2.0f) }
+
+    // 是否处于“按住鼠标左键”状态 (用于自由画线与按住平移)
+    var isHoldingDown by remember { mutableStateOf(false) }
+
+    // 拖拽面板与滑动感应状态
+    var isDraggingPanel by remember { mutableStateOf(false) }
+    var isTrackpadActive by remember { mutableStateOf(false) }
+
+    // 交互按键的高亮反馈源 (常态20%透明度，按下瞬间提供高亮触觉视觉反馈)
+    val closeInteractionSource = remember { MutableInteractionSource() }
+    val isClosePressed by closeInteractionSource.collectIsPressedAsState()
+
+    val sensInteractionSource = remember { MutableInteractionSource() }
+    val isSensPressed by sensInteractionSource.collectIsPressedAsState()
+
+    val delInteractionSource = remember { MutableInteractionSource() }
+    val isDelPressed by delInteractionSource.collectIsPressedAsState()
+
+    val leftInteractionSource = remember { MutableInteractionSource() }
+    val isLeftPressed by leftInteractionSource.collectIsPressedAsState()
+
+    val rightInteractionSource = remember { MutableInteractionSource() }
+    val isRightPressed by rightInteractionSource.collectIsPressedAsState()
+
+    val holdInteractionSource = remember { MutableInteractionSource() }
+    val isHoldPressed by holdInteractionSource.collectIsPressedAsState()
+
+    val zoomInInteractionSource = remember { MutableInteractionSource() }
+    val isZoomInPressed by zoomInInteractionSource.collectIsPressedAsState()
+
+    val zoomOutInteractionSource = remember { MutableInteractionSource() }
+    val isZoomOutPressed by zoomOutInteractionSource.collectIsPressedAsState()
+
+    // =========================================================================
+    // 1. 全局悬浮光标指示器 (Visual Cursor Indicator)
+    // =========================================================================
+    Box(
+        modifier = Modifier.fillMaxSize()
+    ) {
+        Box(
+            modifier = Modifier
+                .offset {
+                    IntOffset(
+                        cursorPosition.x.roundToInt(),
+                        cursorPosition.y.roundToInt()
+                    )
+                }
+                .size(28.dp)
+        ) {
+            // 真实 PC 风格高对比度鼠标指针
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val path = Path().apply {
+                    moveTo(0f, 0f)
+                    lineTo(0f, size.height * 0.85f)
+                    lineTo(size.width * 0.28f, size.height * 0.62f)
+                    lineTo(size.width * 0.58f, size.height * 0.95f)
+                    lineTo(size.width * 0.72f, size.height * 0.82f)
+                    lineTo(size.width * 0.42f, size.height * 0.50f)
+                    lineTo(size.width * 0.78f, size.height * 0.50f)
+                    close()
+                }
+
+                // 外轮廓阴影 / 边框
+                drawPath(
+                    path = path,
+                    color = Color(0xFF020617),
+                    style = Stroke(width = 3.dp.toPx())
+                )
+
+                // 内部纯白填充 (如果是按住拖拽状态，显示高亮亮绿以提示按压状态)
+                drawPath(
+                    path = path,
+                    color = if (isHoldingDown) Color(0xFF10B981) else Color.White
+                )
+
+                // 指针尖端高精度十字准星指示灯
+                drawCircle(
+                    color = if (isHoldingDown) Color(0xFF059669) else Color(0xFF0284C7),
+                    radius = 2.dp.toPx(),
+                    center = Offset(0f, 0f)
+                )
+            }
+        }
+    }
+
+    // =========================================================================
+    // 2. 悬浮精准触控板面板 (Draggable Touchpad Panel)
+    // 整体最大外框保持 100% 不透明高亮实线，内部其他所有部分全部采用 20% 透明度极高穿透看盘
+    // =========================================================================
+    Box(
+        modifier = Modifier
+            .align(Alignment.BottomEnd)
+            .padding(bottom = 12.dp, end = 12.dp)
+            .offset {
+                IntOffset(
+                    panelOffset.x.roundToInt(),
+                    panelOffset.y.roundToInt()
+                )
+            }
+            .width(308.dp)
+            .shadow(elevation = 12.dp, shape = RoundedCornerShape(12.dp))
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color(0xFF0B111E).copy(alpha = 0.20f)) // 背景设为 20% 高穿透透明度
+            .border(
+                border = BorderStroke(1.5.dp, Color(0xFF38BDF8)), // 整体最大的外框保持 100% 不透明实线条
+                shape = RoundedCornerShape(12.dp)
+            )
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(IntrinsicSize.Min)
+                .padding(6.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            // 左侧 36dp 宽度的专属竖直拖拽手柄条 (专门用于拖拽移动触控板)
+            Box(
+                modifier = Modifier
+                    .width(36.dp)
+                    .fillMaxHeight()
+                    .alpha(if (isDraggingPanel) 0.85f else 0.20f)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Color(0xFF1E293B))
+                    .border(1.dp, Color(0xFF38BDF8), RoundedCornerShape(8.dp))
+                    .pointerInput(Unit) {
+                        detectDragGestures(
+                            onDragStart = { isDraggingPanel = true },
+                            onDragEnd = { isDraggingPanel = false },
+                            onDragCancel = { isDraggingPanel = false }
+                        ) { change, dragAmount ->
+                            change.consume()
+                            panelOffset = Offset(
+                                x = panelOffset.x + dragAmount.x,
+                                y = panelOffset.y + dragAmount.y
+                            )
+                        }
+                    },
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center,
+                    modifier = Modifier.padding(vertical = 4.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.DragIndicator,
+                        contentDescription = "拖拽触控板",
+                        tint = Color(0xFF38BDF8),
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "拖",
+                        color = Color(0xFF38BDF8),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = "拽",
+                        color = Color(0xFF38BDF8),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+
+            // 右侧主要操作区 (标题栏、滑动感应区、控制按钮行)
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                // 面板标题栏 (左侧：2倍宽的关闭按钮X；右侧：灵敏度选择、Del键)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(32.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(Color(0xFF1E293B).copy(alpha = 0.20f))
+                        .padding(horizontal = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    // 最左侧：2倍宽度的关闭按钮x (60dp)，按下瞬间 0.85f 高亮反馈
+                    Box(
+                        modifier = Modifier
+                            .height(24.dp)
+                            .width(60.dp)
+                            .alpha(if (isClosePressed) 0.85f else 0.20f)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(Color(0xFF2E1015))
+                            .border(1.dp, Color(0xFFEF4444), RoundedCornerShape(4.dp))
+                            .clickable(
+                                interactionSource = closeInteractionSource,
+                                indication = null
+                            ) { onClose() },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(3.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "关闭触控板",
+                                tint = Color(0xFFF87171),
+                                modifier = Modifier.size(13.dp)
+                            )
+                            Text(
+                                text = "关闭",
+                                color = Color(0xFFF87171),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+
+                    // 右侧控制键群：[灵敏度] [Del]
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                    ) {
+                        // 灵敏度调节胶囊 (只保留 0.5x 和 2.0x)，按下瞬间 0.85f 高亮反馈
+                        Box(
+                            modifier = Modifier
+                                .height(24.dp)
+                                .alpha(if (isSensPressed) 0.85f else 0.20f)
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(Color(0xFF0F172A))
+                                .border(1.dp, Color(0xFF38BDF8), RoundedCornerShape(4.dp))
+                                .clickable(
+                                    interactionSource = sensInteractionSource,
+                                    indication = null
+                                ) {
+                                    sensitivity = if (sensitivity == 0.5f) 2.0f else 0.5f
+                                }
+                                .padding(horizontal = 6.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(3.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Speed,
+                                    contentDescription = null,
+                                    tint = Color(0xFF38BDF8),
+                                    modifier = Modifier.size(11.dp)
+                                )
+                                Text(
+                                    text = "灵敏度: \${if (sensitivity == 0.5f) "0.5" else "2.0"}x",
+                                    color = Color(0xFF38BDF8),
+                                    fontSize = 10.sp,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+
+                        // Del 删除快捷键，按下瞬间 0.85f 高亮反馈
+                        Box(
+                            modifier = Modifier
+                                .height(24.dp)
+                                .alpha(if (isDelPressed) 0.85f else 0.20f)
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(Color(0xFF1E293B))
+                                .border(1.dp, Color(0xFF94A3B8), RoundedCornerShape(4.dp))
+                                .clickable(
+                                    interactionSource = delInteractionSource,
+                                    indication = null
+                                ) {
+                                    val (absX, absY) = getAbsScreenPos(cursorPosition)
+                                    PersistentWebViewPool.dispatchVirtualDeleteKey(absX, absY)
+                                }
+                                .padding(horizontal = 6.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(2.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Delete,
+                                    contentDescription = "Del 删除所选",
+                                    tint = Color(0xFFCBD5E1),
+                                    modifier = Modifier.size(11.dp)
+                                )
+                                Text(
+                                    text = "Del",
+                                    color = Color(0xFFCBD5E1),
+                                    fontSize = 10.sp,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // =====================================================================
+                // 触控板核心滑动感应区 (260dp x 122dp)
+                // 常态 20% 透明度，手指滑动交互时提升至 50% 响应高亮
+                // 支持：1. 单指滑动移动光标；2. 轻点直接触发左键单击；3. 长按500ms触发右键菜单
+                // =====================================================================
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(122.dp)
+                        .alpha(if (isTrackpadActive) 0.50f else 0.20f)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color(0xFF060911))
+                        .border(1.dp, Color(0xFF334155), RoundedCornerShape(8.dp))
+                        .pointerInput(sensitivity, isHoldingDown, screenWidthPx, screenHeightPx) {
+                            coroutineScope {
+                                awaitEachGesture {
+                                    val down = awaitFirstDown(requireUnconsumed = false)
+                                    isTrackpadActive = true
+                                    val downPos = down.position
+                                    var isDrag = false
+                                    var longPressTriggered = false
+
+                                    // 启动 500ms 长按判定协程 (静止长按直接触发右键)
+                                    val longPressJob = launch {
+                                        delay(500L)
+                                        if (!isDrag) {
+                                            longPressTriggered = true
+                                            val (absX, absY) = getAbsScreenPos(cursorPosition)
+                                            PersistentWebViewPool.dispatchVirtualMouseClick(
+                                                absX,
+                                                absY,
+                                                isRightClick = true
+                                            )
+                                        }
+                                    }
+
+                                    try {
+                                        while (true) {
+                                            val event = awaitPointerEvent(PointerEventPass.Main)
+                                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+
+                                            if (!change.pressed) {
+                                                // 手指抬起 (UP)
+                                                longPressJob.cancel()
+                                                if (!isDrag && !longPressTriggered) {
+                                                    // 处于微动阈值内且未触发长按 -> 判定为“单击 (左键)”！
+                                                    val (absX, absY) = getAbsScreenPos(cursorPosition)
+                                                    PersistentWebViewPool.dispatchVirtualMouseClick(
+                                                        absX,
+                                                        absY,
+                                                        isRightClick = false
+                                                    )
+                                                }
+                                                change.consume()
+                                                break
+                                            }
+
+                                            val dragDistance = (change.position - downPos).getDistance()
+                                            if (dragDistance > 8f || isDrag) {
+                                                if (!isDrag) {
+                                                    isDrag = true
+                                                    longPressJob.cancel()
+                                                }
+                                                val dragAmount = change.position - change.previousPosition
+                                                val nextX = (cursorPosition.x + dragAmount.x * sensitivity)
+                                                    .coerceIn(0f, screenWidthPx)
+                                                val nextY = (cursorPosition.y + dragAmount.y * sensitivity)
+                                                    .coerceIn(0f, screenHeightPx)
+                                                cursorPosition = Offset(nextX, nextY)
+
+                                                val (absX, absY) = getAbsScreenPos(cursorPosition)
+                                                if (isHoldingDown) {
+                                                    // 按压拖拽：派发 ACTION_MOVE 移动图表或绘制连线
+                                                    PersistentWebViewPool.dispatchVirtualMouseMove(absX, absY)
+                                                } else {
+                                                    // 悬停滑动：派发 ACTION_HOVER_MOVE 驱动 TradingView 十字光标与 OHLC
+                                                    PersistentWebViewPool.dispatchVirtualMouseHover(absX, absY)
+                                                }
+                                                change.consume()
+                                            }
+                                        }
+                                    } finally {
+                                        isTrackpadActive = false
+                                    }
+                                }
+                            }
+                        },
+                )
+
+                // =====================================================================
+                // 动作控制按键行 (左键 · 右键 · 按住画线 · 滚轮放大 · 滚轮缩小)
+                // 常态全部 20% 透明度，按下瞬间提供 0.85f 极速高亮反馈
+                // =====================================================================
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    // 左键单击
+                    Button(
+                        onClick = {
+                            val (absX, absY) = getAbsScreenPos(cursorPosition)
+                            PersistentWebViewPool.dispatchVirtualMouseClick(
+                                absX,
+                                absY,
+                                isRightClick = false
+                            )
+                        },
+                        interactionSource = leftInteractionSource,
+                        modifier = Modifier
+                            .weight(1.0f)
+                            .height(36.dp)
+                            .alpha(if (isLeftPressed) 0.85f else 0.20f),
+                        shape = RoundedCornerShape(6.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF0284C7)
+                        ),
+                        contentPadding = PaddingValues(0.dp)
+                    ) {
+                        Text(
+                            text = "左键",
+                            color = Color.White,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    // 右键菜单 (呼出 TradingView 右键图表选项)
+                    Button(
+                        onClick = {
+                            val (absX, absY) = getAbsScreenPos(cursorPosition)
+                            PersistentWebViewPool.dispatchVirtualMouseClick(
+                                absX,
+                                absY,
+                                isRightClick = true
+                            )
+                        },
+                        interactionSource = rightInteractionSource,
+                        modifier = Modifier
+                            .weight(1.0f)
+                            .height(36.dp)
+                            .alpha(if (isRightPressed) 0.85f else 0.20f),
+                        shape = RoundedCornerShape(6.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF334155)
+                        ),
+                        contentPadding = PaddingValues(0.dp)
+                    ) {
+                        Text(
+                            text = "右键",
+                            color = Color(0xFFE2E8F0),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    // 按住拖拽开关 (Hold)
+                    Button(
+                        onClick = {
+                            isHoldingDown = !isHoldingDown
+                            val (absX, absY) = getAbsScreenPos(cursorPosition)
+                            if (isHoldingDown) {
+                                PersistentWebViewPool.dispatchVirtualMouseDown(absX, absY)
+                            } else {
+                                PersistentWebViewPool.dispatchVirtualMouseUp(absX, absY)
+                            }
+                        },
+                        interactionSource = holdInteractionSource,
+                        modifier = Modifier
+                            .weight(1.3f)
+                            .height(36.dp)
+                            .alpha(if (isHoldingDown || isHoldPressed) 0.85f else 0.20f),
+                        shape = RoundedCornerShape(6.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (isHoldingDown) Color(0xFF059669) else Color(0xFF1E293B)
+                        ),
+                        border = BorderStroke(
+                            1.dp,
+                            if (isHoldingDown) Color(0xFF34D399) else Color(0xFF475569)
+                        ),
+                        contentPadding = PaddingValues(0.dp)
+                    ) {
+                        Text(
+                            text = if (isHoldingDown) "松开" else "按住画线",
+                            color = if (isHoldingDown) Color.White else Color(0xFFCBD5E1),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    // 滚轮放大 (+) - 明显放大
+                    Box(
+                        modifier = Modifier
+                            .weight(1.3f)
+                            .height(36.dp)
+                            .alpha(if (isZoomInPressed) 0.85f else 0.20f)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(Color(0xFF1E293B))
+                            .border(1.dp, Color(0xFF38BDF8), RoundedCornerShape(6.dp))
+                            .clickable(
+                                interactionSource = zoomInInteractionSource,
+                                indication = null
+                            ) {
+                                val (absX, absY) = getAbsScreenPos(cursorPosition)
+                                PersistentWebViewPool.dispatchVirtualMouseScroll(absX, absY, 1.0f)
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.ZoomIn,
+                            contentDescription = "滚轮放大",
+                            tint = Color(0xFF38BDF8),
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+
+                    // 滚轮缩小 (-) - 明显放大
+                    Box(
+                        modifier = Modifier
+                            .weight(1.3f)
+                            .height(36.dp)
+                            .alpha(if (isZoomOutPressed) 0.85f else 0.20f)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(Color(0xFF1E293B))
+                            .border(1.dp, Color(0xFF94A3B8), RoundedCornerShape(6.dp))
+                            .clickable(
+                                interactionSource = zoomOutInteractionSource,
+                                indication = null
+                            ) {
+                                val (absX, absY) = getAbsScreenPos(cursorPosition)
+                                PersistentWebViewPool.dispatchVirtualMouseScroll(absX, absY, -1.0f)
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.ZoomOut,
+                            contentDescription = "滚轮缩小",
+                            tint = Color(0xFF94A3B8),
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+`
   },
   {
     path: "app/src/main/java/com/trading/multiview/ui/theme/Theme.kt",
