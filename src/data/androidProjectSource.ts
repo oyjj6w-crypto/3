@@ -3043,6 +3043,7 @@ fun TradingMultiViewScreen(
                         )
                     }
 
+
                 }
 
                 Spacer(modifier = Modifier.width(6.dp))
@@ -3059,15 +3060,15 @@ fun TradingMultiViewScreen(
                         modifier = Modifier.padding(end = 4.dp)
                     ) {
                         Text(
-                            text = "v2.7.0",
-                            color = Color(0xFF38BDF8),
+                            text = "v2.6.0",
+                            color = Color(0xFF64748B),
                             fontSize = 9.sp,
                             fontFamily = FontFamily.Monospace,
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = "2026-10-29 20:00",
-                            color = Color(0xFF64748B),
+                            text = "2026-09-21 14:30",
+                            color = Color(0xFF475569),
                             fontSize = 8.sp,
                             fontFamily = FontFamily.Monospace
                         )
@@ -3578,9 +3579,7 @@ fun TradingMultiViewScreen(
         )
     }
 
-    val currentEditingPreset = editingPreset
-    if (currentEditingPreset != null) {
-        val targetPreset: WindowPresetData = currentEditingPreset
+    editingPreset?.let { targetPreset ->
         var tempName by remember(targetPreset) { mutableStateOf(targetPreset.name) }
         var tempVisibleIds by remember(targetPreset) { mutableStateOf(targetPreset.visibleIds.toSet()) }
         var errorMessage by remember { mutableStateOf<String?>(null) }
@@ -3658,9 +3657,8 @@ fun TradingMultiViewScreen(
                         }
                     }
 
-                    val msg = errorMessage
-                    if (msg != null) {
-                        Text(text = msg, color = Color(0xFFEF4444), fontSize = 11.sp)
+                    errorMessage?.let {
+                        Text(text = it, color = Color(0xFFEF4444), fontSize = 11.sp)
                     }
 
                     Row(
@@ -5307,14 +5305,10 @@ jobs:
       - name: Setup Android SDK & Licenses
         run: |
           mkdir -p "$ANDROID_HOME/licenses"
-          printf "8933bad161af4178b1185d1a37fbf41ea5269c55\\nd56f5187479451eabf01fb78af6dfcb131a6481e\\n24333f8a63b6825ea9c5514f83c2829b004d1fee\\ne9acab5b5fbb560a72cfa4f27c30f4d10488f3d0\\n601085b94cd77f0b54ff86406957099fed8072d0\\n" > "$ANDROID_HOME/licenses/android-sdk-license"
-          printf "84831b9409646a918e30573bab4c9c91346d8abd\\n504667f4c0de7af1a06de9f4b1727b84351f2910\\n" > "$ANDROID_HOME/licenses/android-sdk-preview-license"
+          echo -e "8933bad161af4178b1185d1a37fbf41ea5269c55\\nd56f5187479451eabf01fb78af6dfcb131a6481e\\n24333f8a63b6825ea9c5514f83c2829b004d1fee" > "$ANDROID_HOME/licenses/android-sdk-license"
+          echo -e "84831b9409646a918e30573bab4c9c91346d8abd\\n504667f4c0de7af1a06de9f4b1727b84351f2910" > "$ANDROID_HOME/licenses/android-sdk-preview-license"
           if [ -x "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" ]; then
             yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses 2>/dev/null || true
-            "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-35" "build-tools;35.0.0" 2>/dev/null || true
-          elif command -v sdkmanager &>/dev/null; then
-            yes | sdkmanager --licenses 2>/dev/null || true
-            sdkmanager "platforms;android-35" "build-tools;35.0.0" 2>/dev/null || true
           fi
 
       - name: Setup Gradle 8.10.2
