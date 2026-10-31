@@ -1,6 +1,6 @@
 {
-  "summary":  "切换周期比例同步优化：彻底删除旧版K线密度识别与二次点击校准代码；新方案固定在第一个K线窗口输入周期，并在600毫秒后模拟鼠标向左微拖10像素，触发TradingView全局比例同步。",
-  "updatedAt":  "2026-10-29T08:44:33.968271384Z",
+  "summary":  "APK版本号调高与覆盖安装实施计划：在保持Commit d07ffe8原生代码逻辑不变的前提下，调高Android配置中的versionCode与versionName，实现无需卸载重装即可覆盖修复版APK。",
+  "updatedAt":  "2026-10-31T00:56:19.926011696Z",
   "requestFeedback":  true,
   "userFacing":  true
 }
