@@ -1195,181 +1195,91 @@ object PersistentWebViewPool {
             webView.dispatchKeyEvent(KeyEvent(t, t + 25, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER, 0))
         }, currentDelay + 100L)
 
-        // 阶段 1 (700ms)：等待 K 线数据与 Canvas 首帧重绘后，跨图点击非活跃图 B 触发全局比例广播 (彻底移除自动隐藏画图，杜绝误触)
+        val prefs = appContext?.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val dragPixels = prefs?.getInt("tf_drag_pixels", 10) ?: 10
+        val dragDelay1 = prefs?.getLong("tf_drag_delay_1_ms", 600L) ?: 600L
+        val drag2Enabled = prefs?.getBoolean("tf_drag_2_enabled", true) ?: true
+        val dragDelay2 = prefs?.getLong("tf_drag_delay_2_ms", 800L) ?: 800L
+
+        // 执行第 1 次自动向左微拖 (自定义延迟，拖动自定义像素)
         handler.postDelayed({
-            val stage1Script = """
+            val dragScript1 = """
                 (function() {
                     try {
-                        function triggerLeftClick(targetEl) {
-                            if (!targetEl) return;
-                            var r = targetEl.getBoundingClientRect();
-                            var cx = r.left + r.width / 2;
-                            var cy = r.top + r.height / 2;
-                            var evtOpts = {
-                                bubbles: true,
-                                cancelable: true,
-                                clientX: cx,
-                                clientY: cy,
-                                screenX: cx,
-                                screenY: cy,
-                                view: window,
-                                button: 0,
-                                buttons: 1,
-                                pointerType: 'mouse',
-                                isPrimary: true
-                            };
-                            try {
-                                targetEl.dispatchEvent(new PointerEvent('pointerdown', evtOpts));
-                                targetEl.dispatchEvent(new MouseEvent('mousedown', evtOpts));
-                                targetEl.dispatchEvent(new PointerEvent('pointerup', Object.assign({}, evtOpts, { buttons: 0 })));
-                                targetEl.dispatchEvent(new MouseEvent('mouseup', Object.assign({}, evtOpts, { buttons: 0 })));
-                                targetEl.dispatchEvent(new MouseEvent('click', Object.assign({}, evtOpts, { buttons: 0 })));
-                            } catch(e) {
-                                targetEl.dispatchEvent(new MouseEvent('click', evtOpts));
-                            }
-                        }
+                        var widgets = Array.from(document.querySelectorAll('.chart-widget') || []);
+                        if (widgets.length === 0) widgets = Array.from(document.querySelectorAll('[data-role="chart"]') || []);
+                        var validWidgets = widgets.filter(function(w) { var r = w.getBoundingClientRect(); return r.width > 30 && r.height > 30; });
+                        var firstWidget = validWidgets.length > 0 ? validWidgets[0] : (document.querySelector('.layout__area--center') || document.body);
+                        var canvas = (firstWidget.tagName === 'CANVAS') ? firstWidget : (firstWidget.querySelector('canvas.interactive-graphics-layer') || firstWidget.querySelector('canvas') || firstWidget);
+                        var rect = canvas.getBoundingClientRect();
+                        var startX = rect.left + rect.width / 2;
+                        var startY = rect.top + rect.height / 2;
+                        var endX = startX - $dragPixels;
 
-                        // 【跨图焦点迁移】：坚决避开当前图 A，精确提取非图 A 候选列表中 K 线密度最大的图 B
-                        var allWidgets = Array.from(document.querySelectorAll('.chart-widget') || []);
-                        if (allWidgets.length === 0) {
-                            allWidgets = Array.from(document.querySelectorAll('[data-role="chart"]') || []);
-                        }
-                        var validWidgets = allWidgets.filter(function(w) {
-                            var r = w.getBoundingClientRect();
-                            return r.width > 50 && r.height > 50;
-                        });
+                        var downEvt = { clientX: startX, clientY: startY, screenX: startX, screenY: startY, buttons: 1, button: 0, bubbles: true, cancelable: true, composed: true, view: window };
+                        var moveEvt = { clientX: endX, clientY: startY, screenX: endX, screenY: startY, buttons: 1, button: 0, bubbles: true, cancelable: true, composed: true, view: window };
+                        var upEvt = { clientX: endX, clientY: startY, screenX: endX, screenY: startY, buttons: 0, button: 0, bubbles: true, cancelable: true, composed: true, view: window };
 
-                        if (validWidgets.length > 1) {
-                            // 识别刚输入周期的活跃图 A
-                            var activeWidget = null;
-                            for (var wi = 0; wi < validWidgets.length; wi++) {
-                                var w = validWidgets[wi];
-                                var cName = w.className || "";
-                                if (cName.indexOf("active") !== -1 || cName.indexOf("selected") !== -1 || w.getAttribute("data-active") === "true") {
-                                    activeWidget = w;
-                                    break;
-                                }
-                            }
-                            if (!activeWidget && document.activeElement) {
-                                activeWidget = document.activeElement.closest('.chart-widget') || document.activeElement.closest('[data-role="chart"]');
-                            }
-
-                            // 坚决排除图 A，只在剩余子图中比对
-                            var otherWidgets = validWidgets.filter(function(w) {
-                                return w !== activeWidget;
-                            });
-                            if (otherWidgets.length === 0) otherWidgets = validWidgets;
-
-                            // 寻找时间轴刻度密度最大或正常的图 B
-                            var bestWidget = null;
-                            var maxDensity = -1;
-                            for (var oi = 0; oi < otherWidgets.length; oi++) {
-                                var ow = otherWidgets[oi];
-                                var axisTexts = ow.querySelectorAll('[class*="time-axis"] text, [class*="timeAxis"] text, [data-name="time-axis"] text, text');
-                                var density = axisTexts.length;
-                                if (density > maxDensity) {
-                                    maxDensity = density;
-                                    bestWidget = ow;
-                                }
-                            }
-                            if (!bestWidget) bestWidget = otherWidgets[0];
-
-                            var targetCanvas = bestWidget.querySelector('canvas.interactive-graphics-layer') || 
-                                               bestWidget.querySelector('canvas') || 
-                                               bestWidget;
-                            triggerLeftClick(targetCanvas);
-                        } else if (validWidgets.length === 1) {
-                            var singleCanvas = validWidgets[0].querySelector('canvas.interactive-graphics-layer') || 
-                                               validWidgets[0].querySelector('canvas') || 
-                                               validWidgets[0];
-                            triggerLeftClick(singleCanvas);
-                        } else {
-                            var fallbackCanvas = document.querySelector('canvas.interactive-graphics-layer') || document.querySelector('canvas');
-                            if (fallbackCanvas) triggerLeftClick(fallbackCanvas);
-                        }
+                        canvas.dispatchEvent(new PointerEvent('pointerdown', downEvt));
+                        canvas.dispatchEvent(new MouseEvent('mousedown', downEvt));
+                        setTimeout(function() {
+                            canvas.dispatchEvent(new PointerEvent('pointermove', moveEvt));
+                            canvas.dispatchEvent(new MouseEvent('mousemove', moveEvt));
+                            setTimeout(function() {
+                                canvas.dispatchEvent(new PointerEvent('pointerup', upEvt));
+                                canvas.dispatchEvent(new MouseEvent('mouseup', upEvt));
+                            }, 50);
+                        }, 50);
                     } catch(e) {}
                 })();
             """.trimIndent()
-            webView.evaluateJavascript(stage1Script, null)
-        }, currentDelay + 700L)
+            webView.evaluateJavascript(dragScript1, null)
+        }, currentDelay + 100L + dragDelay1)
 
-        // 阶段 2 (2000ms 看护巡检)：等待 2 秒确认所有子图 WebSocket 行情与 Canvas 渲染完毕，若不同窗口比例差异显著，精准补点密度紧凑的正常窗口
-        handler.postDelayed({
-            val stage2Script = """
-                (function() {
-                    try {
-                        function triggerLeftClick(targetEl) {
-                            if (!targetEl) return;
-                            var r = targetEl.getBoundingClientRect();
-                            var cx = r.left + r.width / 2;
-                            var cy = r.top + r.height / 2;
-                            var evtOpts = {
-                                bubbles: true,
-                                cancelable: true,
-                                clientX: cx,
-                                clientY: cy,
-                                screenX: cx,
-                                screenY: cy,
-                                view: window,
-                                button: 0,
-                                buttons: 1,
-                                pointerType: 'mouse',
-                                isPrimary: true
-                            };
-                            try {
-                                targetEl.dispatchEvent(new PointerEvent('pointerdown', evtOpts));
-                                targetEl.dispatchEvent(new MouseEvent('mousedown', evtOpts));
-                                targetEl.dispatchEvent(new PointerEvent('pointerup', Object.assign({}, evtOpts, { buttons: 0 })));
-                                targetEl.dispatchEvent(new MouseEvent('mouseup', Object.assign({}, evtOpts, { buttons: 0 })));
-                                targetEl.dispatchEvent(new MouseEvent('click', Object.assign({}, evtOpts, { buttons: 0 })));
-                            } catch(e) {
-                                targetEl.dispatchEvent(new MouseEvent('click', evtOpts));
-                            }
-                        }
+        // 若开启第 2 次拖动，在第 2 次自定义延迟后执行
+        if (drag2Enabled) {
+            handler.postDelayed({
+                val dragScript2 = """
+                    (function() {
+                        try {
+                            var widgets = Array.from(document.querySelectorAll('.chart-widget') || []);
+                            if (widgets.length === 0) widgets = Array.from(document.querySelectorAll('[data-role="chart"]') || []);
+                            var validWidgets = widgets.filter(function(w) { var r = w.getBoundingClientRect(); return r.width > 30 && r.height > 30; });
+                            var firstWidget = validWidgets.length > 0 ? validWidgets[0] : (document.querySelector('.layout__area--center') || document.body);
+                            var canvas = (firstWidget.tagName === 'CANVAS') ? firstWidget : (firstWidget.querySelector('canvas.interactive-graphics-layer') || firstWidget.querySelector('canvas') || firstWidget);
+                            var rect = canvas.getBoundingClientRect();
+                            var startX = rect.left + rect.width / 2;
+                            var startY = rect.top + rect.height / 2;
+                            var endX = startX - $dragPixels;
 
-                        var allWidgets = Array.from(document.querySelectorAll('.chart-widget') || []);
-                        if (allWidgets.length === 0) {
-                            allWidgets = Array.from(document.querySelectorAll('[data-role="chart"]') || []);
-                        }
-                        var validWidgets = allWidgets.filter(function(w) {
-                            var r = w.getBoundingClientRect();
-                            return r.width > 50 && r.height > 50;
-                        });
+                            var downEvt = { clientX: startX, clientY: startY, screenX: startX, screenY: startY, buttons: 1, button: 0, bubbles: true, cancelable: true, composed: true, view: window };
+                            var moveEvt = { clientX: endX, clientY: startY, screenX: endX, screenY: startY, buttons: 1, button: 0, bubbles: true, cancelable: true, composed: true, view: window };
+                            var upEvt = { clientX: endX, clientY: startY, screenX: endX, screenY: startY, buttons: 0, button: 0, bubbles: true, cancelable: true, composed: true, view: window };
 
-                        if (validWidgets.length > 1) {
-                            // 统计每个窗口的时间轴刻度标签数与宽度，计算密度 (刻度数 / 宽度)
-                            var widgetStats = validWidgets.map(function(w) {
-                                var r = w.getBoundingClientRect();
-                                var axisTexts = w.querySelectorAll('[class*="time-axis"] text, [class*="timeAxis"] text, [data-name="time-axis"] text, text');
-                                var count = axisTexts.length;
-                                var density = count / (r.width || 1);
-                                return { widget: w, count: count, density: density, width: r.width };
-                            });
-
-                            var maxItem = widgetStats[0];
-                            var minItem = widgetStats[0];
-                            for (var i = 1; i < widgetStats.length; i++) {
-                                if (widgetStats[i].density > maxItem.density) maxItem = widgetStats[i];
-                                if (widgetStats[i].density < minItem.density) minItem = widgetStats[i];
-                            }
-
-                            // 若最高密度比最低密度高出 35% 以上或刻度标签数相差 >= 3，说明存在比例过大的异常窗口
-                            var ratio = (minItem.density > 0) ? (maxItem.density / minItem.density) : 2.0;
-                            if (ratio > 1.35 || (maxItem.count - minItem.count >= 3)) {
-                                var targetCanvas = maxItem.widget.querySelector('canvas.interactive-graphics-layer') || 
-                                                   maxItem.widget.querySelector('canvas') || 
-                                                   maxItem.widget;
-                                triggerLeftClick(targetCanvas);
-                            }
-                        }
-                    } catch(e) {}
-                })();
-            """.trimIndent()
-            webView.evaluateJavascript(stage2Script, null)
-        }, currentDelay + 2000L)
+                            canvas.dispatchEvent(new PointerEvent('pointerdown', downEvt));
+                            canvas.dispatchEvent(new MouseEvent('mousedown', downEvt));
+                            setTimeout(function() {
+                                canvas.dispatchEvent(new PointerEvent('pointermove', moveEvt));
+                                canvas.dispatchEvent(new MouseEvent('mousemove', moveEvt));
+                                setTimeout(function() {
+                                    canvas.dispatchEvent(new PointerEvent('pointerup', upEvt));
+                                    canvas.dispatchEvent(new MouseEvent('mouseup', upEvt));
+                                }, 50);
+                            }, 50);
+                        } catch(e) {}
+                    })();
+                """.trimIndent()
+                webView.evaluateJavascript(dragScript2, null)
+            }, currentDelay + 100L + dragDelay1 + dragDelay2)
+        }
     }
 
     private fun buildActionExecutionScript(action: String, customDelayMs: Long = 0L): String {
+        val prefs = appContext?.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val dragPixels = prefs?.getInt("tf_drag_pixels", 10) ?: 10
+        val dragDelay1 = prefs?.getLong("tf_drag_delay_1_ms", 600L) ?: 600L
+        val drag2Enabled = prefs?.getBoolean("tf_drag_2_enabled", true) ?: true
+        val dragDelay2 = prefs?.getLong("tf_drag_delay_2_ms", 800L) ?: 800L
         return """
             (function() {
                 try {
@@ -1527,13 +1437,13 @@ object PersistentWebViewPool {
                             } else if (action.indexOf('timeframe_') === 0) {
                                 var tfVal = action.substring(10);
 
-                                function simulateDragLeftOnChart(chartTarget, onComplete) {
+                                function simulateDragLeftOnChart(chartTarget, pixels, onComplete) {
                                     try {
                                         var canvas = (chartTarget && chartTarget.tagName === 'CANVAS') ? chartTarget : (chartTarget.querySelector('canvas.interactive-graphics-layer') || chartTarget.querySelector('canvas') || chartTarget);
                                         var rect = canvas.getBoundingClientRect();
                                         var startX = rect.left + rect.width / 2;
                                         var startY = rect.top + rect.height / 2;
-                                        var endX = startX - 10; // 向左微拖 10 像素
+                                        var endX = startX - pixels;
 
                                         var downEvt = { clientX: startX, clientY: startY, screenX: startX, screenY: startY, buttons: 1, button: 0, bubbles: true, cancelable: true, composed: true, view: window };
                                         var moveEvt = { clientX: endX, clientY: startY, screenX: endX, screenY: startY, buttons: 1, button: 0, bubbles: true, cancelable: true, composed: true, view: window };
@@ -1557,20 +1467,32 @@ object PersistentWebViewPool {
                                     }
                                 }
 
+                                function executeDrags(target, onComplete) {
+                                    simulateDragLeftOnChart(target, $dragPixels, function() {
+                                        if ($drag2Enabled) {
+                                            setTimeout(function() {
+                                                simulateDragLeftOnChart(target, $dragPixels, onComplete);
+                                            }, $dragDelay2);
+                                        } else {
+                                            if (typeof onComplete === 'function') onComplete();
+                                        }
+                                    });
+                                }
+
                                 // 策略 1: 尝试 TradingView 原生 API (若已暴露)
                                 try {
                                     if (window.tvWidget && typeof window.tvWidget.chart === 'function') {
                                         window.tvWidget.chart().setResolution(tfVal);
                                         setTimeout(function() {
-                                            simulateDragLeftOnChart(target, function() { processPoint(idx + 1); });
-                                        }, 600);
+                                            executeDrags(target, function() { processPoint(idx + 1); });
+                                        }, $dragDelay1);
                                         return;
                                     }
                                     if (window.TradingView && typeof window.TradingView.activeChart === 'function') {
                                         window.TradingView.activeChart().setResolution(tfVal);
                                         setTimeout(function() {
-                                            simulateDragLeftOnChart(target, function() { processPoint(idx + 1); });
-                                        }, 600);
+                                            executeDrags(target, function() { processPoint(idx + 1); });
+                                        }, $dragDelay1);
                                         return;
                                     }
                                 } catch(e) {}
@@ -1584,8 +1506,8 @@ object PersistentWebViewPool {
                                         if (v === tfVal.toLowerCase() || v === (tfVal + 'm').toLowerCase()) {
                                             b.click();
                                             setTimeout(function() {
-                                                simulateDragLeftOnChart(target, function() { processPoint(idx + 1); });
-                                            }, 600);
+                                                executeDrags(target, function() { processPoint(idx + 1); });
+                                            }, $dragDelay1);
                                             return;
                                         }
                                     }
@@ -1602,8 +1524,8 @@ object PersistentWebViewPool {
                                         inputEl.dispatchEvent(new Event('input', { bubbles: true }));
                                         inputEl.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
                                         setTimeout(function() {
-                                            simulateDragLeftOnChart(target, function() { processPoint(idx + 1); });
-                                        }, 600);
+                                            executeDrags(target, function() { processPoint(idx + 1); });
+                                        }, $dragDelay1);
                                         return;
                                     }
                                 } catch(e) {}
@@ -1654,12 +1576,12 @@ object PersistentWebViewPool {
                                             window.dispatchEvent(new KeyboardEvent('keyup', enterOpts));
                                             document.dispatchEvent(new KeyboardEvent('keyup', enterOpts));
 
-                                            // 等待 600ms 让 TradingView 渲染新周期 K 线，随后模拟向左微拖 10 像素强制同步横向比例
+                                            // 等待自定义延迟让 TradingView 渲染新周期 K 线，随后执行配置的微拖 (支持2次拖动与自定义像素)
                                             setTimeout(function() {
-                                                simulateDragLeftOnChart(target, function() {
+                                                executeDrags(target, function() {
                                                     processPoint(idx + 1);
                                                 });
-                                            }, 600);
+                                            }, $dragDelay1);
                                         }, 70);
                                     }
                                 }

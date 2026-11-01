@@ -93,6 +93,7 @@ fun TradingMultiViewScreen(
     var showGroupConfigDialog by remember { mutableStateOf(false) }
     var targetGroupForConfig by remember { mutableStateOf<TabGroup?>(null) }
     var showTimeframeDialog by remember { mutableStateOf(false) }
+    var showTimeframeDragSettingsDialog by remember { mutableStateOf(false) }
     var showInvertDialog by remember { mutableStateOf(false) }
     var showHideDrawingsDialog by remember { mutableStateOf(false) }
 
@@ -481,7 +482,7 @@ fun TradingMultiViewScreen(
                         Box(
                             modifier = Modifier
                                 .height(30.dp)
-                                .defaultMinSize(minWidth = 36.dp)
+                                .defaultMinSize(minWidth = 54.dp)
                                 .clip(RoundedCornerShape(6.dp))
                                 .background(
                                     if (isPresetActive) Color(0xFF0369A1).copy(alpha = 0.4f)
@@ -506,7 +507,7 @@ fun TradingMultiViewScreen(
                                         editingPreset = preset
                                     }
                                 )
-                                .padding(horizontal = 6.dp),
+                                .padding(horizontal = 9.dp),
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
@@ -596,17 +597,17 @@ fun TradingMultiViewScreen(
 
                 Spacer(modifier = Modifier.width(6.dp))
 
-                // 油猴快捷 2 视窗动作组 (磁力吸附 · 翻转K线，长度改为现有的2倍: 60.dp x 30.dp)
+                // 油猴快捷视窗动作组 (磁力吸附)
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    // 2. 磁力吸附切换 (Magnet / Ctrl)：单击直接执行(0ms延迟)，长按弹出选择窗口，长度 60dp
+                    // 2. 磁力吸附切换 (Magnet / Ctrl)：单击直接执行(0ms延迟)，长按弹出选择窗口，宽度缩小一半为 30dp，显示单字“磁”
                     val activeMagnetWin = uiState.windows.find { it.isMagnetActive }
                     val isAnyMagnetActive = activeMagnetWin != null
                     Box(
                         modifier = Modifier
-                            .width(60.dp)
+                            .width(30.dp)
                             .height(30.dp)
                             .clip(RoundedCornerShape(6.dp))
                             .background(
@@ -626,71 +627,11 @@ fun TradingMultiViewScreen(
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = "磁吸",
+                            text = "磁",
                             color = if (showMagnetDialog) Color.White else if (isAnyMagnetActive) Color(0xFFFB7185) else Color(0xFFCBD5E1),
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold
                         )
-                    }
-
-                    // 3. 4图翻转 K线 (Alt+I)：默认0ms延迟，单击直接对全部3/4个窗口执行翻转，长按弹出选择窗口，长度 60dp
-
-                    Box(
-                        modifier = Modifier
-                            .width(60.dp)
-                            .height(30.dp)
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(
-                                when {
-                                    isInvertCooldownActive -> Color(0xFF1E293B).copy(alpha = 0.5f)
-                                    showInvertDialog -> Color(0xFF059669)
-                                    else -> Color(0xFF1E293B)
-                                }
-                            )
-                            .border(
-                                width = 1.dp,
-                                color = when {
-                                    isInvertCooldownActive -> Color(0xFF374151).copy(alpha = 0.5f)
-                                    showInvertDialog -> Color(0xFF34D399)
-                                    else -> Color(0xFF334155)
-                                },
-                                shape = RoundedCornerShape(6.dp)
-                            )
-                            .combinedClickable(
-                                onClick = {
-                                    if (isInvertCooldownActive) {
-                                        android.widget.Toast.makeText(context, "K线翻转按钮冷却中！剩余时间: ${cooldownText}", android.widget.Toast.LENGTH_SHORT).show()
-                                    } else {
-                                        viewModel.triggerInvert4Charts(delayMs = 0L, context = context)
-                                    }
-                                },
-                                onLongClick = {
-                                    if (isInvertCooldownActive) {
-                                        android.widget.Toast.makeText(context, "K线翻转按钮冷却中！剩余时间: ${cooldownText}", android.widget.Toast.LENGTH_SHORT).show()
-                                    } else {
-                                        showInvertDialog = true
-                                    }
-                                }
-                            ),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        if (isInvertCooldownActive) {
-                            Text(
-                                text = cooldownText,
-                                color = Color(0xFFEF4444),
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                fontFamily = FontFamily.Monospace
-                            )
-                        } else {
-                            Text(
-                                text = "4",
-                                color = if (showInvertDialog) Color.White else Color(0xFF34D399),
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
-                                fontFamily = FontFamily.Monospace
-                            )
-                        }
                     }
                 }
             }
@@ -1062,9 +1003,14 @@ fun TradingMultiViewScreen(
                         )
                     }
                 }
-                .clickable {
-                    showTimeframeDialog = true
-                },
+                .combinedClickable(
+                    onClick = {
+                        showTimeframeDialog = true
+                    },
+                    onLongClick = {
+                        showTimeframeDragSettingsDialog = true
+                    }
+                ),
             contentAlignment = Alignment.Center
         ) {
             Text(
@@ -1216,7 +1162,17 @@ fun TradingMultiViewScreen(
             onSelectTimeframe = { tf, targets ->
                 viewModel.triggerGlobalTimeframe(tf, targets, context)
                 showTimeframeDialog = false
+            },
+            onOpenDragSettings = {
+                showTimeframeDialog = false
+                showTimeframeDragSettingsDialog = true
             }
+        )
+    }
+
+    if (showTimeframeDragSettingsDialog) {
+        TimeframeDragSettingsDialog(
+            onDismiss = { showTimeframeDragSettingsDialog = false }
         )
     }
 
@@ -1776,7 +1732,8 @@ fun LatestKlineSyncDialog(
 fun TimeframeSyncDialog(
     windowCount: Int = 3,
     onDismiss: () -> Unit,
-    onSelectTimeframe: (String, Set<Int>) -> Unit
+    onSelectTimeframe: (String, Set<Int>) -> Unit,
+    onOpenDragSettings: (() -> Unit)? = null
 ) {
     var selectedWindows by remember(windowCount) { mutableStateOf((1..windowCount).toSet()) }
 
@@ -1811,6 +1768,45 @@ fun TimeframeSyncDialog(
                     modifier = Modifier.padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
+                    // 顶部标题与微拖设置入口
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = "选择同步周期",
+                            color = Color.White,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        if (onOpenDragSettings != null) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(Color(0xFF1E293B))
+                                    .border(1.dp, Color(0xFF38BDF8).copy(alpha = 0.5f), RoundedCornerShape(6.dp))
+                                    .clickable { onOpenDragSettings() }
+                                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Tune,
+                                    contentDescription = "微拖设置",
+                                    tint = Color(0xFF38BDF8),
+                                    modifier = Modifier.size(13.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = "微拖设置",
+                                    color = Color(0xFF38BDF8),
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                        }
+                    }
+
                     // 窗口目标选择按钮
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -1928,6 +1924,302 @@ fun TimeframeSyncDialog(
                                 Text(text = tf, color = Color(0xFFE2E8F0), fontSize = 14.sp, fontWeight = FontWeight.Bold)
                             }
                         }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 周期切换微拖像素与延迟自定义配置弹窗 (长按周期切换 T 按钮弹出)
+ */
+@Composable
+fun TimeframeDragSettingsDialog(
+    onDismiss: () -> Unit
+) {
+    val context = LocalContext.current
+    val prefs = remember(context) {
+        context.getSharedPreferences(PersistentWebViewPool.PREFS_NAME, Context.MODE_PRIVATE)
+    }
+
+    var dragPixels by remember { mutableStateOf(prefs.getInt("tf_drag_pixels", 10)) }
+    var dragDelay1 by remember { mutableStateOf(prefs.getLong("tf_drag_delay_1_ms", 600L)) }
+    var drag2Enabled by remember { mutableStateOf(prefs.getBoolean("tf_drag_2_enabled", true)) }
+    var dragDelay2 by remember { mutableStateOf(prefs.getLong("tf_drag_delay_2_ms", 800L)) }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Card(
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF111827)),
+            border = BorderStroke(1.5.dp, Color(0xFF374151)),
+            shape = RoundedCornerShape(14.dp),
+            modifier = Modifier
+                .width(360.dp)
+                .padding(16.dp)
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                // 顶部标题
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.Tune,
+                            contentDescription = null,
+                            tint = Color(0xFF38BDF8),
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "周期切换微拖设置",
+                            color = Color.White,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    IconButton(
+                        onClick = onDismiss,
+                        modifier = Modifier.size(24.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "关闭",
+                            tint = Color(0xFF94A3B8),
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                }
+
+                // 说明文字
+                Text(
+                    text = "在首图切换周期后自动向左微拖以保持多图比例严格一致。可自定义拖动像素与延迟以肉眼观察效果。",
+                    color = Color(0xFF94A3B8),
+                    fontSize = 11.sp,
+                    lineHeight = 15.sp
+                )
+
+                // 1. 拖动像素配置
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "微拖距离 (像素):",
+                            color = Color(0xFFE2E8F0),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = "${dragPixels} px",
+                            color = Color(0xFF38BDF8),
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    // 快速选择芯片
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        listOf(10, 30, 50, 100, 200).forEach { px ->
+                            val isSel = dragPixels == px
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(if (isSel) Color(0xFF0284C7) else Color(0xFF1E293B))
+                                    .border(1.dp, if (isSel) Color(0xFF38BDF8) else Color(0xFF334155), RoundedCornerShape(6.dp))
+                                    .clickable {
+                                        dragPixels = px
+                                    }
+                                    .padding(vertical = 6.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "$px",
+                                    color = if (isSel) Color.White else Color(0xFFCBD5E1),
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // 2. 第 1 次拖动延迟配置
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "第 1 次拖动延迟:",
+                            color = Color(0xFFE2E8F0),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = "${dragDelay1} ms",
+                            color = Color(0xFF38BDF8),
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        listOf(300L, 600L, 800L, 1200L).forEach { ms ->
+                            val isSel = dragDelay1 == ms
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(if (isSel) Color(0xFF0284C7) else Color(0xFF1E293B))
+                                    .border(1.dp, if (isSel) Color(0xFF38BDF8) else Color(0xFF334155), RoundedCornerShape(6.dp))
+                                    .clickable {
+                                        dragDelay1 = ms
+                                    }
+                                    .padding(vertical = 6.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "${ms}ms",
+                                    color = if (isSel) Color.White else Color(0xFFCBD5E1),
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // 3. 第 2 次自动微拖配置
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "第 2 次自动微拖:",
+                            color = Color(0xFFE2E8F0),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(if (drag2Enabled) Color(0xFF059669) else Color(0xFF374151))
+                                .clickable { drag2Enabled = !drag2Enabled }
+                                .padding(horizontal = 10.dp, vertical = 4.dp)
+                        ) {
+                            Text(
+                                text = if (drag2Enabled) "已开启" else "已关闭",
+                                color = if (drag2Enabled) Color.White else Color(0xFF94A3B8),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+
+                    if (drag2Enabled) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "第 2 次拖动间隔延迟:",
+                                color = Color(0xFF94A3B8),
+                                fontSize = 11.sp
+                            )
+                            Text(
+                                text = "${dragDelay2} ms",
+                                color = Color(0xFF34D399),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            listOf(400L, 600L, 800L, 1200L).forEach { ms ->
+                                val isSel = dragDelay2 == ms
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(if (isSel) Color(0xFF047857) else Color(0xFF1E293B))
+                                        .border(1.dp, if (isSel) Color(0xFF34D399) else Color(0xFF334155), RoundedCornerShape(6.dp))
+                                    .clickable {
+                                        dragDelay2 = ms
+                                    }
+                                    .padding(vertical = 6.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = "${ms}ms",
+                                        color = if (isSel) Color.White else Color(0xFFCBD5E1),
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 底部按钮栏
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = onDismiss,
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF94A3B8)),
+                        border = BorderStroke(1.dp, Color(0xFF475569)),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text("取消", fontSize = 12.sp)
+                    }
+
+                    Button(
+                        onClick = {
+                            prefs.edit()
+                                .putInt("tf_drag_pixels", dragPixels)
+                                .putLong("tf_drag_delay_1_ms", dragDelay1)
+                                .putBoolean("tf_drag_2_enabled", drag2Enabled)
+                                .putLong("tf_drag_delay_2_ms", dragDelay2)
+                                .apply()
+                            android.widget.Toast.makeText(
+                                context,
+                                "设置已生效：微拖 ${dragPixels}px，延迟 ${dragDelay1}ms" + if (drag2Enabled) " + 2次拖动(${dragDelay2}ms)" else "",
+                                android.widget.Toast.LENGTH_SHORT
+                            ).show()
+                            onDismiss()
+                        },
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text("保存并生效", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     }
                 }
             }
