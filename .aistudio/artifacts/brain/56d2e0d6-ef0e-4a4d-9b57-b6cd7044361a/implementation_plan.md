@@ -1,93 +1,50 @@
-# APK 覆盖升级与版本递增实施计划 (无需卸载保留数据)
+# 切换周期后自动向左微拖彻底生效实施方案
 
-在保持全量业务代码处于 Commit `d07ffe8`（APK #122 原生稳定状态）的前提下，通过调高 Android 构建配置中的内部 `versionCode` 和对外显示版本 `versionName`，使得新打包的 APK 能够被 Android 系统识别为“新版本”，从而实现免卸载直接覆盖安装，完整保留设备本地数据与配置。
+## 1. 深度根因排查与分析
 
----
+根据用户反馈（在 TradingView 官方多图布局下，已设置 100px / 200px 显著距离，且日常通过手指直接触控滑动），经深度排查，导致微拖未触发的根本原因有以下三个致命冲突点：
 
-## 用户确认与关键决策
-
-> [!IMPORTANT]
-> 根据前序交互确认，本次修复采用**项目端版本递增重新构建**方案：
-> - **安装策略**：在项目中提升版本号，生成合法的新版本 APK，走 Android 系统的正常覆盖升级机制，免卸载、不丢失本地配置。
-> - **内部版本号 (versionCode)**：由原本可能冲突的 `1` 调整为安全且显著高于已安装版本的数值（推荐设为 `200`，确保高于此前的任何构建如 #122、#123 等）。
-> - **外部显示版本 (versionName)**：由 `1.0.0` 递增并明确标注为稳定回滚版（如 `1.0.1-stable` 或 `1.0.1 (Rollback Stable)`）。
-> - **双端同步**：同步更新实际构建文件 `app/build.gradle.kts` 以及 Web 端源码展示/导出文件 `src/data/androidProjectSource.ts`。
-
----
-
-## 1. 概述与核心目标 (Overview & Core Concept)
-
-- **核心问题**：Android Package Manager 具备防降级安全机制。当设备已安装高版本（或更高 `versionCode`）应用时，若尝试安装低版本 APK，系统会拒绝安装并提示版本冲突，强行安装需要先卸载（这将清除所有已缓存的登录态、看盘布局与本地配置）。
-- **解决思路**：Android 判断升级还是降级仅依赖 `versionCode`（整数）。业务逻辑和功能代码完全冻结在 `d07ffe8` 稳定态，只在构建层面将 `versionCode` 提升至高于手机现存版本，系统即判定为**平滑升级**，自动合并数据覆盖安装。
-- **价值**：0 风险恢复至 #122 稳定功能，无需清除手机数据或重走复杂配置流程。
+1. **双重 `ACTION_DOWN` 导致 Chromium 手势状态机彻底崩溃与丢弃 (GestureCancelled)**：
+   - 上一版本在 `simulateNativeTouchDrag` 中，在同一毫秒内先后调用了：
+     `webView.dispatchTouchEvent(downTouch)` (Touch ACTION_DOWN, pointerId=0)
+     紧接着调用 `webView.dispatchTouchEvent(downMouse)` (Mouse ACTION_DOWN, pointerId=0)
+   - 在 Android 及 Chromium 的 `FilteredGestureProvider` 规范中，**当已有活动触控指针时，再次收到未经抬起或未经 `ACTION_POINTER_DOWN` 的 `ACTION_DOWN` 是非法状态**。Chromium 会立即抛弃该手势流并触发 `GestureTypeCancelled`，导致后续的所有 `ACTION_MOVE` 和位移被直接丢弃！
+2. **多图布局下首图定位命中四图死角十字分割线 (Center Divider)**：
+   - TradingView 官方网页多图布局中，不存在 `.chart-widget` 类名，导致之前的 CSS 选择器匹配失败，回退到 `document.body` 宽高的 `(50%, 50%)`。
+   - 在 4 图或 2 图排版中，`(50%, 50%)` 恰好是四张图正中央的**十字分割拖动条**，根本不在首图（左上角第一张图）的 K 线画布上！因此在分割线上划动不会触发任何 K 线的横向滚动。
+3. **JS 虚拟事件与 Native 触控流争抢 Pointer Capture**：
+   - 注入的 JS 脚本同时分发伪造的 `pointerdown`，导致 Chromium 内部对 Canvas 的手势捕获产生中断。必须以纯净的 Android 物理触控流为主通道。
 
 ---
 
-## 2. 覆盖升级流程与用户交互 (User Experience & Workflow)
+## 2. 核心实施方案
 
-```
-┌────────────────────────┐      ┌──────────────────────────┐      ┌─────────────────────────┐
-│ 手机现存状态           │      │ 重新构建 APK             │      │ 设备端直接覆盖安装     │
-│ 含有报错代码的 APK     │ ───> │ 代码: Commit d07ffe8     │ ───> │ Android 识别为正常升级  │
-│ (versionCode: 较早版本)│      │ versionCode = 200 (更高) │      │ 保留缓存与配置          │
-│                        │      │ versionName = 1.0.1-sta  │      │ 恢复稳定使用            │
-└────────────────────────┘      └──────────────────────────┘      └─────────────────────────┘
-```
+### 方案 A：纯净单指硬件触控流驱动 (Single-Pointer Touchscreen Flow)
+- 仅派发合法的 Android 单指触控序列：
+  1. `ACTION_DOWN` (时间 `t0`, 坐标 `startX, startY`, `SOURCE_TOUCHSCREEN`, `TOOL_TYPE_FINGER`, `pressure = 1.0f`)
+  2. 连续 10 帧匀速平滑插值的 `ACTION_MOVE` (每帧 16ms，总时长 160ms，绝对越过系统 Touch Slop 阈值)
+  3. `ACTION_UP` (时间 `t_end`, 坐标 `endX, startY`)
+- 彻底移除同一时刻并发的 Mouse ACTION_DOWN 与 JS 虚假事件，保证手势流符合 Android OS 标准触控规范，100% 被 Chromium 识别为真实物理手指滑动。
 
-1. **版本配置生效**：在工程配置中将 `versionCode` 设为 `200`，`versionName` 设为 `"1.0.1-stable"`。
-2. **打包生成**：通过 Gradle 编译生成 `app-release.apk` 或 `app-debug.apk`。
-3. **传输安装**：用户下载新 APK 后直接点击安装，系统提示“是否更新该应用”，点击“更新”即完成覆盖，所有历史配置完好无损。
-4. **备选方案提供**：在完成文档中附带 ADB 强制降级保留数据命令（`adb install -r -d`），作为电脑连接调试时的即时备选操作指南。
+### 方案 B：精准锁定 TradingView 官方多图的首图画布中心
+- 针对 TradingView 官方图表 DOM 结构，遍历所有 `canvas.interactive-graphics-layer`（这是 TradingView 每个子图的核心交互画布）：
+  - 选取屏幕上可见且视觉位置在最左上方的第一个主 Canvas（Chart 1）。
+  - 若处于多图模式且未提取到独立 Canvas，则针对多图布局特性，直接定位首图黄金中心（`ratioX = 0.25`, `ratioY = 0.25`，精准位于左上首图正中央，避开顶栏、侧边栏及中央分割线）。
+- 绝不回退至 `(0.5, 0.5)` 分割线死角。
 
----
-
-## 3. 关键产品决策与权衡 (Key Product Decisions & Trade-Offs)
-
-- **决策 1：`versionCode` 目标值选取**
-  - **选择**：直接设置为 `200`。
-  - **原因**：原本版本号可能是 1 或与 CI 构建号 122/123 相关。设置为 `200` 能 100% 确保大于手机当前已安装的出错版本，避免因版本号仅递增 1 仍可能与中间某些构建冲突的风险。
-  - **替代方案**：使用 CI 环境变量动态递增（对于本地手动构建或离线下载，固化在 `build.gradle.kts` 中更稳定明确）。
-
-- **决策 2：代码一致性与双端同步**
-  - **选择**：同时更新 `app/build.gradle.kts` 与 `src/data/androidProjectSource.ts`。
-  - **原因**：本项目同时包含原生 Android Gradle 工程和 React Web 端项目源码查看/ZIP 打包下载器，两处保持一致能保证从 Web 界面导出的源码包与仓库编译环境完全同步。
+### 方案 C：K 线平移兜底加速
+- 手势滑动完毕后，在首图获得焦点的状态下，协同派发微量原生 `KeyEvent.KEYCODE_DPAD_LEFT`，确保无论 TradingView 处于何种手势侦听状态，K 线都能发生向左横向位移。
 
 ---
 
-## 4. 技术架构与修改设计 (Technical Architecture)
+## 3. 严格遵循修改范围
+- **仅修改 Android 原生实体源码**：
+  1. `/app/src/main/java/com/trading/multiview/webview/PersistentWebViewPool.kt`
+  2. `/app/build.gradle.kts`：版本号递增为 `versionCode = 303`, `versionName = "2.7.4-stable"`
+- 绝对不触碰 Web 端代码与 `androidProjectSource.ts`。
 
-### 架构与配置流
+---
 
-```
-                     ┌──────────────────────────────────────────────┐
-                     │          Git Commit d07ffe8 稳定代码          │
-                     │  (无虚拟触控板，保留稳定 TradingView 看盘功能)│
-                     └──────────────────────┬───────────────────────┘
-                                            │
-                                ┌───────────┴───────────┐
-                                ▼                       ▼
-                 ┌─────────────────────────┐ ┌─────────────────────────┐
-                 │   app/build.gradle.kts  │ │ src/data/androidProject │
-                 │                         │ │ Source.ts (Web 展示)   │
-                 │ versionCode = 200       │ │ versionCode = 200       │
-                 │ versionName =           │ │ versionName =           │
-                 │   "1.0.1-stable"        │ │   "1.0.1-stable"        │
-                 └──────────────┬──────────┘ └─────────────────────────┘
-                                │
-                                ▼
-                     ┌─────────────────────┐
-                     │  Gradle / CI 构建   │
-                     │  生成新版 APK       │
-                     └─────────────────────┘
-```
-
-### 实施细节
-
-1. **修改 `app/build.gradle.kts`**：
-   - 将 `versionCode = 1` 替换为 `versionCode = 200`
-   - 将 `versionName = "1.0.0"` 替换为 `versionName = "1.0.1-stable"`
-2. **修改 `src/data/androidProjectSource.ts`**：
-   - 同步修改对应虚拟文件中的 `versionCode` 和 `versionName`，保证工程查看器和 ZIP 导出包准确无误。
-3. **验证与构建**：
-   - 运行前端编译校验（`compile_applet`）确保 Web 平台无报错。
-   - 验证配置无误后提示用户打包或触发 GitHub Action 构建。
+## 4. 验证计划
+1. 执行代码重构并消除非法双重 down 事件。
+2. 运行 `compile_applet` 和 `lint_applet` 确保编译无误。

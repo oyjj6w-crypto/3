@@ -12,8 +12,8 @@ android {
         applicationId = "com.trading.multiview"
         minSdk = 26
         targetSdk = 35
-        versionCode = 301
-        versionName = "2.7.2-stable"
+        versionCode = 303
+        versionName = "2.7.4-stable"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

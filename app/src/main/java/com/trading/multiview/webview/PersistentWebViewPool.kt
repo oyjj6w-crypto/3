@@ -1195,83 +1195,211 @@ object PersistentWebViewPool {
             webView.dispatchKeyEvent(KeyEvent(t, t + 25, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER, 0))
         }, currentDelay + 100L)
 
-        val prefs = appContext?.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val prefs = webView.context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val dragPixels = prefs?.getInt("tf_drag_pixels", 10) ?: 10
         val dragDelay1 = prefs?.getLong("tf_drag_delay_1_ms", 600L) ?: 600L
         val drag2Enabled = prefs?.getBoolean("tf_drag_2_enabled", true) ?: true
         val dragDelay2 = prefs?.getLong("tf_drag_delay_2_ms", 800L) ?: 800L
 
-        // 执行第 1 次自动向左微拖 (自定义延迟，拖动自定义像素)
+        // 执行第 1 次硬件级真实手势向左微拖 (自定义延迟，拖动自定义像素，isTrusted=true)
         handler.postDelayed({
-            val dragScript1 = """
-                (function() {
-                    try {
-                        var widgets = Array.from(document.querySelectorAll('.chart-widget') || []);
-                        if (widgets.length === 0) widgets = Array.from(document.querySelectorAll('[data-role="chart"]') || []);
-                        var validWidgets = widgets.filter(function(w) { var r = w.getBoundingClientRect(); return r.width > 30 && r.height > 30; });
-                        var firstWidget = validWidgets.length > 0 ? validWidgets[0] : (document.querySelector('.layout__area--center') || document.body);
-                        var canvas = (firstWidget.tagName === 'CANVAS') ? firstWidget : (firstWidget.querySelector('canvas.interactive-graphics-layer') || firstWidget.querySelector('canvas') || firstWidget);
-                        var rect = canvas.getBoundingClientRect();
-                        var startX = rect.left + rect.width / 2;
-                        var startY = rect.top + rect.height / 2;
-                        var endX = startX - $dragPixels;
-
-                        var downEvt = { clientX: startX, clientY: startY, screenX: startX, screenY: startY, buttons: 1, button: 0, bubbles: true, cancelable: true, composed: true, view: window };
-                        var moveEvt = { clientX: endX, clientY: startY, screenX: endX, screenY: startY, buttons: 1, button: 0, bubbles: true, cancelable: true, composed: true, view: window };
-                        var upEvt = { clientX: endX, clientY: startY, screenX: endX, screenY: startY, buttons: 0, button: 0, bubbles: true, cancelable: true, composed: true, view: window };
-
-                        canvas.dispatchEvent(new PointerEvent('pointerdown', downEvt));
-                        canvas.dispatchEvent(new MouseEvent('mousedown', downEvt));
-                        setTimeout(function() {
-                            canvas.dispatchEvent(new PointerEvent('pointermove', moveEvt));
-                            canvas.dispatchEvent(new MouseEvent('mousemove', moveEvt));
-                            setTimeout(function() {
-                                canvas.dispatchEvent(new PointerEvent('pointerup', upEvt));
-                                canvas.dispatchEvent(new MouseEvent('mouseup', upEvt));
-                            }, 50);
-                        }, 50);
-                    } catch(e) {}
-                })();
-            """.trimIndent()
-            webView.evaluateJavascript(dragScript1, null)
+            simulateNativeTouchDrag(webView, dragPixels) {
+                // 若开启第 2 次拖动，在第 2 次自定义延迟后执行
+                if (drag2Enabled) {
+                    handler.postDelayed({
+                        simulateNativeTouchDrag(webView, dragPixels)
+                    }, dragDelay2)
+                }
+            }
         }, currentDelay + 100L + dragDelay1)
+    }
 
-        // 若开启第 2 次拖动，在第 2 次自定义延迟后执行
-        if (drag2Enabled) {
+    /**
+     * 原生硬件级物理手势注入引擎 (dispatchTouchEvent)
+     * 解决 TradingView 拒绝 JS 伪造 PointerEvent (isTrusted=false) 及缺少手势滑动轨迹的痛点
+     * 模拟用户手指按下 -> 多帧平滑匀速向左平移 -> 抬起手势，保证 100% 被 Chromium 与 TradingView 识别为真实平移手势
+     */
+    /**
+     * 原生硬件级物理手势注入引擎 (dispatchTouchEvent)
+     * 解决 TradingView 官方多图排版下手势被丢弃及首图定位偏差的问题
+     * 1. 采用合法规范的单指物理触控流 (SOURCE_TOUCHSCREEN + TOOL_TYPE_FINGER，带真实压力与面积)
+     * 2. 精确命中左上角首图 (Chart 1) 交互 Canvas，彻底避开 (0.5, 0.5) 致命十字分割线死角
+     * 3. 10 帧平滑位移插值 (每帧 16ms，共 160ms)，绝对越过系统 Touch Slop 阈值
+     * 4. 辅助向左方向键 (KEYCODE_DPAD_LEFT) 双保险兜底
+     */
+    fun simulateNativeTouchDrag(
+        webView: WebView,
+        pixels: Int,
+        onComplete: (() -> Unit)? = null
+    ) {
+        val density = webView.context.resources.displayMetrics.density
+        // 将自定义像素按 density 转换为实际屏幕物理像素位移 (保证至少 25dp，彻底打破系统 Touch Slop)
+        val dragDistancePx = (pixels * density).coerceAtLeast(25f * density)
+
+        // 尝试从 DOM 精确定位首图 (Chart 1) 的交互 Canvas 视口比例 (ratioX, ratioY)
+        val coordScript = """
+            (function() {
+                try {
+                    // 1. 查找所有交互 Canvas (TradingView 官方核心绘图层)
+                    var canvases = Array.from(document.querySelectorAll('canvas.interactive-graphics-layer') || []);
+                    if (canvases.length === 0) {
+                        canvases = Array.from(document.querySelectorAll('canvas') || []);
+                    }
+                    var validCanvases = canvases.filter(function(c) {
+                        var r = c.getBoundingClientRect();
+                        return r.width > 80 && r.height > 80;
+                    });
+                    // 按视觉空间坐标从上到下、从左到右严格排序，排在首位的必是左上首图
+                    validCanvases.sort(function(a, b) {
+                        var rA = a.getBoundingClientRect();
+                        var rB = b.getBoundingClientRect();
+                        if (Math.abs(rA.top - rB.top) > 20) return rA.top - rB.top;
+                        return rA.left - rB.left;
+                    });
+
+                    var winW = window.innerWidth || document.documentElement.clientWidth || 1;
+                    var winH = window.innerHeight || document.documentElement.clientHeight || 1;
+
+                    if (validCanvases.length > 0) {
+                        var firstCanvas = validCanvases[0];
+                        var r = firstCanvas.getBoundingClientRect();
+                        // 选取首图主 K 线绘图区 (45% X, 50% Y)，避开右侧价格轴与工具条
+                        var cx = r.left + r.width * 0.45;
+                        var cy = r.top + r.height * 0.50;
+                        return JSON.stringify({
+                            ratioX: Math.max(0.08, Math.min(0.92, cx / winW)),
+                            ratioY: Math.max(0.08, Math.min(0.92, cy / winH))
+                        });
+                    }
+
+                    // 2. 备用策略：查找 chart-pane 容器
+                    var panes = Array.from(document.querySelectorAll('[data-name="chart-pane"], .chart-widget, [data-role="chart"]') || []);
+                    var validPanes = panes.filter(function(p) {
+                        var r = p.getBoundingClientRect();
+                        return r.width > 80 && r.height > 80;
+                    });
+                    if (validPanes.length > 0) {
+                        validPanes.sort(function(a, b) {
+                            var rA = a.getBoundingClientRect();
+                            var rB = b.getBoundingClientRect();
+                            if (Math.abs(rA.top - rB.top) > 20) return rA.top - rB.top;
+                            return rA.left - rB.left;
+                        });
+                        var pr = validPanes[0].getBoundingClientRect();
+                        return JSON.stringify({
+                            ratioX: Math.max(0.08, Math.min(0.92, (pr.left + pr.width * 0.45) / winW)),
+                            ratioY: Math.max(0.08, Math.min(0.92, (pr.top + pr.height * 0.50) / winH))
+                        });
+                    }
+
+                    // 3. 安全兜底：多图模式下首图绝对位于左上方 (0.25, 0.25)，绝不落入 (0.5, 0.5) 交叉分割线
+                    return JSON.stringify({ ratioX: 0.25, ratioY: 0.25 });
+                } catch(e) {
+                    return JSON.stringify({ ratioX: 0.25, ratioY: 0.25 });
+                }
+            })();
+        """.trimIndent()
+
+        webView.evaluateJavascript(coordScript) { resultStr ->
+            val handler = Handler(Looper.getMainLooper())
+            var startX = 0f
+            var startY = 0f
+
+            val viewWidth = webView.width.toFloat()
+            val viewHeight = webView.height.toFloat()
+
+            try {
+                val clean = resultStr?.trim()?.removePrefix("\"")?.removeSuffix("\"")?.replace("\\\"", "\"") ?: ""
+                val obj = org.json.JSONObject(clean)
+                val rx = obj.optDouble("ratioX", 0.25).toFloat()
+                val ry = obj.optDouble("ratioY", 0.25).toFloat()
+                if (rx in 0.05f..0.95f && ry in 0.05f..0.95f && viewWidth > 0f && viewHeight > 0f) {
+                    startX = viewWidth * rx
+                    startY = viewHeight * ry
+                }
+            } catch (e: Exception) {}
+
+            // 越界保护或降级安全坐标：在多图排版中，首图必定落在左上象限 (约 25% 视口宽与高)
+            if (startX <= 0f || startX >= viewWidth || startY <= 0f || startY >= viewHeight) {
+                startX = if (viewWidth > 0f) viewWidth * 0.25f else 250f * density
+                startY = if (viewHeight > 0f) viewHeight * 0.25f else 200f * density
+            }
+
+            val endX = (startX - dragDistancePx).coerceAtLeast(15f)
+            val downTime = SystemClock.uptimeMillis()
+
+            // 1. 发送标准合法的单指物理触控 ACTION_DOWN (单一指针，isTrusted = true，杜绝双重 down 冲突)
+            try {
+                val downTouch = createTouchEvent(MotionEvent.ACTION_DOWN, downTime, downTime, startX, startY)
+                webView.dispatchTouchEvent(downTouch)
+                downTouch.recycle()
+            } catch (e: Exception) {}
+
+            // 2. 连续 10 帧平滑匀速向左位移插值 (每帧 16ms，总时长 160ms，构成真实手指左划手势轨迹)
+            val steps = 10
+            val stepInterval = 16L
+            for (step in 1..steps) {
+                handler.postDelayed({
+                    val fraction = step.toFloat() / steps
+                    val curX = startX + (endX - startX) * fraction
+                    val moveTime = SystemClock.uptimeMillis()
+
+                    try {
+                        val moveTouch = createTouchEvent(MotionEvent.ACTION_MOVE, downTime, moveTime, curX, startY)
+                        webView.dispatchTouchEvent(moveTouch)
+                        moveTouch.recycle()
+                    } catch (e: Exception) {}
+                }, step * stepInterval)
+            }
+
+            // 3. 注入 ACTION_UP 完成手势释放
             handler.postDelayed({
-                val dragScript2 = """
-                    (function() {
-                        try {
-                            var widgets = Array.from(document.querySelectorAll('.chart-widget') || []);
-                            if (widgets.length === 0) widgets = Array.from(document.querySelectorAll('[data-role="chart"]') || []);
-                            var validWidgets = widgets.filter(function(w) { var r = w.getBoundingClientRect(); return r.width > 30 && r.height > 30; });
-                            var firstWidget = validWidgets.length > 0 ? validWidgets[0] : (document.querySelector('.layout__area--center') || document.body);
-                            var canvas = (firstWidget.tagName === 'CANVAS') ? firstWidget : (firstWidget.querySelector('canvas.interactive-graphics-layer') || firstWidget.querySelector('canvas') || firstWidget);
-                            var rect = canvas.getBoundingClientRect();
-                            var startX = rect.left + rect.width / 2;
-                            var startY = rect.top + rect.height / 2;
-                            var endX = startX - $dragPixels;
+                val upTime = SystemClock.uptimeMillis()
+                try {
+                    val upTouch = createTouchEvent(MotionEvent.ACTION_UP, downTime, upTime, endX, startY)
+                    webView.dispatchTouchEvent(upTouch)
+                    upTouch.recycle()
+                } catch (e: Exception) {}
 
-                            var downEvt = { clientX: startX, clientY: startY, screenX: startX, screenY: startY, buttons: 1, button: 0, bubbles: true, cancelable: true, composed: true, view: window };
-                            var moveEvt = { clientX: endX, clientY: startY, screenX: endX, screenY: startY, buttons: 1, button: 0, bubbles: true, cancelable: true, composed: true, view: window };
-                            var upEvt = { clientX: endX, clientY: startY, screenX: endX, screenY: startY, buttons: 0, button: 0, bubbles: true, cancelable: true, composed: true, view: window };
+                // 辅助兜底：派发向左方向键，确保视图彻底完成横向微调对齐
+                try {
+                    val keyTime = SystemClock.uptimeMillis()
+                    webView.dispatchKeyEvent(KeyEvent(keyTime, keyTime, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_LEFT, 0))
+                    webView.dispatchKeyEvent(KeyEvent(keyTime, keyTime + 20, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_LEFT, 0))
+                } catch (e: Exception) {}
 
-                            canvas.dispatchEvent(new PointerEvent('pointerdown', downEvt));
-                            canvas.dispatchEvent(new MouseEvent('mousedown', downEvt));
-                            setTimeout(function() {
-                                canvas.dispatchEvent(new PointerEvent('pointermove', moveEvt));
-                                canvas.dispatchEvent(new MouseEvent('mousemove', moveEvt));
-                                setTimeout(function() {
-                                    canvas.dispatchEvent(new PointerEvent('pointerup', upEvt));
-                                    canvas.dispatchEvent(new MouseEvent('mouseup', upEvt));
-                                }, 50);
-                            }, 50);
-                        } catch(e) {}
-                    })();
-                """.trimIndent()
-                webView.evaluateJavascript(dragScript2, null)
-            }, currentDelay + 100L + dragDelay1 + dragDelay2)
+                onComplete?.invoke()
+            }, (steps + 1) * stepInterval)
         }
+    }
+
+    /**
+     * 辅助构造标准触摸屏输入事件 (包含 PointerProperties 与 pressure)
+     */
+    private fun createTouchEvent(
+        action: Int,
+        downTime: Long,
+        eventTime: Long,
+        x: Float,
+        y: Float
+    ): MotionEvent {
+        val props = arrayOf(MotionEvent.PointerProperties().apply {
+            id = 0
+            this.toolType = MotionEvent.TOOL_TYPE_FINGER
+        })
+        val coords = arrayOf(MotionEvent.PointerCoords().apply {
+            this.x = x
+            this.y = y
+            this.pressure = 1.0f
+            this.size = 1.0f
+        })
+        return MotionEvent.obtain(
+            downTime, eventTime,
+            action,
+            1, props, coords,
+            0, 0, 1.0f, 1.0f, 0, 0,
+            android.view.InputDevice.SOURCE_TOUCHSCREEN, 0
+        )
     }
 
     private fun buildActionExecutionScript(action: String, customDelayMs: Long = 0L): String {
@@ -1437,46 +1565,8 @@ object PersistentWebViewPool {
                             } else if (action.indexOf('timeframe_') === 0) {
                                 var tfVal = action.substring(10);
 
-                                function simulateDragLeftOnChart(chartTarget, pixels, onComplete) {
-                                    try {
-                                        var canvas = (chartTarget && chartTarget.tagName === 'CANVAS') ? chartTarget : (chartTarget.querySelector('canvas.interactive-graphics-layer') || chartTarget.querySelector('canvas') || chartTarget);
-                                        var rect = canvas.getBoundingClientRect();
-                                        var startX = rect.left + rect.width / 2;
-                                        var startY = rect.top + rect.height / 2;
-                                        var endX = startX - pixels;
-
-                                        var downEvt = { clientX: startX, clientY: startY, screenX: startX, screenY: startY, buttons: 1, button: 0, bubbles: true, cancelable: true, composed: true, view: window };
-                                        var moveEvt = { clientX: endX, clientY: startY, screenX: endX, screenY: startY, buttons: 1, button: 0, bubbles: true, cancelable: true, composed: true, view: window };
-                                        var upEvt = { clientX: endX, clientY: startY, screenX: endX, screenY: startY, buttons: 0, button: 0, bubbles: true, cancelable: true, composed: true, view: window };
-
-                                        canvas.dispatchEvent(new PointerEvent('pointerdown', downEvt));
-                                        canvas.dispatchEvent(new MouseEvent('mousedown', downEvt));
-
-                                        setTimeout(function() {
-                                            canvas.dispatchEvent(new PointerEvent('pointermove', moveEvt));
-                                            canvas.dispatchEvent(new MouseEvent('mousemove', moveEvt));
-
-                                            setTimeout(function() {
-                                                canvas.dispatchEvent(new PointerEvent('pointerup', upEvt));
-                                                canvas.dispatchEvent(new MouseEvent('mouseup', upEvt));
-                                                if (typeof onComplete === 'function') onComplete();
-                                            }, 50);
-                                        }, 50);
-                                    } catch(err) {
-                                        if (typeof onComplete === 'function') onComplete();
-                                    }
-                                }
-
                                 function executeDrags(target, onComplete) {
-                                    simulateDragLeftOnChart(target, $dragPixels, function() {
-                                        if ($drag2Enabled) {
-                                            setTimeout(function() {
-                                                simulateDragLeftOnChart(target, $dragPixels, onComplete);
-                                            }, $dragDelay2);
-                                        } else {
-                                            if (typeof onComplete === 'function') onComplete();
-                                        }
-                                    });
+                                    if (typeof onComplete === 'function') onComplete();
                                 }
 
                                 // 策略 1: 尝试 TradingView 原生 API (若已暴露)

@@ -1,6 +1,6 @@
 {
-  "summary":  "APK版本号调高与覆盖安装实施计划：在保持Commit d07ffe8原生代码逻辑不变的前提下，调高Android配置中的versionCode与versionName，实现无需卸载重装即可覆盖修复版APK。",
-  "updatedAt":  "2026-10-31T00:56:19.926011696Z",
+  "summary":  "实施方案：彻底解决 TradingView 官方多图布局下周期切换后无法自动微拖的问题。核心排查与重构：1. 消除原生 Touch 与 Mouse 在同一毫秒内双重发送 ACTION_DOWN 导致 Chromium 内核手势冲突丢弃 (GestureCancelled)；2. 针对 TradingView 官方图表 DOM 深度重构首图定位算法，精确定位 canvas.interactive-graphics-layer，杜绝多图模式下命中四象限中心分割线的致命缺陷；3. 消除 JS 合成事件与原生触控流的争抢干扰，采用纯净物理 Touch 流 (SOURCE_TOUCHSCREEN + TOOL_TYPE_FINGER)；4. 升级版本至 versionCode = 303, versionName = \"2.7.4-stable\"。",
+  "updatedAt":  "2026-11-01T09:45:36.029543039Z",
   "requestFeedback":  true,
   "userFacing":  true
 }
